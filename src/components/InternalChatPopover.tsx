@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import {
   Popover,
   SearchInput,
@@ -10,7 +11,7 @@ import {
   type DraggableVariant,
   type DraggableHeaderControls,
 } from "@nicecxone/lyra-ui";
-import { MessagesSquare, ChevronLeft, ChevronRight, Phone, Send, PanelRight, X } from "lucide-react";
+import { MessagesSquare, ChevronLeft, ChevronRight, Phone, Send, PanelRight, GripVertical, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DIRECTORY_AGENTS, type DirectoryAgent } from "@/data/directory";
 import type { InternalChatMessage } from "@/data/internalChat";
@@ -22,15 +23,25 @@ import type { InternalChatMessage } from "@/data/internalChat";
  * DIRECTORY_AGENTS as the employee roster rather than inventing a parallel
  * one (a supervisor entry was added there for the agent-to-supervisor case).
  *
- * Two presentations, toggled by "dock to side" (matching the AI Assistant
- * panel's own dock affordance, reusing lyra-ui's shared Draggable primitive
- * for the docked container):
- *   - Popover (default) — anchored dropdown under the trigger icon.
+ * Three presentations, sharing one lifted state (open/docked/view/etc. —
+ * see below):
+ *   - Popover (default) — anchored dropdown under the header trigger icon,
+ *     toggled by "dock to side" (matching the AI Assistant panel's own dock
+ *     affordance, reusing lyra-ui's shared Draggable primitive for the
+ *     docked container).
  *   - Docked — a panel in the layout's docked-panel row, same slot AI
- *     Assistant/Notifications use, via Draggable variant="docked".
- * Unlike AI Assistant, chat has no free-floating mode: "Undock" (Draggable's
- * own dock/undock toggle) just pops it back into the anchored popover
- * instead of a floating window, since nothing asked for drag-anywhere here.
+ *     Assistant/Notifications use, via Draggable variant="docked". Undock
+ *     pops it back into the anchored popover, not a floating window — this
+ *     dock/undock toggle still has no free-floating step in between, since
+ *     nothing asked for drag-anywhere from *this* affordance.
+ *   - Float (`InternalChatFloatPanel`) — a one-off `Draggable variant="float"
+ *     lockVariant` window (same portal-to-body pattern as `OutcomePanel`),
+ *     positioned near wherever it was opened from rather than anchored to
+ *     the header icon. Only reachable from entry points that need "open
+ *     right where the agent is working" instead of "open at the header" —
+ *     currently just New Outbound's Agents-group chat icon (see
+ *     `AgentNextGenPage`'s `openInternalChatWith`). Closing it clears the
+ *     shared `chatOpen` state same as the other two presentations.
  *
  * All state (open, docked, view-stack, favorites, threads, draft) is lifted
  * to AgentNextGenPage — the trigger (header) and the docked panel (layout
@@ -400,6 +411,71 @@ export function InternalChatDockedPanel({
         <ChatComposer draft={shared.draft} onDraftChange={shared.onDraftChange} onSend={shared.onSend} />
       )}
     </Draggable>
+  );
+}
+
+/* ── Float panel (one-off floating window, opened near a specific point on
+ *  screen — e.g. New Outbound's Agents-group chat icon — rather than
+ *  anchored to the header trigger). Same `Draggable variant="float"
+ *  lockVariant` + portal-to-body pattern `OutcomePanel` already
+ *  established; unlike the docked panel, "lockVariant" means there's no
+ *  dock-toggle button to reach for here — closing it always drops back to
+ *  whatever presentation the header icon would otherwise show next time
+ *  (popover, or docked if the agent had it docked before). ── */
+
+export interface InternalChatFloatPanelProps extends InternalChatSharedProps {
+  /** Viewport coordinates for the panel's top-left corner — the caller is
+   *  responsible for clamping this to the viewport (see
+   *  `AgentNextGenPage`'s `getChatFloatStyle`). */
+  position: { top: number; left: number };
+  onClose: () => void;
+}
+
+const CHAT_FLOAT_WIDTH = 380;
+const CHAT_FLOAT_HEIGHT = 560;
+
+export function InternalChatFloatPanel({ position, onClose, ...shared }: InternalChatFloatPanelProps) {
+  const { view, onViewChange, onCall } = shared;
+  const activeEmployee = view.kind === "chat" ? DIRECTORY_AGENTS.find((employee) => employee.id === view.employeeId) : undefined;
+
+  return createPortal(
+    <div style={{ position: "fixed", top: position.top, left: position.left, zIndex: 10000 }}>
+      <Draggable
+        variant="float"
+        lockVariant
+        defaultWidth={CHAT_FLOAT_WIDTH}
+        defaultHeight={CHAT_FLOAT_HEIGHT}
+        minWidth={320}
+        minHeight={420}
+        className="rounded-lyra-lg border border-lyra-border-subtle bg-lyra-bg-surface-overlay shadow-lg"
+        renderHeaderControls={({ gripProps }) => (
+          <div className="flex items-center justify-between px-3 pb-2 pt-3">
+            <div className="flex items-center gap-1.5">
+              <div {...gripProps}>
+                <GripVertical className="h-4 w-4 text-lyra-fg-secondary" strokeWidth={1.5} aria-hidden="true" />
+              </div>
+              {view.kind === "list" && <p className="lyra-heading-md text-lyra-fg-default">Chat</p>}
+            </div>
+            <CloseButton onClick={onClose} />
+          </div>
+        )}
+      >
+        {view.kind === "chat" && activeEmployee ? (
+          <ChatHeader employee={activeEmployee} onBack={() => onViewChange({ kind: "list" })} onCall={() => onCall(activeEmployee)} />
+        ) : (
+          <div className="px-3 pb-2">
+            <SearchInput value={shared.search} onValueChange={shared.onSearchChange} placeholder="Search employees" />
+          </div>
+        )}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <ChatBody {...shared} />
+        </div>
+        {view.kind === "chat" && (
+          <ChatComposer draft={shared.draft} onDraftChange={shared.onDraftChange} onSend={shared.onSend} />
+        )}
+      </Draggable>
+    </div>,
+    document.body
   );
 }
 

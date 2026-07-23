@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { cn } from "@/lib/utils";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 import {
   AppHeader,
@@ -10,19 +11,22 @@ import {
   AgentNotifications,
   AgentProfile,
   Container,
-  Panel,
+  SidePanel,
+  ActionIconButton,
   LeftNav,
-  CreateNew,
-  Tooltip,
   InteractionNavItem,
-  type CreateNewOutboundConfig,
-  type CreateNewOutboundContact,
+  InteriorPanel,
+  AgentDashboard,
+  AgentDashboardQueueDrilldown,
+  AGENT_DASHBOARD_QUEUE_ITEMS,
+  AGENT_DASHBOARD_QUEUE_SUB_ITEMS,
   type AgentStatus,
   type AppMenuGroup,
   type AgentNotification,
   type DraggableVariant,
   type InteractionChannel,
   type ChannelType,
+  type AgentDashboardContactHistoryEntry,
 } from "@nicecxone/lyra-ui";
 import appIcon from "@/assets/app-icon.svg";
 import {
@@ -38,7 +42,8 @@ import {
   type NavDestination,
 } from "@/components/CustomerInteractionPanel";
 import { SlideInPage, SlideInPlaceholder } from "@/components/SlideInPage";
-import { InternalChatTrigger, InternalChatDockedPanel, type ChatView } from "@/components/InternalChatPopover";
+import { NewOutboundPopover, type NewOutboundConfig } from "@/components/NewOutboundPopover";
+import { InternalChatTrigger, InternalChatDockedPanel, InternalChatFloatPanel, type ChatView } from "@/components/InternalChatPopover";
 import { INITIAL_FAVORITE_EMPLOYEE_IDS, INITIAL_CHAT_THREADS, type InternalChatMessage } from "@/data/internalChat";
 import { DirectoryPage } from "@/components/DirectoryPage";
 import { CustomerSnapshotPanel } from "@/components/CustomerSnapshotPanel";
@@ -47,8 +52,7 @@ import {
   DIRECTORY_AGENTS,
   DIRECTORY_SKILLS,
   DIRECTORY_TEAMS,
-  OUTBOUND_SEARCH_CONTACTS,
-  OUTBOUND_FAVORITE_CONTACT_IDS,
+  OUTBOUND_GROUPS,
   type DirectoryCustomer,
   type DirectoryAgent,
   type CustomerNote,
@@ -61,7 +65,9 @@ import {
   BookUser,
   Users,
   CalendarDays,
+  LayoutGrid,
   Settings,
+  X,
 } from "lucide-react";
 
 /** Title + icon for each right-side slide-in destination — Directory has
@@ -82,6 +88,70 @@ const FULL_PAGE_META: Record<FullPageDestination, { title: string }> = {
 
 const FULL_PAGE_DESTINATIONS = new Set<NavDestination>(["settings", "dashboard"]);
 
+/** Shared shape for a pinned rail nav row — used for both Control Center
+ *  (in `header`, just under "New Outbound") and Settings (in `footer`,
+ *  pinned bottom-left — same spot it's always occupied, just recreated
+ *  here instead of the plain icon-only `NavIconButton` it used to be, so
+ *  it now matches Control Center's icon size and expand/collapse
+ *  behavior instead of its own larger, always-icon-only treatment).
+ *  Collapses to an icon-only square button when the rail is collapsed and
+ *  expands to icon + label text when the rail is expanded, animating the
+ *  label open the same way `NewOutboundPopover`'s own trigger button does
+ *  — but styled as a regular nav destination (neutral, not primary/CTA-
+ *  colored) and using `TreeMenuRow`'s leaf-active treatment (moderate bg +
+ *  left accent bar) when active, for visual consistency with the rail's
+ *  other expanded-state nav rows. */
+function RailNavButton({
+  icon: Icon,
+  label,
+  expanded,
+  active,
+  onClick,
+  className,
+}: {
+  icon: typeof Settings;
+  label: string;
+  expanded?: boolean;
+  active: boolean;
+  onClick: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-current={active ? "page" : undefined}
+      onClick={onClick}
+      className={cn(
+        "relative flex h-9 flex-shrink-0 items-center gap-2.5 overflow-hidden rounded-lyra-sm transition-all duration-200",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus focus-visible:ring-offset-2",
+        expanded ? "w-full px-2.5" : "w-9 justify-center px-0",
+        active
+          ? "bg-lyra-bg-active-moderate text-lyra-fg-active-strong lyra-body-md-emphasis hover:bg-lyra-bg-active-moderate active:bg-lyra-bg-active-subtle"
+          : "text-lyra-fg-default hover:bg-lyra-state-hover active:bg-lyra-state-pressed",
+        className
+      )}
+    >
+      {active && expanded && (
+        <span
+          aria-hidden="true"
+          className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-full bg-lyra-border-active"
+        />
+      )}
+      <Icon className="h-4 w-4 flex-shrink-0" strokeWidth={1.5} aria-hidden="true" />
+      <span
+        aria-hidden={!expanded}
+        className={cn(
+          "lyra-body-md truncate overflow-hidden whitespace-nowrap transition-all duration-200",
+          expanded ? "max-w-[180px] opacity-100" : "max-w-0 opacity-0"
+        )}
+      >
+        {label}
+      </span>
+    </button>
+  );
+}
+
 /* ── App menu builder (needs onNavigate so built inside the component) ── */
 
 function buildAppMenuGroups(onNavigate?: (page: Page) => void): AppMenuGroup[] {
@@ -96,26 +166,16 @@ function buildAppMenuGroups(onNavigate?: (page: Page) => void): AppMenuGroup[] {
   ];
 }
 
-/* ── Create New → Outbound config ──
-   Mirrors lyra-ui's CreateNew "Create New → Outbound" story (see
-   lyra-ui/src/components/__stories__/create-new-outbound-mock.tsx). Search
-   spans OUTBOUND_SEARCH_CONTACTS — every Customer/Agent/Team/Skill from
-   directory.ts, reused rather than a parallel fixture. Matching phone
-   numbers/emails isn't modeled (no such values are stored on a contact
-   today), so typing one always falls through to the no-match Call/Email
-   path below — which is the point of this demo flow. */
+/* ── New Outbound config ──
+   Feeds `NewOutboundPopover` (src/components/NewOutboundPopover.tsx) — a
+   local replacement for lyra-ui's `CreateNew` outbound flow, built to add
+   back the one thing the `groups`-based CreateNewOutboundConfig has no
+   equivalent for: a "no match found in directory" screen for an unmatched
+   phone/email typed into search (`onStartUnmatchedOutbound` below). Groups
+   are built from directory.ts, reused rather than a parallel fixture. */
 
-const OUTBOUND_CONFIG: CreateNewOutboundConfig = {
-  outboundTitle: "New Outbound",
-  searchContacts: OUTBOUND_SEARCH_CONTACTS,
-  favoriteContactIds: OUTBOUND_FAVORITE_CONTACT_IDS,
-  // Stand-ins for directories this app doesn't have real data for yet —
-  // selecting one in the filter dropdown always shows its own "not
-  // connected" message instead of search results.
-  externalDirectories: [
-    { id: "company-directory", label: "Company Directory" },
-    { id: "partner-network", label: "Partner Network" },
-  ],
+const OUTBOUND_CONFIG: NewOutboundConfig = {
+  groups: OUTBOUND_GROUPS,
   channelOptions: [
     { id: "voice",    label: "Call",     selectLabel: "Voice", icon: <Phone         className="h-5 w-5" strokeWidth={1.5} /> },
     { id: "sms",      label: "SMS",                            icon: <MessageSquare className="h-5 w-5" strokeWidth={1.5} /> },
@@ -123,9 +183,9 @@ const OUTBOUND_CONFIG: CreateNewOutboundConfig = {
     { id: "email",    label: "Email",                          icon: <Mail          className="h-5 w-5" strokeWidth={1.5} /> },
   ],
   phoneOptions: [
-    { value: "+14563833329", type: "Mobile", number: "(456) 383-3329" },
-    { value: "+14565559981", type: "Home", number: "(456) 555-9981" },
-    { value: "+14565550147", type: "Work", number: "(456) 555-0147" },
+    { value: "+14563833329", label: "(456) 383-3329" },
+    { value: "+14565559981", label: "(456) 555-9981" },
+    { value: "+14565550147", label: "(456) 555-0147" },
   ],
   skillOptions: [
     { value: "general", label: "General Support" },
@@ -242,21 +302,15 @@ const INITIAL_ASSIGNMENTS: Assignment[] = [
 
 const INITIAL_NOTIFICATIONS: AgentNotification[] = [];
 
-/* ── Sparkle icon (Ask AI) ── */
-
-function AiSparkleIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M17 10C17 9.94181 16.9795 9.88562 16.9424 9.84082C16.9051 9.79597 16.8532 9.76559 16.7959 9.75488L16.7949 9.75391L12.6279 8.96582C12.2329 8.89119 11.8693 8.69934 11.585 8.41504C11.3007 8.13074 11.1088 7.76715 11.0342 7.37207L10.2461 3.20508L10.2451 3.2041C10.2344 3.14679 10.204 3.09487 10.1592 3.05762C10.1144 3.02051 10.0582 3 10 3C9.94182 3 9.88563 3.02051 9.84082 3.05762C9.79597 3.09486 9.76559 3.14679 9.75488 3.2041L9.75391 3.20508L8.96582 7.37207C8.89119 7.76715 8.69934 8.13074 8.41504 8.41504C8.13074 8.69934 7.76715 8.89119 7.37207 8.96582L3.20508 9.75391L3.2041 9.75488C3.14679 9.76559 3.09486 9.79597 3.05762 9.84082C3.02051 9.88563 3 9.94182 3 10C3 10.0582 3.02051 10.1144 3.05762 10.1592C3.07625 10.1816 3.09828 10.2013 3.12305 10.2158L3.2041 10.2451L3.20508 10.2461L7.37207 11.0342C7.76715 11.1088 8.13074 11.3007 8.41504 11.585C8.69934 11.8693 8.89119 12.2329 8.96582 12.6279L9.75391 16.7949L9.75488 16.7959C9.76559 16.8532 9.79597 16.9051 9.84082 16.9424C9.88562 16.9795 9.94181 17 10 17C10.0582 17 10.1144 16.9795 10.1592 16.9424C10.204 16.9051 10.2344 16.8532 10.2451 16.7959L10.2461 16.7949L11.0342 12.6279C11.1088 12.2329 11.3007 11.8693 11.585 11.585C11.8693 11.3007 12.2329 11.1088 12.6279 11.0342L16.7949 10.2461L16.7959 10.2451C16.8532 10.2344 16.9051 10.204 16.9424 10.1592C16.9795 10.1144 17 10.0582 17 10ZM5.00098 15.999C5.00098 15.4469 4.55306 14.999 4.00098 14.999C3.4491 14.9993 3.00195 15.4471 3.00195 15.999C3.0022 16.5507 3.44925 16.9978 4.00098 16.998C4.55291 16.998 5.00073 16.5509 5.00098 15.999ZM6.00098 15.999C6.00073 17.1032 5.1052 17.998 4.00098 17.998C2.89697 17.9978 2.0022 17.103 2.00195 15.999C2.00195 14.8948 2.89682 13.9993 4.00098 13.999C5.10535 13.999 6.00098 14.8947 6.00098 15.999ZM18 10C18 10.2917 17.8983 10.5745 17.7119 10.7988C17.5256 11.0232 17.2662 11.174 16.9795 11.2275L16.9805 11.2285L12.8135 12.0166C12.616 12.0539 12.4341 12.1499 12.292 12.292C12.1499 12.4341 12.0539 12.616 12.0166 12.8135L11.2285 16.9805C11.1748 17.2668 11.023 17.5257 10.7988 17.7119C10.5745 17.8983 10.2917 18 10 18C9.70834 18 9.42555 17.8983 9.20117 17.7119C8.97704 17.5257 8.82516 17.2668 8.77148 16.9805L7.9834 12.8135C7.94609 12.616 7.85013 12.4341 7.70801 12.292C7.56588 12.1499 7.38403 12.0539 7.18652 12.0166L3.01953 11.2285V11.2275C2.73324 11.1738 2.47421 11.0229 2.28809 10.7988C2.10174 10.5745 2 10.2917 2 10C2 9.70834 2.10174 9.42554 2.28809 9.20117C2.47425 8.97704 2.73317 8.82516 3.01953 8.77148L7.18652 7.9834C7.38403 7.94609 7.56588 7.85013 7.70801 7.70801C7.85013 7.56588 7.94609 7.38403 7.9834 7.18652L8.77148 3.01953C8.82516 2.73317 8.97704 2.47425 9.20117 2.28809C9.42554 2.10174 9.70834 2 10 2C10.2917 2 10.5745 2.10174 10.7988 2.28809C11.023 2.47425 11.1748 2.73317 11.2285 3.01953L12.0166 7.18652C12.0539 7.38403 12.1499 7.56588 12.292 7.70801C12.4341 7.85013 12.616 7.94609 12.8135 7.9834L16.9805 8.77148H16.9795C17.2662 8.82503 17.5256 8.97683 17.7119 9.20117C17.8983 9.42555 18 9.70834 18 10ZM17.8271 4.0791C17.8271 4.22843 17.775 4.37334 17.6797 4.48828C17.5842 4.60329 17.4507 4.68056 17.3037 4.70801L17.3047 4.70898L16.6699 4.82812L16.5498 5.46191C16.5224 5.60887 16.4451 5.74238 16.3301 5.83789C16.2151 5.93334 16.0703 5.98532 15.9209 5.98535C15.7715 5.98535 15.6267 5.93328 15.5117 5.83789C15.3971 5.74266 15.3187 5.6103 15.291 5.46387L15.1709 4.82812L14.5361 4.70898V4.70801C14.3898 4.68032 14.2573 4.6029 14.1621 4.48828C14.0907 4.40218 14.0436 4.29937 14.0244 4.19043L14.0146 4.0791L14.0244 3.96875C14.0436 3.85949 14.0904 3.75624 14.1621 3.66992C14.2576 3.55499 14.3903 3.47672 14.5371 3.44922L15.1709 3.3291L15.291 2.69531C15.3186 2.54862 15.3969 2.41569 15.5117 2.32031L15.6025 2.25781C15.6989 2.20264 15.8086 2.17285 15.9209 2.17285L16.0312 2.18262C16.1041 2.19538 16.174 2.22111 16.2383 2.25781L16.3301 2.32031L16.4092 2.39941C16.4808 2.48388 16.5302 2.58618 16.5508 2.69629H16.5498L16.6699 3.3291L17.3027 3.44922H17.3037C17.4138 3.46978 17.5161 3.5192 17.6006 3.59082L17.6797 3.66992L17.7422 3.76172C17.7971 3.85791 17.8271 3.96706 17.8271 4.0791Z" fill="currentColor"/>
-    </svg>
-  );
-}
-
 /* ── AgentNextGenPage ── */
 
 type Page = "agent-workspace" | "agent" | "outbound";
 
 const AI_PANEL_DEFAULT_WIDTH = 360;
+/** Matches `InternalChatFloatPanel`'s own default size — used here only to
+ *  clamp the float's initial position to the viewport before it mounts. */
+const CHAT_FLOAT_WIDTH = 380;
+const CHAT_FLOAT_HEIGHT = 560;
 /** Below this viewport width the nav rail can't stay expanded — used both
  *  to pick navOpen's initial state and to auto-collapse it on resize. */
 const NAV_NARROW_BREAKPOINT = 1280;
@@ -332,10 +386,14 @@ export function AgentNextGenPage({
 
   /* Internal chat state — popover by default; can dock to the side like AI
    *  Assistant/Notifications (single-dock rule applies across all three).
-   *  No free-floating mode: chat doesn't need one, so "Undock" just pops it
-   *  back into the anchored popover instead of a floating window. */
+   *  The header's own "Undock" toggle still has no floating step in
+   *  between (pops straight back to the anchored popover) — but a separate
+   *  entry point (New Outbound's Agents chat icon) can open a genuine
+   *  floating window near wherever it was clicked; see `chatFloatPosition`
+   *  and `openInternalChatWith` below. */
   const [chatOpen,        setChatOpen]        = useState(false);
   const [chatDocked,      setChatDocked]      = useState(false);
+  const [chatFloatPosition, setChatFloatPosition] = useState<{ top: number; left: number } | null>(null);
   const [chatWidth,       setChatWidth]       = useState(380);
   const [chatIsResizing,  setChatIsResizing]  = useState(false);
   const [chatView,        setChatView]        = useState<ChatView>({ kind: "list" });
@@ -353,6 +411,32 @@ export function AgentNextGenPage({
    *  updated for a full-page one. */
   const [openSlideInPage, setOpenSlideInPage] = useState<NavDestination | null>(null);
   const [lastSlideIn, setLastSlideIn] = useState<SlideInDestination>("directory");
+
+  /* Slide-in panel (Contacts/Directory/Schedule) — same float/dock state
+   *  machine as the AI panel/Notifications above, built on `SlideInPage`'s
+   *  own `DraggablePanel` shell. Deliberately NOT wired into those two's
+   *  single-dock-rule/`topPanel` z-index coordination: this panel docks
+   *  *inside* the interaction's own content column (next to
+   *  CustomerInteractionPanel), not at the outer app-shell edge the way
+   *  AI/Notifications/Chat do, so a docked slide-in and a docked AI panel
+   *  don't actually compete for the same screen real estate — nothing
+   *  forces them to stay mutually exclusive the way AI/Notifications/Chat
+   *  do among themselves. */
+  const [slideInVariant,    setSlideInVariant]    = useState<DraggableVariant>("docked");
+  const [slideInMounted,    setSlideInMounted]    = useState(false);
+  const [slideInState,      setSlideInState]      = useState<PanelState>("closed");
+  const [slideInWidth,      setSlideInWidth]      = useState(600);
+  const [slideInHeight,     setSlideInHeight]     = useState(860);
+  const [slideInIsResizing, setSlideInIsResizing] = useState(false);
+  const slideInFloatLeft = useRef<number | null>(null);
+  const slideInFloatTop  = useRef<number | null>(null);
+  const slideInPanelRef  = useRef<HTMLDivElement>(null);
+  const slideInAnimTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  /* Control Center (dashboard) — queue widget drill-down selection, mirrors
+   *  lyra-ui's own Templates/Dashboards story exactly (AgentDashboard +
+   *  InteriorPanel + AgentDashboardQueueDrilldown). */
+  const [selectedQueueId, setSelectedQueueId] = useState<string | null>(null);
   const handleNavClick = (item: NavDestination) => {
     setOpenSlideInPage((v) => {
       const next = v === item ? null : item;
@@ -383,30 +467,19 @@ export function AgentNextGenPage({
     console.log("Customer snapshot contact action:", channel);
   };
 
-  // "New Outbound"'s trailing person-icon button (customers only) — opens
-  // the Customer Profile panel for whichever customer was searched, even
-  // if a different customer's interaction is currently active.
-  const handleViewCustomerCard = (contact: CreateNewOutboundContact) => {
-    setCustomerCardOverrideId(contact.id);
-    setSidePanelOpen(true);
-  };
-
-  /* Side panel */
+  /* Side panel — lyra-ui's CreateNew no longer supports a "view customer
+   *  card" action from an outbound search result (dropped along with the
+   *  flat-search API this app used to build OUTBOUND_CONFIG against — see
+   *  the comment above it), so this panel now only ever shows the active
+   *  interaction's own customer. */
   const [sidePanelOpen,      setSidePanelOpen]      = useState(false);
   const [sidePanelWidth,     setSidePanelWidth]     = useState(256);
-  // Set when "New Outbound"'s trailing person-icon button opens the
-  // Customer Profile panel for a searched customer rather than the active
-  // interaction's own — takes priority over activeAssignment.customerId
-  // until cleared (panel closed, or the active assignment changes).
-  const [customerCardOverrideId, setCustomerCardOverrideId] = useState<string | undefined>(undefined);
 
-  // Whichever way the panel closes (header click, toggle button, etc.), the
-  // override shouldn't outlive that close — otherwise reopening the panel
-  // later (e.g. via the header toggle) would still show the searched
-  // customer instead of the active interaction's own.
+  // Clear any open queue drill-down once Control Center isn't on screen, so
+  // reopening it later doesn't resurrect a stale InteriorPanel selection.
   useEffect(() => {
-    if (!sidePanelOpen) setCustomerCardOverrideId(undefined);
-  }, [sidePanelOpen]);
+    if (openSlideInPage !== "dashboard") setSelectedQueueId(null);
+  }, [openSlideInPage]);
 
   // Track window width for nav overlay breakpoint
   useEffect(() => {
@@ -468,7 +541,7 @@ export function AgentNextGenPage({
 
   const activeAssignment = assignments.find((a) => a.id === activeAssignmentId);
   const isActiveAssignmentVoiceCall = activeAssignment?.channels.some((c) => c.current && c.type === "voice") ?? false;
-  const activeCustomer = DIRECTORY_CUSTOMERS.find((c) => c.id === (customerCardOverrideId ?? activeAssignment?.customerId));
+  const activeCustomer = DIRECTORY_CUSTOMERS.find((c) => c.id === activeAssignment?.customerId);
 
   const handleEscalationStatusChange = (assignmentId: string, status: EscalationStatus) => {
     setAssignments((prev) => prev.map((a) => (a.id === assignmentId ? { ...a, escalationStatus: status } : a)));
@@ -546,6 +619,62 @@ export function AgentNextGenPage({
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, [notifOpen]);
+
+  /* Slide-in panel show/hide — same state machine as the AI panel/
+   *  Notifications above, keyed off whether a slide-in destination
+   *  (Contacts/Directory/Schedule) is open beside an active interaction —
+   *  `isFullPageActive` destinations (Settings/Dashboard) use the "full"
+   *  variant instead, which has no dock/float state of its own. */
+  const slideInOpen = openSlideInPage !== null && !isFullPageActive;
+  useEffect(() => {
+    clearTimeout(slideInAnimTimer.current);
+    if (slideInOpen) {
+      if (containerRef.current && slideInFloatLeft.current === null) {
+        const r = containerRef.current.getBoundingClientRect();
+        slideInFloatLeft.current = r.left + containerRef.current.offsetWidth - slideInWidth - 16;
+      }
+      setSlideInHeight(computePanelHeight());
+      setSlideInMounted(true);
+      setSlideInState("open");
+    } else {
+      setSlideInState("closing");
+      slideInAnimTimer.current = setTimeout(() => setSlideInState("closed"), 150);
+    }
+    return () => clearTimeout(slideInAnimTimer.current);
+  }, [slideInOpen]);
+
+  useEffect(() => {
+    if (!slideInOpen) return;
+    const onResize = () => setSlideInHeight(computePanelHeight());
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [slideInOpen]);
+
+  // Capture rendered float position before docking, mirroring
+  // handleNotifVariantChange/handleAiVariantChange below — but with no
+  // single-dock-rule cross-checks against those two (see the state's own
+  // doc comment above for why).
+  const handleSlideInVariantChange = (v: DraggableVariant) => {
+    if (v === "docked" && slideInPanelRef.current) {
+      const r = slideInPanelRef.current.getBoundingClientRect();
+      slideInFloatLeft.current = r.left;
+      slideInFloatTop.current  = r.top;
+    }
+    setSlideInVariant(v);
+  };
+
+  const getSlideInFloatStyle = (): React.CSSProperties => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    const left = slideInFloatLeft.current !== null
+      ? slideInFloatLeft.current
+      : containerRef.current
+        ? (rect?.left ?? 0) + containerRef.current.offsetWidth - slideInWidth - 16
+        : 0;
+    const top = slideInFloatTop.current !== null
+      ? slideInFloatTop.current
+      : (rect?.top ?? 0);
+    return { position: "fixed", top, left, zIndex: 9999 };
+  };
 
   const handleNotifVariantChange = (v: DraggableVariant) => {
     // When docking: capture actual rendered position (includes CSS transform drag offset)
@@ -656,10 +785,35 @@ export function AgentNextGenPage({
 
   const handleChatOpenChange = (next: boolean) => {
     setChatOpen(next);
+    // The header trigger only ever drives the anchored popover or the
+    // docked panel — clear any leftover float position so a stray earlier
+    // float (opened via openInternalChatWith) doesn't linger behind it.
+    setChatFloatPosition(null);
     if (!next) {
       setChatView({ kind: "list" });
       setChatSearch("");
     }
+  };
+
+  /** Opens Internal Chat straight into a thread with one employee — used
+   *  by the New Outbound popover's Agents-group "chat" row icon, so
+   *  clicking it lands in the exact same chat window/thread the header's
+   *  Internal Chat icon opens. If chat isn't already open in any
+   *  presentation, it opens as a floating window near `clickPosition`
+   *  (the icon click's viewport coordinates) instead of the header-
+   *  anchored popover, so the window lands near the agent's mouse/focus
+   *  rather than across the screen at the header. If chat is already open
+   *  somewhere (popover, docked, or an earlier float), this just switches
+   *  the thread in place without moving or re-presenting it. */
+  const openInternalChatWith = (employeeId: string, clickPosition?: { x: number; y: number }) => {
+    if (!chatOpen && clickPosition) {
+      setChatFloatPosition({
+        top: Math.min(Math.max(clickPosition.y - 24, 16), window.innerHeight - CHAT_FLOAT_HEIGHT - 16),
+        left: Math.min(Math.max(clickPosition.x + 16, 16), window.innerWidth - CHAT_FLOAT_WIDTH - 16),
+      });
+    }
+    setChatView({ kind: "chat", employeeId });
+    setChatOpen(true);
   };
 
   const toggleChatFavorite = (id: string) => {
@@ -738,6 +892,42 @@ export function AgentNextGenPage({
     />
   ) : null;
 
+  /* Slide-in panel (Contacts/Directory/Schedule) — same "one element, two
+   *  possible wrapper placements" approach as aiPanel/notifPanel above, so
+   *  the panel instance (and whatever DraggablePanel/Draggable internal
+   *  state survives a remount via the float-position refs) carries across
+   *  a dock ↔ float toggle rather than resetting. Only ever used for the
+   *  "panel" variant (docked beside an interaction, or floating) — the
+   *  "full" takeover variant below is a separate, simpler render. */
+  const slideInPanel = slideInMounted ? (
+    <SlideInPage
+      ref={slideInPanelRef}
+      variant="panel"
+      open
+      title={SLIDE_IN_META[lastSlideIn].title}
+      icon={SLIDE_IN_META[lastSlideIn].icon}
+      onClose={() => setOpenSlideInPage(null)}
+      width={slideInWidth}
+      height={slideInHeight}
+      draggableVariant={slideInVariant}
+      onVariantChange={handleSlideInVariantChange}
+      onWidthChange={setSlideInWidth}
+      onResizeStateChange={setSlideInIsResizing}
+    >
+      {lastSlideIn === "directory" ? (
+        <DirectoryPage
+          customers={DIRECTORY_CUSTOMERS}
+          agents={DIRECTORY_AGENTS}
+          skills={DIRECTORY_SKILLS}
+          teams={DIRECTORY_TEAMS}
+          onContactAction={handleDirectoryContactAction}
+        />
+      ) : (
+        <SlideInPlaceholder />
+      )}
+    </SlideInPage>
+  ) : null;
+
   return (
     <div className="flex flex-col h-screen bg-lyra-bg-surface-shell overflow-hidden animate-in fade-in-0 duration-500">
 
@@ -747,7 +937,8 @@ export function AgentNextGenPage({
           <PopoverPrimitive.Root open={appMenuOpen} onOpenChange={setAppMenuOpen}>
             <PopoverPrimitive.Trigger asChild>
               <AppName
-                icon={<img src={appIcon} alt="My New Project" className="h-6 w-6" />}
+                // Hidden for user testing — restore by putting this back:
+                // icon={<img src={appIcon} alt="My New Project" className="h-6 w-6" />}
                 name="My New Project"
                 compact={isCompactHeader}
                 aria-expanded={appMenuOpen}
@@ -772,6 +963,29 @@ export function AgentNextGenPage({
         }
         actions={
           <>
+            {/* Global navigation — moved here from InteractionHeader (see its
+             *  own comment on the `takeover` prop), which only ever existed
+             *  while an interaction or full-page destination was on screen.
+             *  Living in the always-present AppHeader instead means Contacts/
+             *  Directory/Schedule stay reachable even with no active
+             *  interaction, and sit next to the other global actions
+             *  (Notifications, Chat) rather than duplicated per content
+             *  state. Control Center moved out of here into the left rail
+             *  (see ControlCenterNavButton, rendered in LeftNav's `header`
+             *  slot just under "New Outbound") — it's a full-page takeover
+             *  destination like a primary section of the app, not a
+             *  transient slide-in, so it reads better as a rail nav item. */}
+            {/* iconClassName="h-5 w-5" matches NotificationsBell's Bell icon and
+             *  InternalChatTrigger's MessagesSquare icon just below — both
+             *  lyra-ui/app components with no size prop of their own, so
+             *  matching them means sizing up from NavIconButton's own h-4 w-4
+             *  default rather than shrinking those two down. strokeWidth 1.5
+             *  already matches across all of them (NavIconButton hardcodes
+             *  it), so size was the only inconsistency. */}
+            <NavIconButton item="contacts" title="Contacts" icon={Users} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
+            <NavIconButton item="directory" title="Directory" icon={BookUser} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
+            <NavIconButton item="schedule" title="Schedule" icon={CalendarDays} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
+            <div className="mx-1 h-5 w-px bg-lyra-border-subtle" />
             <NotificationsBell
               notifications={notifications}
               open={notifOpen}
@@ -779,23 +993,16 @@ export function AgentNextGenPage({
               renderPanel={false}
             />
             <InternalChatTrigger
-              open={chatOpen}
+              // Floating (opened via openInternalChatWith) takes over the
+              // shared open/view state entirely — the header's own anchored
+              // popover stays closed while it's up, so the two don't render
+              // on top of each other.
+              open={chatOpen && !chatFloatPosition}
               onOpenChange={handleChatOpenChange}
               docked={chatDocked}
               onDock={() => handleChatVariantChange("docked")}
               {...chatSharedProps}
             />
-            <Tooltip content="Ask AI" placement="bottom" asLabel>
-              <button
-                type="button"
-                aria-label="Ask AI"
-                aria-expanded={aiPanelOpen}
-                onClick={() => setAiPanelOpen((v) => !v)}
-                className={`relative flex h-10 w-10 items-center justify-center rounded-lyra-lg text-lyra-fg-default transition-colors hover:bg-lyra-state-hover active:bg-lyra-state-pressed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus ${aiPanelOpen ? "bg-lyra-state-hover" : ""}`}
-              >
-                <AiSparkleIcon />
-              </button>
-            </Tooltip>
             <AgentProfile
               name="John Smith"
               initials="JS"
@@ -821,10 +1028,18 @@ export function AgentNextGenPage({
           overlay={isNavNarrow}
           header={
             <>
-              <CreateNew
+              <NewOutboundPopover
                 title="New Outbound"
-                outbound={{ ...OUTBOUND_CONFIG, onViewCustomerCard: handleViewCustomerCard }}
+                outbound={{ ...OUTBOUND_CONFIG, onOpenInternalChat: openInternalChatWith }}
                 expanded={navOpen}
+              />
+              <RailNavButton
+                icon={LayoutGrid}
+                label="Control Center"
+                expanded={navOpen}
+                active={openSlideInPage === "dashboard"}
+                onClick={() => handleNavClick("dashboard")}
+                className="mb-2"
               />
               {assignments.map((a) => (
                 <InteractionNavItem
@@ -842,14 +1057,12 @@ export function AgentNextGenPage({
             </>
           }
           footer={
-            <NavIconButton
-              item="settings"
-              title="Settings"
+            <RailNavButton
               icon={Settings}
-              activeNav={openSlideInPage}
-              onNavClick={handleNavClick}
-              className="h-[38px] w-[38px]"
-              iconClassName="h-6 w-6"
+              label="Settings"
+              expanded={navOpen}
+              active={openSlideInPage === "settings"}
+              onClick={() => handleNavClick("settings")}
             />
           }
         />
@@ -866,13 +1079,16 @@ export function AgentNextGenPage({
                 the right. Click to open/close only — no hover-to-preview, no pin toggle.
                 Hidden during a Settings/Dashboard takeover — see isFullPageActive below. */}
             {showPanelToggle && !isFullPageActive && (
-              <Panel
-                variant="side"
+              <SidePanel
                 side="left"
                 open={sidePanelOpen}
                 pinned
                 headerTitle="Customer Profile"
-                onHeaderClick={() => setSidePanelOpen(false)}
+                headerActions={
+                  <ActionIconButton title="Close" onClick={() => setSidePanelOpen(false)}>
+                    <X className="h-4 w-4" strokeWidth={1.5} />
+                  </ActionIconButton>
+                }
                 width={sidePanelWidth}
                 onWidthChange={setSidePanelWidth}
               >
@@ -882,7 +1098,7 @@ export function AgentNextGenPage({
                   onAddNote={(text) => activeCustomer && handleAddCustomerNote(activeCustomer.id, text)}
                   onContactAction={handleSnapshotContactAction}
                 />
-              </Panel>
+              </SidePanel>
             )}
 
             {/* Content column: PageHeader + page body */}
@@ -891,15 +1107,46 @@ export function AgentNextGenPage({
                 <>
                   {showPageHeader && (
                     <InteractionHeader
-                      activeNav={openSlideInPage}
-                      onNavClick={handleNavClick}
                       takeover
                       takeoverTitle={FULL_PAGE_META[openSlideInPage as FullPageDestination].title}
                     />
                   )}
-                  <div className="flex flex-1 overflow-hidden">
-                    <SlideInPlaceholder />
-                  </div>
+                  {openSlideInPage === "dashboard" ? (
+                    <div className="relative flex flex-1 overflow-hidden">
+                      <div className="flex flex-1 flex-col min-w-0 overflow-y-auto px-6 py-6">
+                        <AgentDashboard
+                          agentFirstName={CURRENT_AGENT_NAME.split(" ")[0]}
+                          onRedial={(entry: AgentDashboardContactHistoryEntry) => {
+                            // eslint-disable-next-line no-console
+                            console.log("Redial:", entry.name);
+                          }}
+                          selectedQueueId={selectedQueueId}
+                          onSelectQueueId={setSelectedQueueId}
+                        />
+                      </div>
+                      <InteriorPanel
+                        side="right"
+                        open={Boolean(selectedQueueId)}
+                        headerTitle={
+                          selectedQueueId
+                            ? AGENT_DASHBOARD_QUEUE_ITEMS.find((item) => item.id === selectedQueueId)?.name ?? "Queue"
+                            : "Queue"
+                        }
+                        headerSubhead={
+                          selectedQueueId
+                            ? `${(AGENT_DASHBOARD_QUEUE_SUB_ITEMS[selectedQueueId] ?? []).length} Skills`
+                            : undefined
+                        }
+                        onClose={() => setSelectedQueueId(null)}
+                      >
+                        {selectedQueueId && <AgentDashboardQueueDrilldown queueId={selectedQueueId} />}
+                      </InteriorPanel>
+                    </div>
+                  ) : (
+                    <div className="flex flex-1 overflow-hidden">
+                      <SlideInPlaceholder />
+                    </div>
+                  )}
                 </>
               ) : activeAssignment ? (
                 <>
@@ -908,11 +1155,11 @@ export function AgentNextGenPage({
                       customerName={activeAssignment.customerName}
                       activeTab={activeTab}
                       onTabChange={setActiveTab}
-                      activeNav={openSlideInPage}
-                      onNavClick={handleNavClick}
                       onCloseInteraction={handleCloseInteraction}
                       panelToggle={showPanelToggle ? "left" : undefined}
                       onPanelToggle={() => setSidePanelOpen((v) => !v)}
+                      aiPanelOpen={aiPanelOpen}
+                      onAskAiClick={() => setAiPanelOpen((v) => !v)}
                     />
                   )}
                   {showPageHeader && (
@@ -923,32 +1170,28 @@ export function AgentNextGenPage({
                       onEscalationStatusChange={(status) => activeAssignmentId && handleEscalationStatusChange(activeAssignmentId, status)}
                     />
                   )}
-                  {showPageHeader && <InteractionActionsBar isVoiceCall={isActiveAssignmentVoiceCall} />}
-                  {/* Body row: main content + slide-in pages */}
+                  {showPageHeader && (
+                    <InteractionActionsBar
+                      isVoiceCall={isActiveAssignmentVoiceCall}
+                      customerName={activeAssignment.customerName}
+                      issueSummary={activeAssignment.issueSummary}
+                      caseId={activeAssignment.caseId}
+                    />
+                  )}
+                  {/* Body row: main content. Slide-in panel, when docked,
+                   *  renders outside this Container entirely (sibling of
+                   *  containerRef, alongside Notifications/AI/Chat) rather
+                   *  than inside the interaction's own card — see that
+                   *  block below for why. */}
                   <div className="relative flex flex-1 overflow-hidden">
                     <CustomerInteractionPanel activeTab={activeTab} messages={activeAssignment.messages} />
-                    <SlideInPage
-                      variant="panel"
-                      open={openSlideInPage !== null}
-                      title={SLIDE_IN_META[lastSlideIn].title}
-                      icon={SLIDE_IN_META[lastSlideIn].icon}
-                      onClose={() => setOpenSlideInPage(null)}
-                    >
-                      {lastSlideIn === "directory" ? (
-                        <DirectoryPage
-                          customers={DIRECTORY_CUSTOMERS}
-                          agents={DIRECTORY_AGENTS}
-                          skills={DIRECTORY_SKILLS}
-                          teams={DIRECTORY_TEAMS}
-                          onContactAction={handleDirectoryContactAction}
-                        />
-                      ) : (
-                        <SlideInPlaceholder />
-                      )}
-                    </SlideInPage>
                   </div>
                 </>
-              ) : openSlideInPage !== null ? (
+              ) : openSlideInPage !== null && slideInVariant !== "float" ? (
+                // slideInVariant === "float" is deliberately excluded here — the
+                // floating panel (rendered independently of activeAssignment,
+                // just below) already shows this same content in that case, so
+                // taking over the content column too would render it twice.
                 <SlideInPage
                   variant="full"
                   open
@@ -968,7 +1211,7 @@ export function AgentNextGenPage({
                     <SlideInPlaceholder />
                   )}
                 </SlideInPage>
-              ) : (
+              ) : openSlideInPage !== null ? null : (
                 <div className="flex flex-1 items-center justify-center text-lyra-fg-secondary lyra-body-md">
                   No active interaction selected.
                 </div>
@@ -1013,7 +1256,56 @@ export function AgentNextGenPage({
             </div>
           )}
 
+          {/* Slide-in panel — float (same CSS transition pattern as Notifications/AI,
+           *  but no single-dock-rule tie-in to either — see slideInVariant's own doc
+           *  comment on why this panel doesn't compete with them for a docked slot). */}
+          {slideInVariant === "float" && slideInMounted && (
+            <div
+              style={{
+                ...getSlideInFloatStyle(),
+                pointerEvents: "none",
+                visibility: slideInState === "closed" ? "hidden" : "visible",
+                opacity: slideInState === "open" ? 1 : 0,
+                transform: slideInState === "open" ? "translateY(0)" : "translateY(-8px)",
+                transition: slideInState === "open"
+                  ? "opacity 150ms ease, transform 150ms ease"
+                  : "opacity 100ms ease, transform 100ms ease",
+              }}
+            >
+              {slideInPanel}
+            </div>
+          )}
+
         </div>
+
+        {/* Slide-in panel — docked (sibling of containerRef, same as
+         *  Notifications/AI/Chat below — NOT nested inside the interaction's
+         *  own Container/card, so it always sits outside the interaction
+         *  panel with a real gap between the two, rather than reading as
+         *  one merged surface. Rendered first among the docked extras so it
+         *  lands immediately to the right of the interaction, matching
+         *  where it appeared before this was moved out of the Container.
+         *  No single-dock-rule tie-in to Notifications/AI/Chat — see
+         *  slideInVariant's own doc comment. */}
+        {slideInVariant === "docked" && (
+          <div className="pb-3" style={{
+            width: slideInState === "open" ? slideInWidth : 0,
+            marginRight: slideInState === "open" ? 12 : 0,
+            overflow: "hidden",
+            flexShrink: 0,
+            transition: slideInIsResizing ? "none" : "width 250ms cubic-bezier(0.4, 0, 0.2, 1)",
+          }}>
+            <div
+              className="h-full animate-in fade-in-0 duration-150"
+              style={{
+                width: slideInWidth,
+                display: slideInState === "open" ? "block" : "none",
+              }}
+            >
+              {slideInPanel}
+            </div>
+          </div>
+        )}
 
         {/* Notifications — docked (sibling of containerRef so flex layout keeps it in-bounds) */}
         {notifVariant === "docked" && (
@@ -1057,8 +1349,11 @@ export function AgentNextGenPage({
           </div>
         )}
 
-        {/* Internal Chat — docked (sibling of containerRef so flex layout keeps it in-bounds) */}
-        {chatDocked && (
+        {/* Internal Chat — docked (sibling of containerRef so flex layout keeps it in-bounds).
+         *  Suppressed while floating (see InternalChatTrigger's `open` prop comment above) —
+         *  a stale `chatDocked` from an earlier session shouldn't render its row underneath
+         *  the float window just because both happen to be true at once. */}
+        {chatDocked && !chatFloatPosition && (
           <div className="pb-3" style={{
             width: chatOpen ? chatWidth : 0,
             marginRight: chatOpen ? 12 : 0,
@@ -1084,6 +1379,23 @@ export function AgentNextGenPage({
               />
             </div>
           </div>
+        )}
+
+        {/* Internal Chat — floating (opened via openInternalChatWith, e.g. New
+         *  Outbound's Agents-group chat icon). Portals to document.body, so it
+         *  renders outside this flex row entirely — position is fixed viewport
+         *  coordinates set at open time. */}
+        {chatOpen && chatFloatPosition && (
+          <InternalChatFloatPanel
+            position={chatFloatPosition}
+            onClose={() => {
+              setChatOpen(false);
+              setChatFloatPosition(null);
+              setChatView({ kind: "list" });
+              setChatSearch("");
+            }}
+            {...chatSharedProps}
+          />
         )}
 
       </div>

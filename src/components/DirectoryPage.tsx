@@ -13,8 +13,8 @@ import { cn } from "@/lib/utils";
 import type { DirectoryCustomer, DirectoryAgent, DirectorySkill, DirectoryTeam } from "@/data/directory";
 
 /* ── Contact action buttons — one icon button per channel the record
- *  supports, colored via lyra-ui's own CHANNEL_ACCENT map (the same colors
- *  used for channel chips/tiles elsewhere in this app). ── */
+ *  supports, colored via `CHANNEL_ACCENT` (the same lyra-ui map the
+ *  channel chips/tiles elsewhere in the app use). ── */
 
 const CONTACT_CHANNEL_ORDER: ChannelType[] = ["voice", "email", "chat", "whatsapp"];
 
@@ -39,7 +39,10 @@ export function ContactActionButtons({
   onAction,
 }: {
   channels: ChannelType[];
-  onAction: (channel: ChannelType) => void;
+  /** `event` carries the click's screen position — used by callers that
+   *  need to open a floating window near the agent's mouse (see New
+   *  Outbound's Agents-group "chat" icon → Internal Chat float). */
+  onAction: (channel: ChannelType, event: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
   const visible = CONTACT_CHANNEL_ORDER.filter((type) => channels.includes(type));
   return (
@@ -48,7 +51,7 @@ export function ContactActionButtons({
         const Icon = CONTACT_CHANNEL_ICON[type];
         const accent = CHANNEL_ACCENT[type];
         return (
-          <ActionIconButton key={type} size="sm" title={CONTACT_CHANNEL_LABEL[type]} onClick={() => onAction(type)}>
+          <ActionIconButton key={type} size="sm" title={CONTACT_CHANNEL_LABEL[type]} onClick={(e) => onAction(type, e)}>
             <Icon className={cn("h-4 w-4", accent.text)} strokeWidth={1.5} />
           </ActionIconButton>
         );
