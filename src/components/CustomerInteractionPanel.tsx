@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useLayoutEffect, Fragment } from "react";
 import {
   ActionIconButton,
   Button,
@@ -10,12 +10,14 @@ import {
   Chip,
   ConversationMessage,
   ConversationDateStamp,
+  Textarea,
   type MenuEntry,
   type ConversationVariant,
   type ChipColor,
 } from "@nicecxone/lyra-ui";
 import {
   MessageSquare,
+  ScrollText,
   Clock,
   Plus,
   User,
@@ -23,11 +25,30 @@ import {
   ChevronDown,
   Pause,
   MicOff,
+  Mic,
   AudioLines,
   Disc,
   Grip,
+  Phone,
   PhoneOff,
+  AlertTriangle,
+  CheckCircle2,
   ArrowUpRight,
+  Bold,
+  Italic,
+  Underline,
+  List,
+  ListOrdered,
+  Link2,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  AlignJustify,
+  Indent,
+  Outdent,
+  Type,
+  Send,
+  type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { OutcomeButton } from "@/components/OutcomePanel";
@@ -59,6 +80,288 @@ export interface Message {
  *  `fromMe ? "user" : "agent"`); customer is the other party, "agent". */
 function toConversationVariant(variant: Message["variant"]): ConversationVariant {
   return variant === "support-agent" ? "user" : "agent";
+}
+
+/* ── Formatted message text (mini markup → React nodes) ──
+ * MessageComposer's toolbar (below) writes a tiny local markup into
+ * `Message.text` — **bold**, *italic*, __underline__, [label](url) links,
+ * "- " bullet lines, "1. " numbered lines — parsed back into real
+ * <strong>/<em>/<u>/<a>/<ul>/<ol> elements wherever a message renders (chat
+ * bubbles and the voice transcript rows alike). Deliberately not full
+ * Markdown or real HTML: this app owns both ends of the format (the only
+ * thing that ever writes it is MessageComposer's own toolbar), so there's
+ * no need for a general-purpose parser, sanitizer, or dangerouslySetInnerHTML
+ * — plain text just passes through untouched. */
+
+const INLINE_FORMAT_PATTERN = /\[([^\]]+)\]\(([^)]+)\)|\*\*([^*]+)\*\*|__([^_]+)__|\*([^*]+)\*/g;
+
+function renderInlineFormatting(text: string, keyPrefix: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let i = 0;
+  INLINE_FORMAT_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = INLINE_FORMAT_PATTERN.exec(text))) {
+    if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
+    const [, linkText, linkUrl, boldText, underlineText, italicText] = match;
+    if (linkText !== undefined) {
+      nodes.push(
+        <a key={`${keyPrefix}-${i++}`} href={linkUrl} target="_blank" rel="noreferrer" className="text-lyra-fg-link underline">
+          {linkText}
+        </a>
+      );
+    } else if (boldText !== undefined) {
+      nodes.push(<strong key={`${keyPrefix}-${i++}`}>{boldText}</strong>);
+    } else if (underlineText !== undefined) {
+      nodes.push(<u key={`${keyPrefix}-${i++}`}>{underlineText}</u>);
+    } else if (italicText !== undefined) {
+      nodes.push(<em key={`${keyPrefix}-${i++}`}>{italicText}</em>);
+    }
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+  return nodes;
+}
+
+const BULLET_LINE = /^\s*-\s+(.*)$/;
+const NUMBERED_LINE = /^\s*\d+\.\s+(.*)$/;
+/** Written/stripped by MessageComposer's alignment buttons — "left" is
+ *  never actually written (it's the unmarked default), so this only ever
+ *  matches center/right/justify. */
+const ALIGN_MARKER = /^\[align:(center|right|justify)\]/;
+
+interface ParsedLine {
+  text: string;
+  align?: "center" | "right" | "justify";
+  /** One level per leading tab MessageComposer's Indent button wrote. */
+  indent: number;
+}
+
+/** Strips a line's leading indent tabs and alignment marker (both written
+ *  by MessageComposer's second toolbar row) off the front, returning the
+ *  plain displayable text plus the metadata to style its wrapping block
+ *  with — same "this app owns both ends of the format" reasoning as the
+ *  inline bold/italic/etc. markup above. */
+function parseLine(line: string): ParsedLine {
+  let text = line;
+  let indent = 0;
+  while (text.startsWith("\t")) {
+    indent++;
+    text = text.slice(1);
+  }
+  const alignMatch = ALIGN_MARKER.exec(text);
+  const align = alignMatch ? (alignMatch[1] as ParsedLine["align"]) : undefined;
+  if (alignMatch) text = text.slice(alignMatch[0].length);
+  return { text, align, indent };
+}
+
+function renderFormattedText(text: string): React.ReactNode {
+  const lines = text.split("\n").map(parseLine);
+  const blocks: React.ReactNode[] = [];
+  let i = 0;
+  let blockKey = 0;
+
+  while (i < lines.length) {
+    const bulletMatch = BULLET_LINE.exec(lines[i]!.text);
+    const numberedMatch = !bulletMatch && NUMBERED_LINE.exec(lines[i]!.text);
+
+    if (bulletMatch || numberedMatch) {
+      const pattern = bulletMatch ? BULLET_LINE : NUMBERED_LINE;
+      const items: string[] = [];
+      while (i < lines.length) {
+        const m = pattern.exec(lines[i]!.text);
+        if (!m) break;
+        items.push(m[1]!);
+        i++;
+      }
+      const key = blockKey++;
+      const ListTag = bulletMatch ? "ul" : "ol";
+      blocks.push(
+        <ListTag key={`list-${key}`} className={bulletMatch ? "list-disc pl-5" : "list-decimal pl-5"}>
+          {items.map((item, idx) => (
+            <li key={idx}>{renderInlineFormatting(item, `list-${key}-${idx}`)}</li>
+          ))}
+        </ListTag>
+      );
+      continue;
+    }
+
+    // Group consecutive plain lines sharing the same alignment + indent
+    // into one wrapping block, so a multi-line aligned/indented paragraph
+    // gets styled once rather than one wrapper per line — matches how the
+    // list branch above already groups its own consecutive matching lines.
+    const { align, indent } = lines[i]!;
+    const groupLines: string[] = [];
+    while (i < lines.length) {
+      const current = lines[i]!;
+      if (BULLET_LINE.test(current.text) || NUMBERED_LINE.test(current.text)) break;
+      if (current.align !== align || current.indent !== indent) break;
+      groupLines.push(current.text);
+      i++;
+    }
+    const key = blockKey++;
+    const hasBlockStyle = align !== undefined || indent > 0;
+    blocks.push(
+      <div key={`para-${key}`} style={hasBlockStyle ? { textAlign: align, paddingLeft: indent * 20 } : undefined}>
+        {groupLines.map((lineText, idx) => (
+          <Fragment key={idx}>
+            {renderInlineFormatting(lineText, `para-${key}-${idx}`)}
+            {idx < groupLines.length - 1 && <br />}
+          </Fragment>
+        ))}
+      </div>
+    );
+  }
+  return blocks;
+}
+
+/* ── Voice call transcript ──
+ * A "Live Transcription"-style read-out for voice calls — modeled on
+ * Figma's Live Transcription file (node 4198:13595: plain speaker rows with
+ * a small colored initials circle, name+timestamp, and message text below,
+ * plus inline call-event rows like "Call on hold"/"Call resumed" — no chat
+ * bubbles, no left/right split, everything reads top-to-bottom as one
+ * continuous record). Deliberately NOT built as a lyra-ui component yet —
+ * this is a local, single-app exploration of the pattern; promoting it to
+ * `@nicecxone/lyra-ui` (alongside `ConversationMessage`) is a follow-up
+ * decision, not part of this pass. Reuses this app's existing `Message`
+ * shape and lyra-ui's own color tokens rather than inventing either. */
+
+export type CallTranscriptEventKind =
+  | "hold"
+  | "resume"
+  | "mute"
+  | "unmute"
+  | "poor-connection"
+  | "connection-restored"
+  | "ended";
+
+/** One non-speech moment in a call — rendered as its own icon+label+timestamp
+ *  row, anchored to appear immediately after a specific message via
+ *  `afterMessageId` (rather than carrying its own absolute position in the
+ *  list) so event rows can't drift out of order relative to the dialogue
+ *  they interrupt. */
+export interface CallTranscriptEvent {
+  id: string;
+  afterMessageId: string;
+  kind: CallTranscriptEventKind;
+  label: string;
+  timestamp: string;
+}
+
+const CALL_TRANSCRIPT_EVENT_META: Record<CallTranscriptEventKind, { icon: LucideIcon; tone: "default" | "error" | "success" }> = {
+  hold:                 { icon: Pause,         tone: "default" },
+  resume:               { icon: Phone,         tone: "default" },
+  mute:                 { icon: MicOff,        tone: "default" },
+  unmute:               { icon: Mic,           tone: "default" },
+  "poor-connection":    { icon: AlertTriangle, tone: "error" },
+  "connection-restored":{ icon: CheckCircle2,  tone: "success" },
+  ended:                { icon: PhoneOff,      tone: "default" },
+};
+
+/** Pulls just the clock-time back out of this app's own richer timestamp
+ *  strings (e.g. "Today, 01:58AM · Voice") — the transcript's own rows read
+ *  closer to the Figma reference's plain "9:10 AM" than this app's fuller
+ *  chat-timestamp format. Falls back to the original string if nothing
+ *  matches, so an unexpected format degrades instead of disappearing. */
+function extractTimeOfDay(timestamp: string): string {
+  const match = timestamp.match(/\d{1,2}:\d{2}\s?[AP]M/i);
+  return match ? match[0] : timestamp;
+}
+
+function TranscriptMessageRow({ message }: { message: Message }) {
+  const isAgent = message.variant === "support-agent";
+  return (
+    <div className="flex w-full items-start gap-2">
+      <div
+        className={cn(
+          "flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full lyra-body-xs-emphasis",
+          isAgent
+            ? "bg-lyra-status-info-subtle text-lyra-status-info-strong"
+            : "bg-lyra-accent-pink-soft text-lyra-accent-pink-strong"
+        )}
+        aria-hidden="true"
+      >
+        {getInitials(message.senderName)}
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <div className="flex items-end gap-3">
+          <span className="lyra-body-sm-emphasis text-lyra-fg-default">{message.senderName}</span>
+          <span className="lyra-body-sm text-lyra-fg-secondary">{extractTimeOfDay(message.timestamp)}</span>
+        </div>
+        <div className="lyra-body-sm text-lyra-fg-default">{renderFormattedText(message.text)}</div>
+      </div>
+    </div>
+  );
+}
+
+function TranscriptEventRow({ event }: { event: CallTranscriptEvent }) {
+  const meta = CALL_TRANSCRIPT_EVENT_META[event.kind];
+  const Icon = meta.icon;
+  return (
+    <div className="flex w-full items-center gap-2">
+      <div
+        className={cn(
+          "flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-lyra-status-info-subtle",
+          meta.tone === "error" && "text-lyra-status-critical-strong",
+          meta.tone === "success" && "text-lyra-status-success-strong",
+          meta.tone === "default" && "text-lyra-fg-secondary"
+        )}
+        aria-hidden="true"
+      >
+        <Icon className="h-3.5 w-3.5" strokeWidth={1.5} />
+      </div>
+      <div className="flex flex-1 items-end gap-3">
+        <span className="lyra-body-sm text-lyra-fg-secondary">{event.label}</span>
+        <span className="lyra-body-sm text-lyra-fg-secondary">{extractTimeOfDay(event.timestamp)}</span>
+      </div>
+    </div>
+  );
+}
+
+type TranscriptBlock =
+  | { type: "message"; message: Message }
+  | { type: "events"; events: CallTranscriptEvent[] };
+
+/** Groups the flat message+event lists into render blocks — consecutive
+ *  event rows collapse into one tightly-spaced (12px) sub-stack (matching
+ *  the Figma reference's own grouping of e.g. "Call masked"/"Call
+ *  unmasked"/"Call muted" back to back), while every message keeps the
+ *  thread's normal looser (24px) spacing from whatever comes before/after
+ *  it. */
+function buildTranscriptBlocks(messages: Message[], events: CallTranscriptEvent[]): TranscriptBlock[] {
+  const eventsByAnchor = new Map<string, CallTranscriptEvent[]>();
+  for (const event of events) {
+    const list = eventsByAnchor.get(event.afterMessageId) ?? [];
+    list.push(event);
+    eventsByAnchor.set(event.afterMessageId, list);
+  }
+  const blocks: TranscriptBlock[] = [];
+  for (const message of messages) {
+    blocks.push({ type: "message", message });
+    const anchored = eventsByAnchor.get(message.id);
+    if (anchored?.length) blocks.push({ type: "events", events: anchored });
+  }
+  return blocks;
+}
+
+function VoiceTranscriptThread({ messages, events = [] }: { messages: Message[]; events?: CallTranscriptEvent[] }) {
+  const blocks = buildTranscriptBlocks(messages, events);
+  return (
+    <>
+      {blocks.map((block, i) =>
+        block.type === "message" ? (
+          <TranscriptMessageRow key={block.message.id} message={block.message} />
+        ) : (
+          <div key={`events-${i}`} className="flex w-full flex-col gap-3">
+            {block.events.map((event) => (
+              <TranscriptEventRow key={event.id} event={event} />
+            ))}
+          </div>
+        )
+      )}
+    </>
+  );
 }
 
 /* ── Escalation status pill (Popover + Menu, mirrors lyra-ui's own
@@ -196,6 +499,12 @@ export interface InteractionHeaderProps {
   customerName?: string;
   activeTab?: "chat" | "history";
   onTabChange?: (tab: "chat" | "history") => void;
+  /** True when the current interaction's active channel is a voice call —
+   *  swaps the second tab's label/icon from "Chat" (MessageSquare) to
+   *  "Transcript" (ScrollText), since there's no live chat to view on a
+   *  call, only the transcribed conversation. Same flag InteractionActionsBar
+   *  already takes to decide whether to show call controls. */
+  isVoiceCall?: boolean;
   /** Unassigns/dismisses the current interaction — clears the active
    *  interaction entirely so any open slide-in page (e.g. Directory) takes
    *  over the content column. */
@@ -231,6 +540,7 @@ export function InteractionHeader({
   customerName,
   activeTab,
   onTabChange,
+  isVoiceCall = false,
   onCloseInteraction,
   panelToggle,
   onPanelToggle,
@@ -260,8 +570,16 @@ export function InteractionHeader({
             <Tab active={activeTab === "history"} onClick={() => onTabChange?.("history")} icon={<Clock className="h-4 w-4" strokeWidth={1.5} />}>
               Customer History
             </Tab>
-            <Tab active={activeTab === "chat"} onClick={() => onTabChange?.("chat")} icon={<MessageSquare className="h-4 w-4" strokeWidth={1.5} />}>
-              Chat
+            <Tab
+              active={activeTab === "chat"}
+              onClick={() => onTabChange?.("chat")}
+              icon={
+                isVoiceCall
+                  ? <ScrollText className="h-4 w-4" strokeWidth={1.5} />
+                  : <MessageSquare className="h-4 w-4" strokeWidth={1.5} />
+              }
+            >
+              {isVoiceCall ? "Transcript" : "Chat"}
             </Tab>
           </TabList>
           <button
@@ -472,6 +790,269 @@ function MessageAvatar({ initials, icon, className }: { initials?: string; icon?
 
 const AGENT_AVATAR = <MessageAvatar icon={<User className="h-4 w-4" strokeWidth={1.5} />} className="bg-lyra-bg-primary text-lyra-fg-on-primary" />;
 
+/* ── MessageComposer ──
+ * The reply box for chat and email (never shown for voice — see
+ * `CustomerInteractionPanel`'s own `isVoiceCall` gating above). Two
+ * deliberate choices worth calling out:
+ *
+ * 1. Auto-grow + still manually resizable. lyra-ui's own `Textarea` already
+ *    ships a native `resize-y` drag handle; on top of that, `growToFit`
+ *    below grows the box as content overflows it, but — on purpose — never
+ *    shrinks it back down. That means typing a long reply grows the box
+ *    automatically, and a manual drag (to make room, or to compact it back
+ *    down) is never immediately fought by the next keystroke's auto-grow,
+ *    since auto-grow only ever pushes height up when content genuinely
+ *    doesn't fit, never resets it from scratch.
+ * 2. Formatting stays hidden until asked for. Rather than a permanent row
+ *    of Bold/Italic/etc. icons next to every composer, a single "Aa" toggle
+ *    (the `Type` icon) reveals a small toolbar above the field on demand —
+ *    collapsed by default so the composer's default state stays as plain
+ *    and uncluttered as a bare text field, and the option to keep it open
+ *    for a longer draft is still one click away, not buried behind a menu.
+ */
+
+type InlineFormatAction = "bold" | "italic" | "underline" | "bulletList" | "numberedList" | "link";
+type BlockFormatAction = "alignLeft" | "alignCenter" | "alignRight" | "alignJustify" | "indent" | "outdent";
+type FormatAction = InlineFormatAction | BlockFormatAction;
+
+const BLOCK_FORMAT_ACTIONS = new Set<FormatAction>(["alignLeft", "alignCenter", "alignRight", "alignJustify", "indent", "outdent"]);
+
+/** Tier 1 — always what's revealed first by the "Aa" toggle: the formatting
+ *  used constantly (matches the "3 essentials" instinct, just applied to a
+ *  slightly bigger essential set since this composer already covers lists
+ *  and links, not just bold/italic). */
+const FORMAT_TOOLBAR_PRIMARY: { action: FormatAction; icon: LucideIcon; title: string }[] = [
+  { action: "bold", icon: Bold, title: "Bold" },
+  { action: "italic", icon: Italic, title: "Italic" },
+  { action: "underline", icon: Underline, title: "Underline" },
+  { action: "bulletList", icon: List, title: "Bulleted list" },
+  { action: "numberedList", icon: ListOrdered, title: "Numbered list" },
+  { action: "link", icon: Link2, title: "Link" },
+];
+
+/** Tier 2 — tucked one level deeper behind its own "More formatting"
+ *  toggle at the end of the primary row, rather than always shown
+ *  alongside it. Reached for less often than bold/italic/lists, so it
+ *  costs one extra click instead of permanently taking up toolbar space. */
+const FORMAT_TOOLBAR_SECONDARY: { action: FormatAction; icon: LucideIcon; title: string }[] = [
+  { action: "alignLeft", icon: AlignLeft, title: "Align left" },
+  { action: "alignCenter", icon: AlignCenter, title: "Align center" },
+  { action: "alignRight", icon: AlignRight, title: "Align right" },
+  { action: "alignJustify", icon: AlignJustify, title: "Justify" },
+  { action: "indent", icon: Indent, title: "Increase indent" },
+  { action: "outdent", icon: Outdent, title: "Decrease indent" },
+];
+
+const COMPOSER_MIN_HEIGHT = 120;
+const COMPOSER_MAX_HEIGHT = 320;
+
+export interface MessageComposerProps {
+  onSend: (text: string) => void;
+  /** See `CustomerInteractionPanelProps.sendOnEnter`'s doc comment. */
+  sendOnEnter?: boolean;
+  placeholder?: string;
+}
+
+/** Extends a selection out to the full line(s) it touches — block actions
+ *  (alignment, indent) apply to whole paragraphs, not an arbitrary
+ *  mid-line substring, so a partial selection still affects the complete
+ *  line(s) it's part of. A collapsed cursor (no selection) affects just
+ *  the line it's on. */
+function expandToLineRange(value: string, start: number, end: number): { lineStart: number; lineEnd: number } {
+  const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+  const nextNewline = value.indexOf("\n", end);
+  const lineEnd = nextNewline === -1 ? value.length : nextNewline;
+  return { lineStart, lineEnd };
+}
+
+function MessageComposer({ onSend, sendOnEnter = true, placeholder = "Type a message…" }: MessageComposerProps) {
+  const [value, setValue] = useState("");
+  const [showFormatting, setShowFormatting] = useState(false);
+  const [showMoreFormatting, setShowMoreFormatting] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Grow-only: only ever raises the height when content no longer fits, so
+  // it never undoes a manual resize-y drag on the next keystroke. Runs as a
+  // layout effect (not inside the onChange handler) so it reads the
+  // textarea's post-render scrollHeight and applies before paint — no
+  // one-frame flash at the old height.
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    if (el.scrollHeight > el.clientHeight) {
+      el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT)}px`;
+    }
+  }, [value]);
+
+  // Alignment/indent are block-level — they restyle whichever whole
+  // line(s) the selection touches by rewriting each line's leading
+  // metadata (an `[align:x]` marker and/or leading tabs — see
+  // `renderFormattedText`'s `parseLine`), rather than inserting/wrapping
+  // text at the cursor the way the inline actions below do. Handled as an
+  // early branch since the "wrap the selection, then re-select it" flow
+  // the inline actions share afterward doesn't apply here.
+  const applyBlockFormat = (action: BlockFormatAction, el: HTMLTextAreaElement, selectionStart: number, selectionEnd: number) => {
+    const { lineStart, lineEnd } = expandToLineRange(value, selectionStart, selectionEnd);
+    const block = value.slice(lineStart, lineEnd);
+    const updatedBlock = block
+      .split("\n")
+      .map((line) => {
+        if (action === "indent") return `\t${line}`;
+        if (action === "outdent") return line.startsWith("\t") ? line.slice(1) : line;
+        // Alignment: strip any existing marker (and leading tabs stay
+        // untouched — alignment and indent are independent knobs), then
+        // write the new one. "alignLeft" writes nothing back — it's the
+        // unmarked default, so choosing it just clears whatever was there.
+        const withoutTabs = line.replace(/^\t+/, "");
+        const tabs = line.slice(0, line.length - withoutTabs.length);
+        const withoutAlign = withoutTabs.replace(ALIGN_MARKER, "");
+        const alignKey = action === "alignCenter" ? "center" : action === "alignRight" ? "right" : action === "alignJustify" ? "justify" : null;
+        return `${tabs}${alignKey ? `[align:${alignKey}]` : ""}${withoutAlign}`;
+      })
+      .join("\n");
+
+    const next = value.slice(0, lineStart) + updatedBlock + value.slice(lineEnd);
+    setValue(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(lineStart, lineStart + updatedBlock.length);
+    });
+  };
+
+  const applyFormat = (action: FormatAction) => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const selectionStart = el.selectionStart ?? value.length;
+    const selectionEnd = el.selectionEnd ?? value.length;
+
+    if (BLOCK_FORMAT_ACTIONS.has(action)) {
+      applyBlockFormat(action as BlockFormatAction, el, selectionStart, selectionEnd);
+      return;
+    }
+
+    const selected = value.slice(selectionStart, selectionEnd);
+    let insertion = selected;
+    let cursorOffset = insertion.length;
+
+    switch (action as InlineFormatAction) {
+      case "bold":
+        insertion = `**${selected || "bold text"}**`;
+        break;
+      case "italic":
+        insertion = `*${selected || "italic text"}*`;
+        break;
+      case "underline":
+        insertion = `__${selected || "underlined text"}__`;
+        break;
+      case "link":
+        insertion = `[${selected || "link text"}](https://)`;
+        break;
+      case "bulletList":
+        insertion = (selected || "List item")
+          .split("\n")
+          .map((line) => `- ${line}`)
+          .join("\n");
+        break;
+      case "numberedList":
+        insertion = (selected || "List item")
+          .split("\n")
+          .map((line, i) => `${i + 1}. ${line}`)
+          .join("\n");
+        break;
+    }
+    cursorOffset = insertion.length;
+
+    const next = value.slice(0, selectionStart) + insertion + value.slice(selectionEnd);
+    setValue(next);
+    // Selection restore has to wait a frame — the textarea's value hasn't
+    // actually updated to `next` yet (React re-renders after this handler
+    // returns), so setting the range synchronously here would apply against
+    // the *old* value and land in the wrong place.
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = selectionStart + cursorOffset;
+      el.setSelectionRange(pos, pos);
+    });
+  };
+
+  const handleSend = () => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    onSend(trimmed);
+    setValue("");
+    setShowFormatting(false);
+    setShowMoreFormatting(false);
+    if (textareaRef.current) textareaRef.current.style.height = `${COMPOSER_MIN_HEIGHT}px`;
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (sendOnEnter && e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  return (
+    <div className="shrink-0 border-t border-lyra-border-subtle bg-lyra-bg-surface-base px-6 py-3">
+      {showFormatting && (
+        <div className="mb-2 flex flex-col gap-1">
+          <div className="inline-flex w-fit items-center gap-0.5 rounded-lyra-md border border-lyra-border-subtle bg-lyra-bg-surface-canvas p-1">
+            {FORMAT_TOOLBAR_PRIMARY.map(({ action, icon: Icon, title }) => (
+              <ActionIconButton key={action} size="sm" title={title} onClick={() => applyFormat(action)}>
+                <Icon className="h-4 w-4" strokeWidth={1.5} />
+              </ActionIconButton>
+            ))}
+            <div className="mx-0.5 h-4 w-px bg-lyra-border-subtle" />
+            <ActionIconButton
+              size="sm"
+              title={showMoreFormatting ? "Fewer formatting options" : "More formatting options"}
+              onClick={() => setShowMoreFormatting((v) => !v)}
+              className={cn(showMoreFormatting && "bg-lyra-state-hover")}
+            >
+              <ChevronDown className={cn("h-4 w-4 transition-transform", showMoreFormatting && "rotate-180")} strokeWidth={1.5} />
+            </ActionIconButton>
+          </div>
+          {showMoreFormatting && (
+            <div className="inline-flex w-fit items-center gap-0.5 rounded-lyra-md border border-lyra-border-subtle bg-lyra-bg-surface-canvas p-1">
+              {FORMAT_TOOLBAR_SECONDARY.map(({ action, icon: Icon, title }) => (
+                <ActionIconButton key={action} size="sm" title={title} onClick={() => applyFormat(action)}>
+                  <Icon className="h-4 w-4" strokeWidth={1.5} />
+                </ActionIconButton>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      <div className="flex items-end gap-2">
+        <Textarea
+          ref={textareaRef}
+          value={value}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          rows={1}
+          style={{ height: COMPOSER_MIN_HEIGHT }}
+          className="flex-1"
+          aria-label={placeholder}
+        />
+        <div className="flex shrink-0 items-center gap-1 pb-0.5">
+          <ActionIconButton
+            title="Formatting"
+            onClick={() => setShowFormatting((v) => !v)}
+            className={cn(showFormatting && "bg-lyra-state-hover")}
+          >
+            <Type className="h-4 w-4" strokeWidth={1.5} />
+          </ActionIconButton>
+          <Button variant="default" size="md" onClick={handleSend} disabled={!value.trim()}>
+            <Send className="h-4 w-4" strokeWidth={1.5} />
+            Send
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── CustomerInteractionPanel ──
  * The body below InteractionHeader: action bar + message thread (or a
  * Customer History placeholder), driven entirely by props — the active
@@ -481,32 +1062,69 @@ const AGENT_AVATAR = <MessageAvatar icon={<User className="h-4 w-4" strokeWidth=
 export interface CustomerInteractionPanelProps {
   activeTab: "chat" | "history";
   messages: Message[];
+  /** Same flag InteractionHeader takes — swaps the date stamp's caption
+   *  from "Today" to "Today · Call Transcript" AND swaps the thread's own
+   *  rendering from lyra-ui's chat-bubble `ConversationMessage` to the
+   *  plain-row `VoiceTranscriptThread` (see its own doc comment above) — a
+   *  live transcription reads as one continuous record, not a back-and-forth
+   *  chat, so it gets a genuinely different layout rather than just a label
+   *  change. */
+  isVoiceCall?: boolean;
+  /** Hold/resume/mute/etc. moments interleaved into the voice transcript.
+   *  Ignored when `isVoiceCall` is false. */
+  callEvents?: CallTranscriptEvent[];
+  /** Appends a new outgoing message — omitted (rather than defaulted to a
+   *  no-op) hides the composer entirely, e.g. for a read-only view. Voice
+   *  calls never show a composer regardless of this prop (see
+   *  `isVoiceCall` above) since there's no live call to type into. */
+  onSendMessage?: (text: string) => void;
+  /** Enter sends (Shift+Enter for a newline) when true; when false Enter
+   *  always inserts a newline and sending requires the Send button — email's
+   *  convention, since an accidental Enter-to-send would be surprising
+   *  there in a way it isn't for chat. Default true. */
+  sendOnEnter?: boolean;
 }
 
-export function CustomerInteractionPanel({ activeTab, messages }: CustomerInteractionPanelProps) {
+export function CustomerInteractionPanel({
+  activeTab,
+  messages,
+  isVoiceCall = false,
+  callEvents,
+  onSendMessage,
+  sendOnEnter = true,
+}: CustomerInteractionPanelProps) {
   return (
     <div className="flex flex-1 flex-col min-w-0 overflow-hidden bg-lyra-bg-surface-base">
       {/* ── Message thread ── */}
       {activeTab === "chat" ? (
-        <div className="flex-1 overflow-y-auto px-6 py-6">
-          <div className="mx-auto flex max-w-3xl flex-col gap-6">
-            <ConversationDateStamp label="Today" />
-            {messages.map((m) => (
-              <ConversationMessage
-                key={m.id}
-                variant={toConversationVariant(m.variant)}
-                avatar={m.variant === "support-agent" ? AGENT_AVATAR : (
-                  <MessageAvatar initials={getInitials(m.senderName)} className="bg-lyra-accent-blue-soft text-lyra-accent-blue-strong" />
-                )}
-                senderName={m.senderName}
-                timestamp={m.timestamp}
-                alert={m.alert}
-              >
-                {m.text}
-              </ConversationMessage>
-            ))}
+        <>
+          <div className="flex-1 overflow-y-auto px-6 py-6">
+            <div className="mx-auto flex max-w-3xl flex-col gap-6">
+              <ConversationDateStamp label={isVoiceCall ? "Today · Call Transcript" : "Today"} />
+              {isVoiceCall ? (
+                <VoiceTranscriptThread messages={messages} events={callEvents} />
+              ) : (
+                messages.map((m) => (
+                  <ConversationMessage
+                    key={m.id}
+                    variant={toConversationVariant(m.variant)}
+                    avatar={m.variant === "support-agent" ? AGENT_AVATAR : (
+                      <MessageAvatar initials={getInitials(m.senderName)} className="bg-lyra-accent-blue-soft text-lyra-accent-blue-strong" />
+                    )}
+                    senderName={m.senderName}
+                    timestamp={m.timestamp}
+                    alert={m.alert}
+                  >
+                    {renderFormattedText(m.text)}
+                  </ConversationMessage>
+                ))
+              )}
+            </div>
           </div>
-        </div>
+          {!isVoiceCall && onSendMessage && (
+            <MessageComposer onSend={onSendMessage} sendOnEnter={sendOnEnter} />
+          )}
+        </>
       ) : (
         <div className="flex flex-1 items-center justify-center text-lyra-fg-secondary lyra-body-md">
           Customer history isn't wired up yet.

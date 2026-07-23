@@ -38,6 +38,7 @@ import {
   NavIconButton,
   type EscalationStatus,
   type Message,
+  type CallTranscriptEvent,
   type SlideInDestination,
   type FullPageDestination,
   type NavDestination,
@@ -235,6 +236,10 @@ interface Assignment {
   channels: InteractionChannel[];
   escalationStatus: EscalationStatus;
   messages: Message[];
+  /** Hold/resume/etc. moments shown interleaved into the voice transcript —
+   *  see CustomerInteractionPanel's own CallTranscriptEvent doc comment.
+   *  Only meaningful for a voice interaction; ignored otherwise. */
+  callEvents?: CallTranscriptEvent[];
   /** True for an internal agent-to-agent voice call (created from New
    *  Outbound's Agents group — see `handleStartOutboundCall`) rather than a
    *  customer interaction. Swaps the compact tile's initials avatar for a
@@ -305,12 +310,30 @@ const INITIAL_ASSIGNMENTS: Assignment[] = [
     caseId: "CASE-48350",
     channels: [{ type: "voice", elapsed: "02:05", current: true, preview: "CXoneSMS_1-833-457-2672" }],
     escalationStatus: "resolved",
+    // Full call transcript (this is the demo voice interaction — its "Chat"
+    // tab renders as "Transcript" instead, see InteractionHeader's
+    // isVoiceCall prop) — a complete greeting-to-resolution arc rather than
+    // the shorter exchange the digital channels above use, since a real
+    // call transcript reads as one continuous conversation rather than
+    // discrete back-and-forth chat turns.
     messages: [
-      { id: "1", variant: "support-agent", senderName: CURRENT_AGENT_NAME, timestamp: "Today, 02:00AM · Voice", text: "Thanks for calling — I can see your package has been in transit for 5 days with no movement. Let me look into this." },
-      { id: "2", variant: "customer", senderName: "Customer", timestamp: "Today, 02:02AM · Voice", text: "This is really frustrating, I needed this for a trip this weekend.", alert: { message: "Critical sentiment detected", severity: "critical" } },
-      { id: "3", variant: "support-agent", senderName: CURRENT_AGENT_NAME, timestamp: "Today, 02:04AM · Voice", text: "I completely understand. I'm filing a lost-package claim with the carrier right now and will overnight a replacement at no cost." },
-      { id: "4", variant: "customer", senderName: "Customer", timestamp: "Today, 02:05AM · Voice", text: "Okay, thank you for taking care of this." },
-      { id: "5", variant: "support-agent", senderName: CURRENT_AGENT_NAME, timestamp: "Today, 02:05AM · Voice", text: "You're welcome — you'll get a confirmation email with tracking within the hour." },
+      { id: "1", variant: "support-agent", senderName: CURRENT_AGENT_NAME, timestamp: "Today, 01:58AM · Voice", text: "Thanks for calling in — can I get your name and the order number for the package you're asking about?" },
+      { id: "2", variant: "customer", senderName: "Customer", timestamp: "Today, 01:58AM · Voice", text: "It's Jordan Lee, order number 48213-B. It was supposed to arrive three days ago." },
+      { id: "3", variant: "support-agent", senderName: CURRENT_AGENT_NAME, timestamp: "Today, 01:59AM · Voice", text: "Thanks, Jordan — give me just a moment while I pull up the tracking details." },
+      { id: "4", variant: "support-agent", senderName: CURRENT_AGENT_NAME, timestamp: "Today, 02:00AM · Voice", text: "I can see your package has been sitting at the regional facility for 5 days with no scan movement — that's not typical for this carrier, and it's on us to fix." },
+      { id: "5", variant: "customer", senderName: "Customer", timestamp: "Today, 02:02AM · Voice", text: "This is really frustrating, I needed this for a trip this weekend.", alert: { message: "Critical sentiment detected", severity: "critical" } },
+      { id: "6", variant: "support-agent", senderName: CURRENT_AGENT_NAME, timestamp: "Today, 02:03AM · Voice", text: "I completely understand, and I'm sorry for the inconvenience. I'm filing a lost-package claim with the carrier right now and having a replacement shipped overnight at no cost to you." },
+      { id: "7", variant: "customer", senderName: "Customer", timestamp: "Today, 02:04AM · Voice", text: "Okay, thank you for taking care of this. Will I get a new tracking number?" },
+      { id: "8", variant: "support-agent", senderName: CURRENT_AGENT_NAME, timestamp: "Today, 02:04AM · Voice", text: "Yes — you'll get a confirmation email with the new tracking number within the hour, and the replacement should arrive by tomorrow afternoon." },
+      { id: "9", variant: "customer", senderName: "Customer", timestamp: "Today, 02:05AM · Voice", text: "That works, thank you for your help." },
+      { id: "10", variant: "support-agent", senderName: CURRENT_AGENT_NAME, timestamp: "Today, 02:05AM · Voice", text: "You're very welcome, Jordan. Is there anything else I can help with today?" },
+      { id: "11", variant: "customer", senderName: "Customer", timestamp: "Today, 02:05AM · Voice", text: "No, that's everything." },
+      { id: "12", variant: "support-agent", senderName: CURRENT_AGENT_NAME, timestamp: "Today, 02:05AM · Voice", text: "Great — take care, and again, sorry for the delay. Goodbye!" },
+    ],
+    callEvents: [
+      { id: "ev1", afterMessageId: "3", kind: "hold", label: "Call on hold", timestamp: "Today, 01:59AM" },
+      { id: "ev2", afterMessageId: "3", kind: "resume", label: "Call resumed", timestamp: "Today, 02:00AM" },
+      { id: "ev3", afterMessageId: "12", kind: "ended", label: "Call ended", timestamp: "Today, 02:05AM" },
     ],
   },
 ];
@@ -558,7 +581,28 @@ export function AgentNextGenPage({
 
   const activeAssignment = assignments.find((a) => a.id === activeAssignmentId);
   const isActiveAssignmentVoiceCall = activeAssignment?.channels.some((c) => c.current && c.type === "voice") ?? false;
+  const activeChannelType = activeAssignment?.channels.find((c) => c.current)?.type;
   const activeCustomer = DIRECTORY_CUSTOMERS.find((c) => c.id === activeAssignment?.customerId);
+
+  // Composer's Send button (CustomerInteractionPanel → MessageComposer) —
+  // appends a real outgoing message to whichever assignment is active.
+  // Timestamp/channel label mirror this file's own seeded mock messages'
+  // format ("Today, H:MMAM · Chat") so a sent message reads identically to
+  // the scripted ones already in the thread.
+  const handleSendMessage = (text: string) => {
+    if (!activeAssignmentId) return;
+    const channelLabel = activeChannelType === "email" ? "Email" : "Chat";
+    const newMessage: Message = {
+      id: `sent-${Date.now()}`,
+      variant: "support-agent",
+      senderName: CURRENT_AGENT_NAME,
+      timestamp: `Today, ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · ${channelLabel}`,
+      text,
+    };
+    setAssignments((prev) =>
+      prev.map((a) => (a.id === activeAssignmentId ? { ...a, messages: [...a.messages, newMessage] } : a))
+    );
+  };
 
   const handleEscalationStatusChange = (assignmentId: string, status: EscalationStatus) => {
     setAssignments((prev) => prev.map((a) => (a.id === assignmentId ? { ...a, escalationStatus: status } : a)));
@@ -1279,6 +1323,7 @@ export function AgentNextGenPage({
                       customerName={activeAssignment.customerName}
                       activeTab={activeTab}
                       onTabChange={setActiveTab}
+                      isVoiceCall={isActiveAssignmentVoiceCall}
                       onCloseInteraction={handleCloseInteraction}
                       panelToggle={showPanelToggle ? "left" : undefined}
                       onPanelToggle={() => setSidePanelOpen((v) => !v)}
@@ -1308,7 +1353,14 @@ export function AgentNextGenPage({
                    *  than inside the interaction's own card — see that
                    *  block below for why. */}
                   <div className="relative flex flex-1 overflow-hidden">
-                    <CustomerInteractionPanel activeTab={activeTab} messages={activeAssignment.messages} />
+                    <CustomerInteractionPanel
+                      activeTab={activeTab}
+                      messages={activeAssignment.messages}
+                      isVoiceCall={isActiveAssignmentVoiceCall}
+                      callEvents={activeAssignment.callEvents}
+                      onSendMessage={handleSendMessage}
+                      sendOnEnter={activeChannelType !== "email"}
+                    />
                   </div>
                 </>
               ) : openSlideInPage !== null && slideInVariant !== "float" ? (
