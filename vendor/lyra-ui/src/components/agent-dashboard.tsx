@@ -24,7 +24,7 @@ import { cn } from "../lib/utils";
 import { DashboardCard } from "./dashboard-card";
 import { DashboardQueue, type DashboardQueueItem } from "./dashboard-queue";
 import { Icon } from "./icon";
-import { Tag } from "./tag";
+import { Tag, tagVariants } from "./tag";
 import { Button } from "./button";
 import { Divider } from "./divider";
 import { DonutChart } from "./donut-chart";
@@ -33,6 +33,8 @@ import { RadioGroup, RadioGroupItem } from "./radio";
 import { DateRangePicker, type DateRangePickerProps } from "./date-picker";
 import { filterChipVariants } from "./filter-chip";
 import { Tooltip } from "./tooltip";
+import { CHANNEL_ACCENT } from "./channel-row";
+import { SearchInput } from "./search-input";
 
 /* ── AgentDashboard ──
    The "Home" tab of the Agent Next Gen experience — a greeting, a row of
@@ -499,7 +501,9 @@ export interface AgentDashboardContactHistoryEntry {
   id: string;
   name: string;
   statusLabel: string;
-  statusVariant: "success" | "warning";
+  /** "neutral" — closed with no resolution outcome either way (e.g. a
+   *  request just fulfilled and closed, not "resolved" or "transferred"). */
+  statusVariant: "success" | "warning" | "neutral";
   /** Voice contacts only — shows a "Redial" action next to the status tag. */
   redial: boolean;
   description: string;
@@ -542,6 +546,36 @@ const CONTACT_HISTORY: AgentDashboardContactHistoryEntry[] = [
     description: "Shipping delay — expedited replacement dispatched",
     caseId: "CST-31045", channelType: "chat", channelLabel: "Chat", timeAgo: "1d ago", duration: "9m 15s",
   },
+  {
+    id: "ch6", name: "David Reyes", statusLabel: "Closed", statusVariant: "neutral", redial: false,
+    description: "Invoice request for Q1 — PDF sent",
+    caseId: "CST-14502", channelType: "email", channelLabel: "Email", timeAgo: "12m ago", duration: "4m 10s",
+  },
+  {
+    id: "ch7", name: "Chloe Park", statusLabel: "Resolved", statusVariant: "success", redial: true,
+    description: "Cancellation retained — switched to pause plan",
+    caseId: "CST-29317", channelType: "voice", channelLabel: "Voice", timeAgo: "2d ago", duration: "10m 22s",
+  },
+  {
+    id: "ch8", name: "James Liu", statusLabel: "Resolved", statusVariant: "success", redial: false,
+    description: "Password reset for locked account — identity verified via email",
+    caseId: "CST-41022", channelType: "chat", channelLabel: "Chat", timeAgo: "47m ago", duration: "3m 48s",
+  },
+  {
+    id: "ch9", name: "Sofia Torres", statusLabel: "Resolved", statusVariant: "success", redial: false,
+    description: "Billing cycle discrepancy — adjusted and refund processed",
+    caseId: "CST-38471", channelType: "email", channelLabel: "Email", timeAgo: "3h ago", duration: "7m 22s",
+  },
+  {
+    id: "ch10", name: "Marcus Webb", statusLabel: "Transferred", statusVariant: "warning", redial: true,
+    description: "Service outage reported in region — escalated to technical team",
+    caseId: "CST-19834", channelType: "voice", channelLabel: "Voice", timeAgo: "1d ago", duration: "15m 09s",
+  },
+  {
+    id: "ch11", name: "Aisha Rahman", statusLabel: "Closed", statusVariant: "neutral", redial: false,
+    description: "Plan downgrade request — confirmed and changes applied",
+    caseId: "CST-52106", channelType: "email", channelLabel: "Email", timeAgo: "2d ago", duration: "5m 33s",
+  },
 ];
 
 const EXTENDED_CONTACT_HISTORY: AgentDashboardContactHistoryEntry[] = [
@@ -572,8 +606,15 @@ const EXTENDED_CONTACT_HISTORY: AgentDashboardContactHistoryEntry[] = [
   },
 ];
 
+// A handful of today's own entries — same source-of-truth objects as
+// `yesterday`/`last7` (looked up by id, not duplicated) so there's one
+// place to edit a name/description/etc. Picked for timeAgo values that
+// still read naturally as "today" (minutes/hours, nothing day-plus) and
+// ordered most-recent-first.
+const TODAY_CONTACT_HISTORY_IDS = ["ch1", "ch6", "ch2", "ch3"] as const;
+
 const CONTACT_HISTORY_BY_RANGE: Record<AgentDashboardDateRange, AgentDashboardContactHistoryEntry[]> = {
-  today: [],
+  today: TODAY_CONTACT_HISTORY_IDS.map((id) => CONTACT_HISTORY.find((entry) => entry.id === id)!),
   yesterday: CONTACT_HISTORY,
   last7: [...CONTACT_HISTORY, ...EXTENDED_CONTACT_HISTORY],
   custom: [],
@@ -584,56 +625,119 @@ export interface ContactHistoryCardProps {
   onRedial?: (entry: AgentDashboardContactHistoryEntry) => void;
 }
 
+/** Section label shown above the bordered list — e.g. "Tuesday, Jun 23" —
+ *  only meaningful for the two single-day ranges ("today"/"yesterday").
+ *  "last7"/"custom" span multiple days, so no single date heading applies
+ *  and this returns `undefined` (omitted entirely) for those. */
+function getContactHistoryDateSectionLabel(range: AgentDashboardDateRange): string | undefined {
+  if (range !== "today" && range !== "yesterday") return undefined;
+  const date = new Date();
+  if (range === "yesterday") date.setDate(date.getDate() - 1);
+  return date.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+}
+
 function ContactHistoryCard({ onRedial }: ContactHistoryCardProps) {
   const [dateFilter, setDateFilter] = React.useState<AgentDashboardDateRange>("today");
+  const [search, setSearch] = React.useState("");
   const entries = CONTACT_HISTORY_BY_RANGE[dateFilter];
+  const dateSectionLabel = getContactHistoryDateSectionLabel(dateFilter);
+
+  // Matches against everything visible on a row — name, description, case
+  // ID, channel, and status — so e.g. searching "voice" or "resolved" works
+  // the same as searching a customer's name. Case-insensitive, trimmed so a
+  // stray space doesn't produce a false "no matches".
+  const normalizedSearch = search.trim().toLowerCase();
+  const filteredEntries = normalizedSearch
+    ? entries.filter((entry) =>
+        [entry.name, entry.description, entry.caseId, entry.channelLabel, entry.statusLabel].some((field) =>
+          field.toLowerCase().includes(normalizedSearch)
+        )
+      )
+    : entries;
 
   return (
     <DashboardCard
       variant="neutral-subtle"
       headerTitle="Contact History"
-      headerActions={<DateFilterChip onValueChange={setDateFilter} />}
+      headerActions={
+        <>
+          <SearchInput
+            value={search}
+            onValueChange={setSearch}
+            placeholder="Search by name, case ID, or description"
+            aria-label="Search contact history"
+            className="w-[260px]"
+          />
+          <DateFilterChip onValueChange={setDateFilter} />
+        </>
+      }
     >
-      {entries.length === 0 ? (
-        <div className="flex flex-col items-center justify-center gap-2 px-4 py-10 text-center">
-          <Inbox className="h-6 w-6 text-lyra-fg-secondary" strokeWidth={1.5} aria-hidden="true" />
-          <span className="lyra-body-md text-lyra-fg-secondary">Nothing to Display</span>
-        </div>
-      ) : (
-        <div className="flex flex-col">
-          {entries.map((entry, i) => {
-            const ChannelIcon = CONTACT_HISTORY_CHANNEL_ICON[entry.channelType];
-            return (
-              <div
-                key={entry.id}
-                className={cn("flex items-start justify-between gap-4 px-4 py-4", i > 0 && "border-t border-lyra-border-subtle")}
-              >
-                <div className="flex flex-col gap-1.5 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="lyra-body-md-emphasis text-lyra-fg-default">{entry.name}</span>
-                    <Tag label={entry.statusLabel} variant={entry.statusVariant} />
-                    {entry.redial && (
-                      <Button variant="outline" size="sm" onClick={() => onRedial?.(entry)}>
-                        <PhoneOutgoing className="h-3.5 w-3.5" strokeWidth={1.5} />
-                        Redial
-                      </Button>
-                    )}
+      <div className="flex flex-col gap-3 px-4 pb-4 pt-3">
+        {filteredEntries.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
+            <Inbox className="h-6 w-6 text-lyra-fg-secondary" strokeWidth={1.5} aria-hidden="true" />
+            <span className="lyra-body-md text-lyra-fg-secondary">
+              {normalizedSearch ? "No matching contacts" : "Nothing to Display"}
+            </span>
+          </div>
+        ) : (
+          <>
+            {dateSectionLabel && (
+              <span className="lyra-body-sm-emphasis text-lyra-fg-secondary">{dateSectionLabel}</span>
+            )}
+            <div className="flex flex-col rounded-lyra-lg border border-lyra-border-subtle overflow-hidden">
+              {filteredEntries.map((entry, i) => {
+              const ChannelIcon = CONTACT_HISTORY_CHANNEL_ICON[entry.channelType];
+              return (
+                <div
+                  key={entry.id}
+                  className={cn(
+                    "flex items-start justify-between gap-4 px-4 py-4 bg-lyra-bg-surface-base",
+                    i > 0 && "border-t border-lyra-border-subtle"
+                  )}
+                >
+                  <div className="flex flex-col gap-1.5 min-w-0">
+                    <div className="flex items-baseline gap-2 flex-wrap">
+                      <span className="lyra-body-md-emphasis text-lyra-fg-default">{entry.name}</span>
+                      <Tag label={entry.statusLabel} variant={entry.statusVariant} />
+                    </div>
+                    <span className="lyra-body-md text-lyra-fg-secondary">{entry.description}</span>
+                    <span className="lyra-body-sm text-lyra-fg-secondary">{entry.caseId}</span>
                   </div>
-                  <span className="lyra-body-md text-lyra-fg-secondary">{entry.description}</span>
-                  <span className="lyra-body-sm text-lyra-fg-secondary">{entry.caseId}</span>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <div className="flex items-center gap-2">
+                      {entry.redial && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onRedial?.(entry)}
+                        >
+                          <PhoneOutgoing className="h-3.5 w-3.5" strokeWidth={1.5} />
+                          Redial
+                        </Button>
+                      )}
+                      <span
+                        className={cn(
+                          tagVariants({ shape: "pill" }),
+                          CHANNEL_ACCENT[entry.channelType].bg,
+                          CHANNEL_ACCENT[entry.channelType].text,
+                          CHANNEL_ACCENT[entry.channelType].border
+                        )}
+                      >
+                        <ChannelIcon className="h-3 w-3" strokeWidth={1.5} aria-hidden="true" />
+                        {entry.channelLabel}
+                      </span>
+                      <span className="lyra-body-sm text-lyra-fg-secondary whitespace-nowrap">{entry.timeAgo}</span>
+                    </div>
+                    <span className="lyra-body-md-emphasis tabular-nums text-lyra-fg-default whitespace-nowrap">{entry.duration}</span>
+                  </div>
                 </div>
-                <div className="flex flex-col items-end gap-1 shrink-0">
-                  <span className="inline-flex items-center gap-1.5 lyra-body-sm text-lyra-fg-secondary whitespace-nowrap">
-                    <ChannelIcon className="h-4 w-4" strokeWidth={1.5} />
-                    {entry.channelLabel} · {entry.timeAgo}
-                  </span>
-                  <span className="lyra-body-md-emphasis tabular-nums text-lyra-fg-default whitespace-nowrap">{entry.duration}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
     </DashboardCard>
   );
 }
