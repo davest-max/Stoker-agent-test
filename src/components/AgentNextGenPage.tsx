@@ -26,6 +26,7 @@ import {
   type DraggableVariant,
   type InteractionChannel,
   type ChannelType,
+  type CreateNewOutboundContact,
   type AgentDashboardContactHistoryEntry,
 } from "@nicecxone/lyra-ui";
 import appIcon from "@/assets/app-icon.svg";
@@ -67,6 +68,7 @@ import {
   CalendarDays,
   LayoutGrid,
   Settings,
+  Headset,
   X,
 } from "lucide-react";
 
@@ -233,11 +235,26 @@ interface Assignment {
   channels: InteractionChannel[];
   escalationStatus: EscalationStatus;
   messages: Message[];
+  /** True for an internal agent-to-agent voice call (created from New
+   *  Outbound's Agents group — see `handleStartOutboundCall`) rather than a
+   *  customer interaction. Swaps the compact tile's initials avatar for a
+   *  headset glyph (`InteractionNavItem`'s `avatarIcon`) so it doesn't read
+   *  as a customer card — there's no `customerId`/`DIRECTORY_CUSTOMERS`
+   *  record backing it, and `customerName` here is the *other agent's*
+   *  name, not a customer's. */
+  isInternalAgentCall?: boolean;
 }
 
 /** The logged-in agent (matches the AgentProfile name in the top app header)
  *  — used as the senderName for every support-agent message below. */
 const CURRENT_AGENT_NAME = "John Smith";
+
+/** New 5-digit case id for a freshly-created assignment tile (New Outbound
+ *  → `handleStartOutboundCall`) — same "CASE-#####" shape as the seeded
+ *  `INITIAL_ASSIGNMENTS`, just generated instead of hand-picked. */
+function generateCaseId(): string {
+  return `CASE-${Math.floor(10000 + Math.random() * 90000)}`;
+}
 
 const INITIAL_ASSIGNMENTS: Assignment[] = [
   {
@@ -552,7 +569,6 @@ export function AgentNextGenPage({
   const handleSelectAssignment = (id: string) => {
     setActiveAssignmentId(id);
     setActiveTab("chat");
-    setCustomerCardOverrideId(undefined);
     // Selecting an assignment card always returns to the interaction view —
     // if Settings/Dashboard currently has the screen, close it. Other
     // slide-ins (Directory, etc.) are left alone since they can coexist
@@ -565,6 +581,111 @@ export function AgentNextGenPage({
   // content column since there's no interaction left to dock beside.
   const handleCloseInteraction = () => {
     setActiveAssignmentId(undefined);
+  };
+
+  // Unassign & Dismiss from a tile's own per-channel kebab menu (see
+  // `channel-row.tsx`'s `buildVoiceMenuItems`/`buildDigitalMenuItems` —
+  // every channel type's default menu already wires this action to
+  // `InteractionNavItem`'s `onDismiss`/`onDismissChannel`; this app just
+  // wasn't passing either prop down yet, so the action fired but did
+  // nothing). Every assignment here only ever has one open channel, so in
+  // practice `onDismiss` (whole-card removal) is the one that actually
+  // fires — `onDismissChannel` is wired too for correctness if that
+  // changes later. Clearing `activeAssignmentId` only when the dismissed
+  // card was the active one — matches `handleCloseInteraction` above
+  // rather than auto-selecting another tile, so dismissing a background
+  // tile never disturbs whatever the agent is currently looking at.
+  const handleDismissAssignment = (id: string) => {
+    setAssignments((prev) => prev.filter((a) => a.id !== id));
+    setActiveAssignmentId((prev) => (prev === id ? undefined : prev));
+  };
+
+  const handleDismissChannel = (assignmentId: string, channel: InteractionChannel) => {
+    setAssignments((prev) =>
+      prev.map((a) =>
+        a.id === assignmentId
+          ? { ...a, channels: a.channels.filter((c) => (c.id ?? c.type) !== (channel.id ?? channel.type)) }
+          : a
+      )
+    );
+  };
+
+  /** New Outbound's `onStartCall` — fired for every matched-contact outbound
+   *  attempt except the Agents-group "chat" icon (that's intercepted
+   *  earlier by `onOpenInternalChat`, straight into Internal Chat, and
+   *  never reaches here). Two cases actually create an assignment tile:
+   *   - Customer-kind contact, any channel — a genuine new customer
+   *     interaction, so it gets a real tile (linked to its
+   *     `DIRECTORY_CUSTOMERS` record via `customerId`) and becomes active,
+   *     same as picking any other assignment card.
+   *   - Agent-kind contact, voice channel only — an internal agent-to-agent
+   *     call. Still gets a tile (so the call shows up in the same
+   *     assignment rail every other interaction does, and the agent doesn't
+   *     lose track of it while working something else), but flagged
+   *     `isInternalAgentCall` so the tile reads as internal (headset icon,
+   *     no customer identity) rather than as a customer card. Every other
+   *     agent-kind channel is a no-op here — agents only ever offer
+   *     "chat"/"voice" (see `DIRECTORY_AGENTS`), and chat never reaches this
+   *     handler in the first place.
+   *  Skill/Team/External-kind contacts are left as a console log only for
+   *  now — nothing asked for a tile in those cases yet. */
+  const handleStartOutboundCall = (selection: {
+    contact: CreateNewOutboundContact;
+    channel: ChannelType;
+    phone: string;
+    skillId: string;
+  }) => {
+    const { contact, channel, phone, skillId } = selection;
+    const skillLabel = OUTBOUND_CONFIG.skillOptions.find((o) => o.value === skillId)?.label;
+    const channelLabel = OUTBOUND_CONFIG.channelOptions.find((o) => o.id === channel)?.label ?? channel;
+
+    if (contact.kind === "agent") {
+      if (channel !== "voice") {
+        // eslint-disable-next-line no-console
+        console.log("Start call:", channel, "→", contact.name, `(phone: ${phone}, skill: ${skillId})`);
+        return;
+      }
+      const id = `agent-call-${contact.id}-${Date.now()}`;
+      const newAssignment: Assignment = {
+        id,
+        customerName: contact.name,
+        elapsed: "00:00",
+        issueSummary: `Internal voice call with ${contact.name}.`,
+        subject: `Internal call — ${contact.name}`,
+        caseId: generateCaseId(),
+        channels: [{ type: "voice", elapsed: "00:00", current: true, preview: skillLabel }],
+        escalationStatus: "in-progress",
+        messages: [],
+        isInternalAgentCall: true,
+      };
+      setAssignments((prev) => [newAssignment, ...prev]);
+      setActiveAssignmentId(id);
+      setActiveTab("chat");
+      return;
+    }
+
+    if (contact.kind === "customer") {
+      const id = `outbound-${contact.id}-${Date.now()}`;
+      const newAssignment: Assignment = {
+        id,
+        customerName: contact.name,
+        customerId: contact.id,
+        elapsed: "00:00",
+        issueSummary: `Outbound ${channelLabel} to ${contact.name}.`,
+        subject: `Outbound ${channelLabel}`,
+        caseId: generateCaseId(),
+        channels: [{ type: channel, elapsed: "00:00", current: true, preview: skillLabel }],
+        escalationStatus: "in-progress",
+        messages: [],
+      };
+      setAssignments((prev) => [newAssignment, ...prev]);
+      setActiveAssignmentId(id);
+      setActiveTab("chat");
+      return;
+    }
+
+    // eslint-disable-next-line no-console
+    console.log("Start call:", channel, "→", contact.name, `(phone: ${phone}, skill: ${skillId})`);
   };
 
   /* AI panel show/hide */
@@ -1030,7 +1151,7 @@ export function AgentNextGenPage({
             <>
               <NewOutboundPopover
                 title="New Outbound"
-                outbound={{ ...OUTBOUND_CONFIG, onOpenInternalChat: openInternalChatWith }}
+                outbound={{ ...OUTBOUND_CONFIG, onStartCall: handleStartOutboundCall, onOpenInternalChat: openInternalChatWith }}
                 expanded={navOpen}
               />
               <RailNavButton
@@ -1052,6 +1173,9 @@ export function AgentNextGenPage({
                   expanded={navOpen}
                   issueSummary={a.issueSummary}
                   channels={a.channels}
+                  avatarIcon={a.isInternalAgentCall ? <Headset className="h-4 w-4" strokeWidth={1.5} /> : undefined}
+                  onDismiss={() => handleDismissAssignment(a.id)}
+                  onDismissChannel={(channel) => handleDismissChannel(a.id, channel)}
                 />
               ))}
             </>

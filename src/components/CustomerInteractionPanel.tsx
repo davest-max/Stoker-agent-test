@@ -26,6 +26,7 @@ import {
   AudioLines,
   Disc,
   Grip,
+  PhoneOff,
   ArrowUpRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -438,6 +439,9 @@ export function InteractionActionsBar({ isVoiceCall = false, customerName, issue
             </ActionIconButton>
             <ActionIconButton size="sm" title="Dialpad">
               <Grip className="h-4 w-4" strokeWidth={2} />
+            </ActionIconButton>
+            <ActionIconButton size="sm" title="Hang Up">
+              <PhoneOff className="h-4 w-4 text-lyra-status-critical-strong" strokeWidth={2} />
             </ActionIconButton>
             <div className="mx-0.5 h-5 w-px bg-lyra-border-subtle" />
           </>
