@@ -272,7 +272,13 @@ function extractTimeOfDay(timestamp: string): string {
 function TranscriptMessageRow({ message }: { message: Message }) {
   const isAgent = message.variant === "support-agent";
   return (
-    <div className="flex w-full items-start gap-2">
+    // Every row is a freshly-mounted DOM node the moment its message is
+    // appended (keyed by message.id in VoiceTranscriptThread's .map), so
+    // an unconditional mount-in animation is enough to make a transcript
+    // that's actively being appended to (e.g. the outbound-call demo
+    // transcript in AgentNextGenPage) read as building line-by-line rather
+    // than popping in — no separate "is this new" tracking needed.
+    <div className="flex w-full items-start gap-2 animate-in fade-in slide-in-from-bottom-1 duration-300">
       <div
         className={cn(
           "flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full lyra-body-xs-emphasis",
@@ -299,7 +305,7 @@ function TranscriptEventRow({ event }: { event: CallTranscriptEvent }) {
   const meta = CALL_TRANSCRIPT_EVENT_META[event.kind];
   const Icon = meta.icon;
   return (
-    <div className="flex w-full items-center gap-2">
+    <div className="flex w-full items-center gap-2 animate-in fade-in slide-in-from-bottom-1 duration-300">
       <div
         className={cn(
           "flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-lyra-status-info-subtle",

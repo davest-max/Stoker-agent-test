@@ -584,24 +584,62 @@ export function AgentNextGenPage({
   const activeChannelType = activeAssignment?.channels.find((c) => c.current)?.type;
   const activeCustomer = DIRECTORY_CUSTOMERS.find((c) => c.id === activeAssignment?.customerId);
 
+  // Shared by the composer's real Send action and the fake outbound-call
+  // transcript below — appends one message to a specific assignment
+  // (not necessarily the active one, though in practice it always is for
+  // Send; the outbound demo below fires on a timer and the agent could in
+  // theory have switched away by the time it lands). Timestamp/channel
+  // label mirror this file's own seeded mock messages' format
+  // ("Today, H:MMAM · Chat") so an appended message reads identically to
+  // the scripted ones already in the thread. `prev.map` naturally no-ops
+  // if the assignment's since been dismissed, so no extra guard is needed
+  // for that case.
+  const appendMessageToAssignment = (
+    assignmentId: string,
+    message: Pick<Message, "variant" | "senderName" | "text">,
+    channelLabel: string
+  ) => {
+    const newMessage: Message = {
+      ...message,
+      id: `${assignmentId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      timestamp: `Today, ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · ${channelLabel}`,
+    };
+    setAssignments((prev) =>
+      prev.map((a) => (a.id === assignmentId ? { ...a, messages: [...a.messages, newMessage] } : a))
+    );
+  };
+
   // Composer's Send button (CustomerInteractionPanel → MessageComposer) —
   // appends a real outgoing message to whichever assignment is active.
-  // Timestamp/channel label mirror this file's own seeded mock messages'
-  // format ("Today, H:MMAM · Chat") so a sent message reads identically to
-  // the scripted ones already in the thread.
   const handleSendMessage = (text: string) => {
     if (!activeAssignmentId) return;
     const channelLabel = activeChannelType === "email" ? "Email" : "Chat";
-    const newMessage: Message = {
-      id: `sent-${Date.now()}`,
-      variant: "support-agent",
-      senderName: CURRENT_AGENT_NAME,
-      timestamp: `Today, ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · ${channelLabel}`,
-      text,
-    };
-    setAssignments((prev) =>
-      prev.map((a) => (a.id === activeAssignmentId ? { ...a, messages: [...a.messages, newMessage] } : a))
-    );
+    appendMessageToAssignment(activeAssignmentId, { variant: "support-agent", senderName: CURRENT_AGENT_NAME, text }, channelLabel);
+  };
+
+  // Fake, staggered transcript for a brand-new outbound voice call — a
+  // generic opening exchange (the call has no real content yet, it was
+  // just dialed from New Outbound) that arrives a line at a time on a
+  // timer, mimicking live transcription rather than the whole thing
+  // appearing at once. Each `TranscriptMessageRow` animates in on mount
+  // (see its own `animate-in` classes), so this reads as the transcript
+  // actively building rather than just intermittently updating.
+  const scheduleOutboundVoiceDemoTranscript = (assignmentId: string, contactName: string, skillLabel?: string) => {
+    const agentFirstName = CURRENT_AGENT_NAME.split(" ")[0];
+    const topic = skillLabel ?? "your account";
+    const lines: { variant: Message["variant"]; senderName: string; text: string; delayMs: number }[] = [
+      { variant: "support-agent", senderName: CURRENT_AGENT_NAME, delayMs: 1200,
+        text: `Hi, this is ${agentFirstName} calling from support — is now an okay time to chat?` },
+      { variant: "customer", senderName: contactName, delayMs: 3200,
+        text: "Sure, go ahead." },
+      { variant: "support-agent", senderName: CURRENT_AGENT_NAME, delayMs: 5600,
+        text: `Great — I'm calling about ${topic}. I just wanted to check in and see how everything's going.` },
+      { variant: "customer", senderName: contactName, delayMs: 8000,
+        text: "Oh, thanks for reaching out — things have been fine so far." },
+    ];
+    lines.forEach(({ delayMs, ...message }) => {
+      setTimeout(() => appendMessageToAssignment(assignmentId, message, "Voice"), delayMs);
+    });
   };
 
   const handleEscalationStatusChange = (assignmentId: string, status: EscalationStatus) => {
@@ -725,6 +763,9 @@ export function AgentNextGenPage({
       setAssignments((prev) => [newAssignment, ...prev]);
       setActiveAssignmentId(id);
       setActiveTab("chat");
+      if (channel === "voice") {
+        scheduleOutboundVoiceDemoTranscript(id, contact.name, skillLabel);
+      }
       return;
     }
 
