@@ -4,7 +4,13 @@ export default {
   content: [
     "./index.html",
     "./src/**/*.{ts,tsx,js,jsx}",
+    // Dev scans the live sibling checkout; build scans the vendored
+    // snapshot instead (see vite.config.ts's own comment on the same
+    // split — vendor/lyra-ui doesn't exist until a build has run, and
+    // ../lyra-ui doesn't exist in a hosted build's checkout, but an
+    // unmatched glob here is harmless either way).
     "../lyra-ui/src/**/*.{ts,tsx}",
+    "./vendor/lyra-ui/src/**/*.{ts,tsx}",
   ],
   theme: {
     extend: {

@@ -1,4 +1,4 @@
-@import '../../lyra-ui/src/styles/lyra-tokens.css';
+@import '@nicecxone/lyra-ui/styles';
 
 @tailwind base;
 @tailwind components;
