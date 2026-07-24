@@ -11,7 +11,7 @@ import {
   Button,
   AiSparkleIcon,
 } from "@nicecxone/lyra-ui";
-import { CircleCheck, GripVertical } from "lucide-react";
+import { CircleCheckBig, GripVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /* ── Outcome popup ──
@@ -218,7 +218,7 @@ export function OutcomeButton({ customerName, onApprove }: OutcomeButtonProps) {
         onClick={handleOpen}
         className={cn(open && "bg-lyra-state-hover")}
       >
-        <CircleCheck className="h-4 w-4 text-lyra-status-info-strong" strokeWidth={2} />
+        <CircleCheckBig className="h-4 w-4 text-lyra-status-info-strong" strokeWidth={2} />
       </ActionIconButton>
 
       {open &&

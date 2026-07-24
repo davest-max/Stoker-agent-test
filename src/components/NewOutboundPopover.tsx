@@ -7,6 +7,7 @@ import {
   ListItem,
   FavoriteButton,
   Label,
+  Tooltip,
   CHANNEL_ACCENT,
   type ChannelType,
   type CreateNewOutboundContact,
@@ -29,6 +30,11 @@ import { contactMatchesQuery } from "@/data/directory";
  * buttons (not a channel dropdown) with selected/unselected states.
  * `lyra-ui/create-new.tsx` itself is untouched — see this repo's CLAUDE.md
  * ("never modify a lyra-ui core component from here"). */
+
+/* Hidden for user testing only — re-enable by flipping this back to true.
+ * Skill selection stays fully wired underneath (state, onStart signature,
+ * recent-skills tracking) so this is a pure visibility toggle, not a removal. */
+const SHOW_SKILL_SELECTION = false;
 
 /* ── Types ── */
 
@@ -291,6 +297,7 @@ function OutboundDetailScreen({
   phoneOptions,
   skillOptions,
   recentSkillOptions,
+  disabledChannels,
   onStart,
 }: {
   contact: CreateNewOutboundContact | null;
@@ -309,11 +316,18 @@ function OutboundDetailScreen({
    *  the agent has started at least one outbound interaction with a skill
    *  selected. */
   recentSkillOptions: { value: string; label: string }[];
+  /** Channel types to disable regardless of what the contact/query would
+   *  otherwise allow — used by `AddOutboundButton` below to block starting
+   *  a duplicate of a channel that's already live on this same interaction
+   *  (e.g. a second simultaneous Call), separate from whether the contact
+   *  supports that channel at all. */
+  disabledChannels?: ChannelType[];
   onStart: (channel: ChannelType, addressValue: string, skillId: string) => void;
 }) {
-  const enabledChannels = contact
+  const enabledChannels = (contact
     ? contact.channels
-    : eligibleChannelsForQuery(query, channelOptions.map((c) => c.id));
+    : eligibleChannelsForQuery(query, channelOptions.map((c) => c.id))
+  ).filter((c) => !disabledChannels?.includes(c));
 
   // A matched contact's own labeled numbers/addresses (Mobile/Home/Work,
   // Work/Personal — see `CreateNewOutboundContact.phoneNumbers`/
@@ -371,7 +385,7 @@ function OutboundDetailScreen({
         ? [{ value: addressValue, label: addressValue }]
         : [];
 
-  const canStart = !!selectedChannel && !!addressValue && !!skillId;
+  const canStart = !!selectedChannel && !!addressValue && (!SHOW_SKILL_SELECTION || !!skillId);
 
   // "Recent" section up top (last 3 skills used, most-recent-first) plus
   // everything else beneath — recent skills stay in the full list too, so
@@ -434,16 +448,18 @@ function OutboundDetailScreen({
         />
       )}
 
-      <Select
-        label="Select outbound skill"
-        placeholder="Select outbound skill"
-        value={skillId}
-        onValueChange={setSkillId}
-        options={skillOptions}
-        optionGroups={skillOptionGroups}
-        searchable
-        portalDropdown
-      />
+      {SHOW_SKILL_SELECTION && (
+        <Select
+          label="Select outbound skill"
+          placeholder="Select outbound skill"
+          value={skillId}
+          onValueChange={setSkillId}
+          options={skillOptions}
+          optionGroups={skillOptionGroups}
+          searchable
+          portalDropdown
+        />
+      )}
 
       <Button
         variant="default"
@@ -454,6 +470,118 @@ function OutboundDetailScreen({
         {selectedChannel ? CHANNEL_ACTION_LABEL[selectedChannel] : "Start Interaction"}
       </Button>
     </div>
+  );
+}
+
+/* ── AddOutboundButton ──
+ * The interaction header's "+" (next to the Chat tab, see
+ * CustomerInteractionPanel.tsx's InteractionHeader) — starts another
+ * channel with the customer already open on this interaction, without
+ * leaving the card the way the left-nav's own `NewOutboundPopover` above
+ * would (that one always starts from a blank contact search). Skips
+ * straight to `OutboundDetailScreen` for the known `contact` — no browse
+ * screen behind it, so there's no back arrow, and no "No match found"
+ * branch either (the contact is always on hand here, never `null`).
+ * Anchored to its own trigger (not the left-nav's), same as any other
+ * `Popover`-based control in this file. */
+
+export interface AddOutboundButtonProps {
+  contact: CreateNewOutboundContact;
+  channelOptions: CreateNewChannelOption[];
+  phoneOptions: { value: string; label: string }[];
+  skillOptions: { value: string; label: string }[];
+  /** Channel types already open on this interaction (e.g. the customer's
+   *  live Chat) — disabled in the picker so the agent can't start a
+   *  redundant second one of the same type. See `OutboundDetailScreen`'s
+   *  own `disabledChannels` doc comment. */
+  openChannelTypes?: ChannelType[];
+  onStart: (channel: ChannelType, addressValue: string, skillId: string) => void;
+  className?: string;
+}
+
+export function AddOutboundButton({
+  contact,
+  channelOptions,
+  phoneOptions,
+  skillOptions,
+  openChannelTypes,
+  onStart,
+  className,
+}: AddOutboundButtonProps) {
+  const [open, setOpen] = useState(false);
+
+  const header = (
+    <div className="flex items-center justify-between border-b border-lyra-border-subtle px-4 py-4">
+      <div className="flex min-w-0 items-center gap-2">
+        <ContactAvatar contact={contact} />
+        <p className="lyra-heading-sm text-lyra-fg-default truncate">
+          New Outbound · {contact.name}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={() => setOpen(false)}
+        aria-label="Close"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary transition-colors hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus"
+      >
+        <X className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
+      </button>
+    </div>
+  );
+
+  return (
+    <Tooltip content="Add Outbound" placement="bottom" asLabel>
+      <span className="inline-flex">
+        <Popover
+          open={open}
+          onOpenChange={setOpen}
+          placement="bottom"
+          align="start"
+          sideOffset={4}
+          maxWidth="320px"
+          maxHeight="520px"
+          // `z-[10003]`, not the baseline `z-[9999]` — matches the tier
+          // lyra-ui's own `OutboundAddButton` uses (see its own doc comment
+          // in create-new.tsx) for a "+" that can end up nested inside
+          // another `z-[9999]` popover. Not currently nested anywhere in
+          // this app, just cheap insurance if a future caller (e.g.
+          // `InteractionNavItem.headerAction`) renders this inside one —
+          // higher than strictly needed here, never lower.
+          // it strictly needs to be there.
+          className="z-[10003] w-[320px]"
+          header={header}
+          content={
+            <OutboundDetailScreen
+              contact={contact}
+              query=""
+              channelOptions={channelOptions}
+              phoneOptions={phoneOptions}
+              skillOptions={skillOptions}
+              recentSkillOptions={[]}
+              disabledChannels={openChannelTypes}
+              onStart={(channel, addressValue, skillId) => {
+                onStart(channel, addressValue, skillId);
+                setOpen(false);
+              }}
+            />
+          }
+        >
+          <button
+            type="button"
+            aria-label="Add Outbound"
+            aria-haspopup="true"
+            aria-expanded={open}
+            onClick={() => setOpen((v) => !v)}
+            className={cn(
+              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary transition-colors hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus",
+              className
+            )}
+          >
+            <Plus className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
+          </button>
+        </Popover>
+      </span>
+    </Tooltip>
   );
 }
 

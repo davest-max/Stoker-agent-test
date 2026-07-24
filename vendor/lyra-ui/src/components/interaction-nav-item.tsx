@@ -1,6 +1,6 @@
 import * as React from "react";
 import { cn } from "../lib/utils";
-import { CHANNEL_ROW_COMPONENTS, CHANNEL_ACCENT, type InteractionChannel, type ChannelType } from "./channel-row";
+import { CHANNEL_ROW_COMPONENTS, CHANNEL_ACCENT, ElevatedChannelRow, type InteractionChannel, type ChannelType } from "./channel-row";
 import { Popover } from "./popover";
 
 /* ── Helpers ── */
@@ -119,6 +119,16 @@ export interface InteractionNavItemProps {
    * back in as `currentChannelKey`, so a click on either side updates both.
    */
   onCurrentChannelChange?: (key: string) => void;
+  /**
+   * When set and this card has more than one open channel, collapses the
+   * usual per-channel row list (one accent-colored chip per open channel)
+   * into a single neutral summary row carrying this label instead — e.g.
+   * "Elevation" once a customer has two simultaneous live channels, since
+   * the card is no longer "about" any one channel type at that point. Has
+   * no effect on a single-channel card (the one real row still renders
+   * normally).
+   */
+  elevatedLabel?: string;
   className?: string;
 }
 
@@ -147,6 +157,7 @@ const InteractionNavItem = React.forwardRef<HTMLDivElement, InteractionNavItemPr
       headerAction,
       currentChannelKey,
       onCurrentChannelChange,
+      elevatedLabel,
       className,
     },
     ref
@@ -294,41 +305,56 @@ const InteractionNavItem = React.forwardRef<HTMLDivElement, InteractionNavItemPr
 
         {channels.length > 0 && (
           <div className="flex flex-col">
-            {channels.map((ch, i) => {
-              // Only ever highlighted on the active card — an inactive card's
-              // "current" channel still renders plain, same as every other row.
-              const highlighted = active && channelKey(ch) === effectiveCurrentKey;
-              const RowComponent = CHANNEL_ROW_COMPONENTS[ch.type];
-              return (
-                <RowComponent
-                  key={`${channelKey(ch)}-${i}`}
-                  elapsed={ch.elapsed}
-                  preview={ch.preview}
-                  highlighted={highlighted}
-                  isFirst={i === 0}
-                  awaitingResponse={ch.awaitingResponse}
-                  removable={ch.removable}
-                  menuItems={ch.menuItems}
-                  // More than one open channel — "Unassign & Dismiss" only
-                  // ends this one, not the whole card (see `onDismissChannel`
-                  // above). With just one, ending it means ending the card.
-                  // Passes the whole channel (not just its `type`) so a
-                  // consumer with two same-type channels open can tell
-                  // exactly which one to drop.
-                  onDismiss={() => {
-                    if (channels.length > 1) onDismissChannel?.(ch);
-                    else onDismiss?.();
-                  }}
-                  onSelect={() => {
-                    // Unconditional even when controlled — harmless (ignored
-                    // by `effectiveCurrentKey` while `currentChannelKey` is
-                    // defined) and keeps the uncontrolled path unchanged.
-                    setManualCurrentKey(channelKey(ch));
-                    onCurrentChannelChange?.(channelKey(ch));
-                  }}
-                />
-              );
-            })}
+            {elevatedLabel && channels.length > 1 ? (
+              // Collapsed multi-channel summary — see `elevatedLabel`'s own
+              // doc comment above. `currentChannel` (computed above from
+              // `effectiveCurrentKey`) supplies the elapsed/preview text,
+              // same source every individual row would otherwise use.
+              <ElevatedChannelRow
+                label={elevatedLabel}
+                elapsed={currentChannel?.elapsed ?? channels[channels.length - 1]!.elapsed}
+                preview={currentChannel?.preview}
+                highlighted={active}
+                isFirst
+                onDismiss={onDismiss}
+              />
+            ) : (
+              channels.map((ch, i) => {
+                // Only ever highlighted on the active card — an inactive card's
+                // "current" channel still renders plain, same as every other row.
+                const highlighted = active && channelKey(ch) === effectiveCurrentKey;
+                const RowComponent = CHANNEL_ROW_COMPONENTS[ch.type];
+                return (
+                  <RowComponent
+                    key={`${channelKey(ch)}-${i}`}
+                    elapsed={ch.elapsed}
+                    preview={ch.preview}
+                    highlighted={highlighted}
+                    isFirst={i === 0}
+                    awaitingResponse={ch.awaitingResponse}
+                    removable={ch.removable}
+                    menuItems={ch.menuItems}
+                    // More than one open channel — "Unassign & Dismiss" only
+                    // ends this one, not the whole card (see `onDismissChannel`
+                    // above). With just one, ending it means ending the card.
+                    // Passes the whole channel (not just its `type`) so a
+                    // consumer with two same-type channels open can tell
+                    // exactly which one to drop.
+                    onDismiss={() => {
+                      if (channels.length > 1) onDismissChannel?.(ch);
+                      else onDismiss?.();
+                    }}
+                    onSelect={() => {
+                      // Unconditional even when controlled — harmless (ignored
+                      // by `effectiveCurrentKey` while `currentChannelKey` is
+                      // defined) and keeps the uncontrolled path unchanged.
+                      setManualCurrentKey(channelKey(ch));
+                      onCurrentChannelChange?.(channelKey(ch));
+                    }}
+                  />
+                );
+              })
+            )}
           </div>
         )}
       </>

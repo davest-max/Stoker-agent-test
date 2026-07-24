@@ -24,7 +24,8 @@ import { cn } from "../lib/utils";
 import { DashboardCard } from "./dashboard-card";
 import { DashboardQueue, type DashboardQueueItem } from "./dashboard-queue";
 import { Icon } from "./icon";
-import { Tag, tagVariants } from "./tag";
+import { tagVariants } from "./tag";
+import { Chip, type ChipColor } from "./chip";
 import { Button } from "./button";
 import { Divider } from "./divider";
 import { DonutChart } from "./donut-chart";
@@ -520,6 +521,17 @@ const CONTACT_HISTORY_CHANNEL_ICON: Record<AgentDashboardContactHistoryEntry["ch
   email: Mail,
 };
 
+/** Maps this row's own success/warning/neutral vocabulary onto `Chip`'s
+ *  raw color families — `Chip`'s soft-tint/strong-text "subtle" variant,
+ *  not `Tag`'s separate bordered, semantic-variant styling (a consuming
+ *  app's own status-picker chip, e.g. an escalation-status control, is a
+ *  natural match for this same `Chip` treatment). */
+const CONTACT_HISTORY_STATUS_COLOR: Record<AgentDashboardContactHistoryEntry["statusVariant"], ChipColor> = {
+  success: "green",
+  warning: "orange",
+  neutral: "slate",
+};
+
 const CONTACT_HISTORY: AgentDashboardContactHistoryEntry[] = [
   {
     id: "ch1", name: "Nathan Cole", statusLabel: "Resolved", statusVariant: "success", redial: true,
@@ -697,12 +709,23 @@ function ContactHistoryCard({ onRedial }: ContactHistoryCardProps) {
                   )}
                 >
                   <div className="flex flex-col gap-1.5 min-w-0">
-                    <div className="flex items-baseline gap-2 flex-wrap">
-                      <span className="lyra-body-md-emphasis text-lyra-fg-default">{entry.name}</span>
-                      <Tag label={entry.statusLabel} variant={entry.statusVariant} />
-                    </div>
+                    <span className="lyra-body-md-emphasis text-lyra-fg-default">{entry.name}</span>
                     <span className="lyra-body-md text-lyra-fg-secondary">{entry.description}</span>
-                    <span className="lyra-body-sm text-lyra-fg-secondary">{entry.caseId}</span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="lyra-body-sm text-lyra-fg-secondary">{entry.caseId}</span>
+                      {/* `Chip` (`variant="subtle"`) rather than `Tag` —
+                       *  smaller and borderless here, and never interactive
+                       *  (no dropdown chevron/click target): this is a
+                       *  read-only historical record, not a status the
+                       *  agent changes from this list. */}
+                      <Chip
+                        color={CONTACT_HISTORY_STATUS_COLOR[entry.statusVariant]}
+                        variant="subtle"
+                        className="h-5 border-0 px-1.5 lyra-body-sm-emphasis"
+                      >
+                        {entry.statusLabel}
+                      </Chip>
+                    </div>
                   </div>
                   <div className="flex flex-col items-end gap-1 shrink-0">
                     <div className="flex items-center gap-2">

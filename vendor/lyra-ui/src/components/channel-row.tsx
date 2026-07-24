@@ -7,11 +7,12 @@ import {
   TriangleAlert,
   User,
   ArrowUpRight,
-  CircleCheck,
+  CircleCheckBig,
   Send,
   FileDown,
   Languages,
   PlayCircle,
+  Layers,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { tagVariants } from "./tag";
@@ -157,7 +158,7 @@ export function buildDigitalMenuItems(onDismiss?: () => void): MenuEntry[] {
   return [
     { id: "unassign-dismiss", label: "Unassign & Dismiss", icon: <TriangleAlert className="h-4 w-4" strokeWidth={1.5} />, onClick: onDismiss },
     { id: "consult-transfer", label: "Consult / Transfer", icon: <ConsultTransferIcon /> },
-    { id: "outcome", label: "Outcome", icon: <CircleCheck className="h-4 w-4 text-lyra-status-info-strong" strokeWidth={1.5} /> },
+    { id: "outcome", label: "Outcome", icon: <CircleCheckBig className="h-4 w-4 text-lyra-status-info-strong" strokeWidth={1.5} /> },
     { id: "send-transcript", label: "Send Transcript", icon: <Send className="h-4 w-4" strokeWidth={1.5} /> },
     { id: "download-transcript", label: "Download Transcript", icon: <FileDown className="h-4 w-4" strokeWidth={1.5} /> },
     { id: "translate-messages", label: "Translate Messages", icon: <Languages className="h-4 w-4" strokeWidth={1.5} /> },
@@ -168,7 +169,7 @@ export function buildVoiceMenuItems(onDismiss?: () => void): MenuEntry[] {
   return [
     { id: "unassign-dismiss", label: "Unassign & Dismiss", icon: <TriangleAlert className="h-4 w-4" strokeWidth={1.5} />, onClick: onDismiss },
     { id: "consult-transfer", label: "Consult / Transfer", icon: <ConsultTransferIcon /> },
-    { id: "outcome", label: "Outcome", icon: <CircleCheck className="h-4 w-4 text-lyra-status-info-strong" strokeWidth={1.5} /> },
+    { id: "outcome", label: "Outcome", icon: <CircleCheckBig className="h-4 w-4 text-lyra-status-info-strong" strokeWidth={1.5} /> },
     { id: "listen-recording", label: "Listen to Recording", icon: <PlayCircle className="h-4 w-4" strokeWidth={1.5} /> },
     { id: "download-recording", label: "Download Recording", icon: <FileDown className="h-4 w-4" strokeWidth={1.5} /> },
   ];
@@ -178,8 +179,11 @@ export function buildVoiceMenuItems(onDismiss?: () => void): MenuEntry[] {
 
 interface ChannelRowProps {
   /** Which channel this row is — drives the chip's color via `CHANNEL_ACCENT`
-   *  (identity color, not urgency; see that map's own doc comment). */
-  channel: ChannelType;
+   *  (identity color, not urgency; see that map's own doc comment). Optional
+   *  so `ElevatedChannelRow` below (a multi-channel summary row with no
+   *  single `ChannelType`/accent color of its own) can render through this
+   *  same base row via `chipClassName` instead. */
+  channel?: ChannelType;
   icon: React.ReactNode;
   label: string;
   elapsed: string;
@@ -198,6 +202,9 @@ interface ChannelRowProps {
    *  stop the click from also bubbling up to the card's own `onClick`
    *  (selecting the whole card), only the kebab button does that. */
   onSelect?: () => void;
+  /** Overrides the chip's bg/text/border classes instead of deriving them
+   *  from `CHANNEL_ACCENT[channel]` — used by `ElevatedChannelRow` below. */
+  chipClassName?: string;
 }
 
 const ChannelRow: React.FC<ChannelRowProps> = ({
@@ -212,8 +219,9 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
   menuItems,
   showMenu = true,
   onSelect,
+  chipClassName,
 }) => {
-  const accent = CHANNEL_ACCENT[channel];
+  const accent = channel ? CHANNEL_ACCENT[channel] : undefined;
   return (
   <div
     onClick={onSelect}
@@ -225,7 +233,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
     )}
   >
     <div className="flex items-center gap-2">
-      <span className={cn(tagVariants({ shape: "pill" }), accent.bg, accent.text, accent.border)}>
+      <span className={cn(tagVariants({ shape: "pill" }), chipClassName ?? cn(accent?.bg, accent?.text, accent?.border))}>
         <span aria-hidden="true">{icon}</span>
         {label}
       </span>
@@ -331,6 +339,46 @@ const CHANNEL_ROW_COMPONENTS: Record<ChannelType, React.FC<ChannelRowInstancePro
   whatsapp: WhatsAppChannelRow,
   voice: VoiceChannelRow,
 };
+
+/* ── ElevatedChannelRow ──
+ * Replaces the full per-channel row list on an `InteractionNavItem` card
+ * once it has more than one simultaneously open channel with the same
+ * customer — at that point the card is no longer "about" any single
+ * channel type, so a neutral/white pill (the `tagVariants` "neutral" token,
+ * same one `Tag`'s own `variant="neutral"` uses) replaces every channel's
+ * own accent-colored chip instead of picking one arbitrarily or stacking
+ * every row redundantly. `Layers` (rather than a specific channel icon)
+ * reads as "more than one channel" at a glance. Sourced from whichever
+ * channel is currently "current" for elapsed/preview, same as any other
+ * row — this is a summary of that one plus its siblings, not a new data
+ * shape of its own. */
+export interface ElevatedChannelRowProps {
+  label: string;
+  elapsed: string;
+  preview?: string;
+  highlighted?: boolean;
+  isFirst?: boolean;
+  /** Wired to the whole card's `onDismiss` — with several channels
+   *  collapsed into this one summary row, there's no single row left to
+   *  scope "Unassign & Dismiss" to just one channel, so it ends the whole
+   *  interaction instead (matches the single-channel-card behavior
+   *  `InteractionNavItem`'s own `onDismiss` doc comment describes). */
+  onDismiss?: () => void;
+}
+
+const ElevatedChannelRow: React.FC<ElevatedChannelRowProps> = ({ label, elapsed, preview, highlighted, isFirst, onDismiss }) => (
+  <ChannelRow
+    icon={<Layers className="h-3 w-3" strokeWidth={1.5} />}
+    label={label}
+    elapsed={elapsed}
+    preview={preview}
+    highlighted={highlighted}
+    isFirst={isFirst}
+    chipClassName="bg-lyra-bg-surface-canvas text-lyra-fg-secondary border-lyra-border-subtle"
+    menuItems={onDismiss ? [{ id: "unassign-dismiss", label: "Unassign & Dismiss", icon: <TriangleAlert className="h-4 w-4" strokeWidth={1.5} />, onClick: onDismiss }] : []}
+    showMenu={!!onDismiss}
+  />
+);
 
 /** Per-type icon + label — the same choices each `*ChannelRow` wrapper above
  *  already bakes in, exposed here so `ChannelTab` (and any other component
@@ -478,4 +526,5 @@ export {
   CHANNEL_ROW_COMPONENTS,
   CHANNEL_TYPE_META,
   ChannelTab,
+  ElevatedChannelRow,
 };

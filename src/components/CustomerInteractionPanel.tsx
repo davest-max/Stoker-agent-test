@@ -6,6 +6,7 @@ import {
   Menu,
   TabList,
   Tab,
+  ChannelTab,
   Tooltip,
   Chip,
   ConversationMessage,
@@ -14,6 +15,7 @@ import {
   type MenuEntry,
   type ConversationVariant,
   type ChipColor,
+  type InteractionChannel,
 } from "@nicecxone/lyra-ui";
 import {
   MessageSquare,
@@ -21,7 +23,6 @@ import {
   Clock,
   Plus,
   User,
-  MoreVertical,
   ChevronDown,
   Pause,
   MicOff,
@@ -421,38 +422,6 @@ function EscalationStatusPill({
   );
 }
 
-/* ── Header kebab menu — plain button (not ActionIconButton) so it isn't
- *  auto-wrapped in a Tooltip, which would sit between it and Popover's own
- *  `asChild` trigger wiring. ── */
-
-function HeaderKebabMenu({ onCloseInteraction }: { onCloseInteraction?: () => void }) {
-  const [open, setOpen] = useState(false);
-  const items: MenuEntry[] = [
-    { id: "close", label: "Unassign & Dismiss", onClick: onCloseInteraction },
-    { id: "print", label: "Print conversation" },
-    { id: "export", label: "Export transcript" },
-  ];
-  return (
-    <Popover
-      open={open}
-      onOpenChange={setOpen}
-      placement="bottom"
-      align="end"
-      content={<Menu items={items} aria-label="More options" className="border-0 shadow-none bg-transparent min-w-[180px]" />}
-    >
-      <button
-        type="button"
-        aria-label="More options"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        className="flex h-8 w-8 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary transition-colors hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus"
-      >
-        <MoreVertical className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
-      </button>
-    </Popover>
-  );
-}
-
 /* ── Panel toggle buttons — same left/right toggles PageHeader offered,
  *  copied verbatim (icon, tooltip, hover/click wiring) so this header keeps
  *  that behavior when it replaces PageHeader in the page's own header slot. ── */
@@ -540,6 +509,34 @@ export interface InteractionHeaderProps {
    *  living in the always-present `AppHeader`. */
   aiPanelOpen?: boolean;
   onAskAiClick?: () => void;
+  /** Every channel currently open on this interaction — rendered as one
+   *  `ChannelTab` each, alongside "Customer History", instead of the single
+   *  fixed Chat/Transcript tab this used to always show. Falls back to that
+   *  old single-tab behavior when omitted/empty, so a caller that hasn't
+   *  been updated to pass this yet (or has a channel-less interaction)
+   *  keeps working unchanged. */
+  channels?: InteractionChannel[];
+  /** Which of `channels` is the one currently shown in the chat/transcript
+   *  pane — keeps this tab bar in lockstep with the matching
+   *  `InteractionNavItem` card's own current-channel state (both driven by
+   *  the same parent state), same pairing lyra-ui's own `ChannelTab` doc
+   *  comment describes. Keyed the same way (`channel.id ?? channel.type`). */
+  currentChannelKey?: string;
+  onChannelSelect?: (key: string) => void;
+  /** "Unassign & Dismiss" from one channel's own tab — ends just that
+   *  channel (see `InteractionNavItem`'s own `onDismissChannel` for the
+   *  matching card-side behavior). Only reachable when more than one
+   *  channel is open; a single-channel tab's dismiss goes through
+   *  `onCloseInteraction` instead, ending the whole interaction. */
+  onDismissChannel?: (channel: InteractionChannel) => void;
+  /** Rendered in the "+" slot next to the channel tabs — e.g. this app's own
+   *  `AddOutboundButton` (NewOutboundPopover.tsx), scoped to whichever
+   *  customer this interaction belongs to. Kept as a generic slot (not a
+   *  dedicated `onAddOutbound`-style prop) so this component has no direct
+   *  dependency on NewOutboundPopover.tsx's/directory.ts's outbound-picker
+   *  types — same reasoning as lyra-ui's own `InteractionNavItem
+   *  .headerAction` slot. */
+  addOutboundAction?: React.ReactNode;
 }
 
 export function InteractionHeader({
@@ -554,76 +551,120 @@ export function InteractionHeader({
   takeoverTitle,
   aiPanelOpen,
   onAskAiClick,
+  channels,
+  currentChannelKey,
+  onChannelSelect,
+  onDismissChannel,
+  addOutboundAction,
 }: InteractionHeaderProps) {
   return (
-    <div className="flex items-center gap-2 border-b border-lyra-border-subtle px-6 py-4">
-      {takeover && takeoverTitle && (
-        <h1 className="lyra-heading-lg shrink-0 pr-2 text-lyra-fg-default">{takeoverTitle}</h1>
-      )}
+    <>
+      {/* Row 1 — customer identity + global actions. Tabs used to live
+       *  here too (see the row-2 block below) — pulled onto their own row
+       *  since this one only ever really had room to show them squeezed. */}
+      <div className="flex items-center gap-2 border-b border-lyra-border-subtle px-6 py-4">
+        {takeover && takeoverTitle && (
+          <h1 className="lyra-heading-lg shrink-0 pr-2 text-lyra-fg-default">{takeoverTitle}</h1>
+        )}
 
+        {!takeover && (
+          <>
+            {panelToggle === "left" && (
+              <>
+                <LeftPanelToggle onToggle={onPanelToggle} />
+                <div className="h-5 w-px bg-lyra-border-subtle" />
+              </>
+            )}
+
+            <h1 className="lyra-heading-lg shrink-0 pr-2 text-lyra-fg-default">{customerName || "Customer"}</h1>
+
+            <span className="flex-1" />
+
+            {/* Moved here from AppHeader's own action row — see
+             *  `aiPanelOpen`'s doc comment above for why. A real
+             *  icon+text Button (not the icon-only/Tooltip treatment the
+             *  other header actions use) so it reads as its own inline
+             *  action rather than blending into the icon row. */}
+            <Button
+              variant="outline"
+              size="md"
+              aria-expanded={aiPanelOpen}
+              onClick={onAskAiClick}
+              className={cn(aiPanelOpen && "bg-lyra-state-hover")}
+            >
+              <AiSparkleIcon className="h-4 w-4" />
+              Ask AI
+            </Button>
+          </>
+        )}
+      </div>
+
+      {/* Row 2 — Customer History + one tab per open channel, plus "Add
+       *  Outbound" immediately after the last tab (not pinned to the row's
+       *  far right — that only happened because `TabList` previously took
+       *  `flex-1` to stay full-width). Deliberately NOT `lyra-channel-tab
+       *  -list-wrap` here either: that class only stays safe (see row 1's
+       *  own history) when this element's width comes from `flex-1`
+       *  (flex-basis 0%) rather than its own content, and content-based
+       *  sizing is exactly what "sit right next to the last tab" needs —
+       *  losing the address/label auto-collapse at narrow widths is an
+       *  acceptable trade for that. The trailing spacer soaks up whatever's
+       *  left so the row's height/border still span full width. */}
       {!takeover && (
-        <>
-          {panelToggle === "left" && (
-            <>
-              <LeftPanelToggle onToggle={onPanelToggle} />
-              <div className="h-5 w-px bg-lyra-border-subtle" />
-            </>
-          )}
-
-          <h1 className="lyra-heading-lg shrink-0 pr-2 text-lyra-fg-default">{customerName || "Customer"}</h1>
-
+        <div className="flex items-center gap-2 border-b border-lyra-border-subtle px-6 pb-2">
           <TabList className="border-b-0">
             <Tab active={activeTab === "history"} onClick={() => onTabChange?.("history")} icon={<Clock className="h-4 w-4" strokeWidth={1.5} />}>
               Customer History
             </Tab>
-            <Tab
-              active={activeTab === "chat"}
-              onClick={() => onTabChange?.("chat")}
-              icon={
-                isVoiceCall
-                  ? <ScrollText className="h-4 w-4" strokeWidth={1.5} />
-                  : <MessageSquare className="h-4 w-4" strokeWidth={1.5} />
-              }
-            >
-              {isVoiceCall ? "Transcript" : "Chat"}
-            </Tab>
+            {channels && channels.length > 0 ? (
+              channels.map((ch) => {
+                const key = ch.id ?? ch.type;
+                return (
+                  <ChannelTab
+                    key={key}
+                    type={ch.type}
+                    active={activeTab === "chat" && currentChannelKey === key}
+                    onClick={() => {
+                      onTabChange?.("chat");
+                      onChannelSelect?.(key);
+                    }}
+                    onDismiss={() => {
+                      if (channels.length > 1) onDismissChannel?.(ch);
+                      else onCloseInteraction?.();
+                    }}
+                  />
+                );
+              })
+            ) : (
+              // Fallback for a caller that hasn't been updated to pass
+              // `channels` yet — the single fixed tab this always showed
+              // before.
+              <Tab
+                active={activeTab === "chat"}
+                onClick={() => onTabChange?.("chat")}
+                icon={
+                  isVoiceCall
+                    ? <ScrollText className="h-4 w-4" strokeWidth={1.5} />
+                    : <MessageSquare className="h-4 w-4" strokeWidth={1.5} />
+                }
+              >
+                {isVoiceCall ? "Transcript" : "Chat"}
+              </Tab>
+            )}
           </TabList>
-          <button
-            type="button"
-            aria-label="Add tab"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary transition-colors hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus"
-          >
-            <Plus className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
-          </button>
-
-          {/* Kebab acts on the currently-selected customer, so it sits right
-           *  next to the interaction (name/tabs) — a divider marks that
-           *  boundary. Customer profile used to have its own icon here too,
-           *  but that's now the LeftPanelToggle at the far left (see its own
-           *  comment). */}
-          <div className="h-5 w-px bg-lyra-border-subtle" />
-          <HeaderKebabMenu onCloseInteraction={onCloseInteraction} />
-
+          {addOutboundAction ?? (
+            <button
+              type="button"
+              aria-label="Add tab"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary transition-colors hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus"
+            >
+              <Plus className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
+            </button>
+          )}
           <span className="flex-1" />
-
-          {/* Moved here from AppHeader's own action row — see
-           *  `aiPanelOpen`'s doc comment above for why. A real
-           *  icon+text Button (not the icon-only/Tooltip treatment the
-           *  other header actions use) so it reads as its own inline
-           *  action rather than blending into the icon row. */}
-          <Button
-            variant="outline"
-            size="md"
-            aria-expanded={aiPanelOpen}
-            onClick={onAskAiClick}
-            className={cn(aiPanelOpen && "bg-lyra-state-hover")}
-          >
-            <AiSparkleIcon className="h-4 w-4" />
-            Ask AI
-          </Button>
-        </>
+        </div>
       )}
-    </div>
+    </>
   );
 }
 

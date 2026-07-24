@@ -44,7 +44,7 @@ import {
   type NavDestination,
 } from "@/components/CustomerInteractionPanel";
 import { SlideInPage, SlideInPlaceholder } from "@/components/SlideInPage";
-import { NewOutboundPopover, type NewOutboundConfig } from "@/components/NewOutboundPopover";
+import { NewOutboundPopover, AddOutboundButton, type NewOutboundConfig } from "@/components/NewOutboundPopover";
 import { InternalChatTrigger, InternalChatDockedPanel, InternalChatFloatPanel, type ChatView } from "@/components/InternalChatPopover";
 import { INITIAL_FAVORITE_EMPLOYEE_IDS, INITIAL_CHAT_THREADS, type InternalChatMessage } from "@/data/internalChat";
 import { DirectoryPage } from "@/components/DirectoryPage";
@@ -234,6 +234,17 @@ interface Assignment {
   subject: string;
   caseId: string;
   channels: InteractionChannel[];
+  /** Which of `channels` is "current" (shown in the chat/transcript pane,
+   *  highlighted on this card) — the single source of truth shared by
+   *  `InteractionNavItem`'s own `currentChannelKey`/`onCurrentChannelChange`
+   *  props and `InteractionHeader`'s new per-channel `ChannelTab` bar, so
+   *  clicking either stays in sync with the other. Keyed the same way both
+   *  of those already key channels: `channel.id ?? channel.type`. Falls
+   *  back to whichever channel is flagged `current` (or the last channel)
+   *  via `resolveCurrentChannelKey` below until the agent actually picks
+   *  one — every seeded `INITIAL_ASSIGNMENTS` entry below only has one
+   *  channel anyway, so that fallback is all they ever need. */
+  currentChannelKey?: string;
   escalationStatus: EscalationStatus;
   messages: Message[];
   /** Hold/resume/etc. moments shown interleaved into the voice transcript —
@@ -261,6 +272,37 @@ function generateCaseId(): string {
   return `CASE-${Math.floor(10000 + Math.random() * 90000)}`;
 }
 
+/** Same identity lyra-ui's own `InteractionNavItem`/`ChannelTab` use
+ *  internally for a channel — `id` when set, else `type`. Mirrored here
+ *  (rather than imported — it's a private helper local to
+ *  interaction-nav-item.tsx there) so this file's own current-channel state
+ *  keys channels exactly the same way both of those components do. */
+function channelKey(ch: InteractionChannel): string {
+  return ch.id ?? ch.type;
+}
+
+/** Resolves which of an assignment's channels is actually "current" —
+ *  `currentChannelKey` when it still matches an open channel, else
+ *  whichever channel is flagged `current` (last one, if more than one
+ *  incorrectly is), else just the last channel. Same fallback order
+ *  `InteractionNavItem` computes internally for its own uncontrolled case,
+ *  kept in sync here so this file's derived `activeChannelType` (and
+ *  anything else reading "the" current channel) never disagrees with what
+ *  the card/tab bar actually show. */
+function resolveCurrentChannelKey(a: Assignment): string | undefined {
+  if (a.currentChannelKey && a.channels.some((c) => channelKey(c) === a.currentChannelKey)) {
+    return a.currentChannelKey;
+  }
+  const fallback = [...a.channels].reverse().find((c) => c.current) ?? a.channels[a.channels.length - 1];
+  return fallback ? channelKey(fallback) : undefined;
+}
+
+/** Demo seed data — kept around for manual testing (e.g. temporarily
+ *  swapping the `useState<Assignment[]>([])` call below back to
+ *  `useState<Assignment[]>(INITIAL_ASSIGNMENTS)`), but not loaded by
+ *  default: the app now starts with an empty rail and Control Center as
+ *  the landing page, per this repo's own product decision to demo a clean
+ *  first-load state. */
 const INITIAL_ASSIGNMENTS: Assignment[] = [
   {
     id: "sofia",
@@ -368,8 +410,8 @@ export function AgentNextGenPage({
   // mount, in which case starting expanded would just auto-collapse a tick
   // later (see the isNavNarrow effect below), producing a visible flash.
   const [navOpen, setNavOpen] = useState(() => window.innerWidth >= NAV_NARROW_BREAKPOINT);
-  const [assignments, setAssignments] = useState<Assignment[]>(INITIAL_ASSIGNMENTS);
-  const [activeAssignmentId, setActiveAssignmentId] = useState<string | undefined>(INITIAL_ASSIGNMENTS[0]?.id);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [activeAssignmentId, setActiveAssignmentId] = useState<string | undefined>(undefined);
   const [activeTab, setActiveTab] = useState<"chat" | "history">("chat");
   const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   const [notifications, setNotifications] = useState(INITIAL_NOTIFICATIONS);
@@ -448,8 +490,11 @@ export function AgentNextGenPage({
    *  `lastSlideIn` lags behind `openSlideInPage` on close so a slide-in's
    *  title/icon/content don't blank out mid-way through the width-collapse
    *  animation — only relevant for the slide-in destinations, so it's never
-   *  updated for a full-page one. */
-  const [openSlideInPage, setOpenSlideInPage] = useState<NavDestination | null>(null);
+   *  updated for a full-page one. Defaults to "dashboard" (Control
+   *  Center) — with the rail starting empty (see `assignments` above),
+   *  that's the landing page rather than the "No active interaction
+   *  selected" empty state. */
+  const [openSlideInPage, setOpenSlideInPage] = useState<NavDestination | null>("dashboard");
   const [lastSlideIn, setLastSlideIn] = useState<SlideInDestination>("directory");
 
   /* Slide-in panel (Contacts/Directory/Schedule) — same float/dock state
@@ -580,9 +625,19 @@ export function AgentNextGenPage({
   };
 
   const activeAssignment = assignments.find((a) => a.id === activeAssignmentId);
-  const isActiveAssignmentVoiceCall = activeAssignment?.channels.some((c) => c.current && c.type === "voice") ?? false;
-  const activeChannelType = activeAssignment?.channels.find((c) => c.current)?.type;
+  const activeCurrentChannelKey = activeAssignment ? resolveCurrentChannelKey(activeAssignment) : undefined;
+  const activeChannelType = activeAssignment?.channels.find((c) => channelKey(c) === activeCurrentChannelKey)?.type;
+  const isActiveAssignmentVoiceCall = activeChannelType === "voice";
   const activeCustomer = DIRECTORY_CUSTOMERS.find((c) => c.id === activeAssignment?.customerId);
+  /** The outbound-contact record backing the active assignment's customer,
+   *  if any — feeds the header's `AddOutboundButton` (name/avatar/channels
+   *  it supports) the same way `useOutboundAddButton`'s lyra-ui equivalent
+   *  looks a contact up by id. `undefined` (internal agent calls, a
+   *  not-yet-identified caller) just means no "+" renders — see
+   *  `addOutboundAction` below. */
+  const activeOutboundContact: CreateNewOutboundContact | undefined = DIRECTORY_CUSTOMERS.find(
+    (c) => c.id === activeAssignment?.customerId
+  );
 
   // Shared by the composer's real Send action and the fake outbound-call
   // transcript below — appends one message to a specific assignment
@@ -670,13 +725,14 @@ export function AgentNextGenPage({
   // every channel type's default menu already wires this action to
   // `InteractionNavItem`'s `onDismiss`/`onDismissChannel`; this app just
   // wasn't passing either prop down yet, so the action fired but did
-  // nothing). Every assignment here only ever has one open channel, so in
-  // practice `onDismiss` (whole-card removal) is the one that actually
-  // fires — `onDismissChannel` is wired too for correctness if that
-  // changes later. Clearing `activeAssignmentId` only when the dismissed
-  // card was the active one — matches `handleCloseInteraction` above
-  // rather than auto-selecting another tile, so dismissing a background
-  // tile never disturbs whatever the agent is currently looking at.
+  // nothing). Most assignments here only ever have one open channel, so in
+  // practice `onDismiss` (whole-card removal) is the one that usually
+  // fires — `onDismissChannel` handles the case where "Add Outbound" (see
+  // `handleAddOutboundChannel` below) has put a second channel on the same
+  // card. Clearing `activeAssignmentId` only when the dismissed card was
+  // the active one — matches `handleCloseInteraction` above rather than
+  // auto-selecting another tile, so dismissing a background tile never
+  // disturbs whatever the agent is currently looking at.
   const handleDismissAssignment = (id: string) => {
     setAssignments((prev) => prev.filter((a) => a.id !== id));
     setActiveAssignmentId((prev) => (prev === id ? undefined : prev));
@@ -690,6 +746,48 @@ export function AgentNextGenPage({
           : a
       )
     );
+  };
+
+  // Shared by `InteractionNavItem`'s own `onCurrentChannelChange` (clicking
+  // a channel row on the card) and `InteractionHeader`'s new `ChannelTab`
+  // bar (clicking a tab) — both drive this same piece of state, so clicking
+  // either stays in lockstep with the other (see `Assignment
+  // .currentChannelKey`'s own doc comment).
+  const handleChannelSelect = (assignmentId: string, key: string) => {
+    setAssignments((prev) => prev.map((a) => (a.id === assignmentId ? { ...a, currentChannelKey: key } : a)));
+  };
+
+  /** The header's "+" (`AddOutboundButton`, next to the Chat tab) — starts
+   *  another channel with the customer already on this interaction. Unlike
+   *  `handleStartOutboundCall` below (always creates a brand-new assignment
+   *  tile), this appends to the *existing* assignment's own `channels`
+   *  array and makes the new channel current, so the agent sees one card
+   *  with two live channels instead of two separate cards for the same
+   *  customer — matches `InteractionNavItem`'s `elevatedLabel` prop, which
+   *  swaps that card's per-channel chip for a single "Elevation" chip once
+   *  `channels.length > 1` (see its own doc comment in interaction-nav-item
+   *  .tsx). */
+  const handleAddOutboundChannel = (assignmentId: string, channel: ChannelType, address: string, skillId: string) => {
+    const skillLabel = OUTBOUND_CONFIG.skillOptions.find((o) => o.value === skillId)?.label;
+    const newChannel: InteractionChannel = {
+      id: `${channel}-${Date.now()}`,
+      type: channel,
+      elapsed: "00:00",
+      current: true,
+      preview: skillLabel,
+    };
+    setAssignments((prev) =>
+      prev.map((a) =>
+        a.id === assignmentId
+          ? { ...a, channels: [...a.channels, newChannel], currentChannelKey: channelKey(newChannel) }
+          : a
+      )
+    );
+    setActiveTab("chat");
+    if (channel === "voice") {
+      const assignment = assignments.find((a) => a.id === assignmentId);
+      if (assignment) scheduleOutboundVoiceDemoTranscript(assignmentId, assignment.customerName ?? "the customer", skillLabel);
+    }
   };
 
   /** New Outbound's `onStartCall` — fired for every matched-contact outbound
@@ -1258,6 +1356,9 @@ export function AgentNextGenPage({
                   expanded={navOpen}
                   issueSummary={a.issueSummary}
                   channels={a.channels}
+                  currentChannelKey={resolveCurrentChannelKey(a)}
+                  onCurrentChannelChange={(key) => handleChannelSelect(a.id, key)}
+                  elevatedLabel={a.channels.length > 1 ? "Elevation" : undefined}
                   avatarIcon={a.isInternalAgentCall ? <Headset className="h-4 w-4" strokeWidth={1.5} /> : undefined}
                   onDismiss={() => handleDismissAssignment(a.id)}
                   onDismissChannel={(channel) => handleDismissChannel(a.id, channel)}
@@ -1370,6 +1471,22 @@ export function AgentNextGenPage({
                       onPanelToggle={() => setSidePanelOpen((v) => !v)}
                       aiPanelOpen={aiPanelOpen}
                       onAskAiClick={() => setAiPanelOpen((v) => !v)}
+                      channels={activeAssignment.channels}
+                      currentChannelKey={activeCurrentChannelKey}
+                      onChannelSelect={(key) => handleChannelSelect(activeAssignment.id, key)}
+                      onDismissChannel={(channel) => handleDismissChannel(activeAssignment.id, channel)}
+                      addOutboundAction={
+                        activeOutboundContact ? (
+                          <AddOutboundButton
+                            contact={activeOutboundContact}
+                            channelOptions={OUTBOUND_CONFIG.channelOptions}
+                            phoneOptions={OUTBOUND_CONFIG.phoneOptions}
+                            skillOptions={OUTBOUND_CONFIG.skillOptions}
+                            openChannelTypes={activeAssignment.channels.map((c) => c.type)}
+                            onStart={(channel, address, skillId) => handleAddOutboundChannel(activeAssignment.id, channel, address, skillId)}
+                          />
+                        ) : undefined
+                      }
                     />
                   )}
                   {showPageHeader && (
