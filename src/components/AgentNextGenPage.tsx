@@ -841,6 +841,14 @@ export function AgentNextGenPage({
       setAssignments((prev) => [newAssignment, ...prev]);
       setActiveAssignmentId(id);
       setActiveTab("chat");
+      // Starting this call always surfaces the interaction panel — if
+      // Control Center/Settings currently has the whole content column
+      // (see `isFullPageActive`), close it so `activeAssignment` takes over
+      // there instead of leaving the agent on the page they started from.
+      // Matches `handleSelectAssignment`'s own full-page-dismiss behavior;
+      // other slide-ins (Directory, etc.) already yield to `activeAssignment`
+      // without needing this since they're not full-page.
+      setOpenSlideInPage((v) => (v !== null && FULL_PAGE_DESTINATIONS.has(v) ? null : v));
       return;
     }
 
@@ -861,6 +869,8 @@ export function AgentNextGenPage({
       setAssignments((prev) => [newAssignment, ...prev]);
       setActiveAssignmentId(id);
       setActiveTab("chat");
+      // Same full-page dismiss as the internal-agent-call branch above.
+      setOpenSlideInPage((v) => (v !== null && FULL_PAGE_DESTINATIONS.has(v) ? null : v));
       if (channel === "voice") {
         scheduleOutboundVoiceDemoTranscript(id, contact.name, skillLabel);
       }
