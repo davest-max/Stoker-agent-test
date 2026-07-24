@@ -28,6 +28,7 @@ import {
   type ChannelType,
   type CreateNewOutboundContact,
   type AgentDashboardContactHistoryEntry,
+  CHANNEL_TYPE_META,
 } from "@nicecxone/lyra-ui";
 import appIcon from "@/assets/app-icon.svg";
 import {
@@ -45,6 +46,7 @@ import {
 } from "@/components/CustomerInteractionPanel";
 import { SlideInPage, SlideInPlaceholder } from "@/components/SlideInPage";
 import { NewOutboundPopover, AddOutboundButton, type NewOutboundConfig } from "@/components/NewOutboundPopover";
+import { OutcomeAllPanel, type OutcomeResult } from "@/components/OutcomePanel";
 import { InternalChatTrigger, InternalChatDockedPanel, InternalChatFloatPanel, type ChatView } from "@/components/InternalChatPopover";
 import { INITIAL_FAVORITE_EMPLOYEE_IDS, INITIAL_CHAT_THREADS, type InternalChatMessage } from "@/data/internalChat";
 import { DirectoryPage } from "@/components/DirectoryPage";
@@ -221,6 +223,30 @@ const OUTBOUND_CONFIG: NewOutboundConfig = {
    convention documented in InteractionNavItem's own stories), not a message
    preview. */
 
+/** Adds this app's own per-channel case data on top of lyra-ui's generic
+ *  `InteractionChannel` (which only knows about elapsed/preview/current —
+ *  UI state, not business data). Once a card is elevated, its open channels
+ *  can genuinely be different cases — e.g. the customer emails about a
+ *  second, unrelated issue while a voice call is already live — so subject/
+ *  case ID/status need to live per-channel, not just once per assignment:
+ *  each open channel's status dropdown (row 3) is independent and changes
+ *  on its own, the same way its subject/case ID already do. All optional: a
+ *  channel that doesn't set its own falls back to the assignment-level
+ *  value (see `activeSubject`/`activeCaseId`/`activeEscalationStatus`
+ *  below), which covers every single-channel card without any extra data. */
+interface AssignmentChannel extends InteractionChannel {
+  subject?: string;
+  caseId?: string;
+  escalationStatus?: EscalationStatus;
+  /** The address this channel was opened with (an email address for an
+   *  email channel, phone number for voice/SMS, etc. — same "address"
+   *  value `NewOutboundPopover`/`AddOutboundButton` already collect when
+   *  starting a channel, just kept around afterward instead of being
+   *  discarded). Used to default the email composer's own "To" field to
+   *  the actual recipient instead of leaving it blank. */
+  address?: string;
+}
+
 interface Assignment {
   id: string;
   customerName?: string;
@@ -231,9 +257,12 @@ interface Assignment {
   elapsed: string;
   awaitingResponse?: boolean;
   issueSummary: string;
+  /** Default subject/case ID — used directly on a single-channel card, and
+   *  as the fallback for any open channel that doesn't carry its own (see
+   *  `AssignmentChannel` above). */
   subject: string;
   caseId: string;
-  channels: InteractionChannel[];
+  channels: AssignmentChannel[];
   /** Which of `channels` is "current" (shown in the chat/transcript pane,
    *  highlighted on this card) — the single source of truth shared by
    *  `InteractionNavItem`'s own `currentChannelKey`/`onCurrentChannelChange`
@@ -245,6 +274,9 @@ interface Assignment {
    *  one — every seeded `INITIAL_ASSIGNMENTS` entry below only has one
    *  channel anyway, so that fallback is all they ever need. */
   currentChannelKey?: string;
+  /** Default status — used directly on a single-channel card, and as the
+   *  fallback for any open channel that doesn't carry its own (see
+   *  `AssignmentChannel` above). */
   escalationStatus: EscalationStatus;
   messages: Message[];
   /** Hold/resume/etc. moments shown interleaved into the voice transcript —
@@ -270,6 +302,24 @@ const CURRENT_AGENT_NAME = "John Smith";
  *  `INITIAL_ASSIGNMENTS`, just generated instead of hand-picked. */
 function generateCaseId(): string {
   return `CASE-${Math.floor(10000 + Math.random() * 90000)}`;
+}
+
+/** A generic "Outbound {Email}" subject reads like a placeholder, not a real
+ *  case — outbound email specifically gets a plausible subject line picked
+ *  from this pool instead, since (with skill selection currently hidden —
+ *  see `SHOW_SKILL_SELECTION` in NewOutboundPopover.tsx — `skillLabel` is
+ *  rarely available to fall back on anymore). Voice/SMS/WhatsApp keep the
+ *  existing "Outbound {Channel}" pattern; only email asked for this. */
+const OUTBOUND_EMAIL_SUBJECTS = [
+  "Following up on your recent inquiry",
+  "Checking in on your account",
+  "Your upcoming subscription renewal",
+  "Update on your support request",
+  "Quick follow-up from our team",
+];
+
+function fakeOutboundEmailSubject(): string {
+  return OUTBOUND_EMAIL_SUBJECTS[Math.floor(Math.random() * OUTBOUND_EMAIL_SUBJECTS.length)];
 }
 
 /** Same identity lyra-ui's own `InteractionNavItem`/`ChannelTab` use
@@ -334,7 +384,7 @@ const INITIAL_ASSIGNMENTS: Assignment[] = [
     issueSummary: "Disputing a duplicate charge that appeared twice on last month's invoice.",
     subject: "Duplicate subscription charge",
     caseId: "CASE-48097",
-    channels: [{ type: "email", elapsed: "06:12", current: true, preview: "CXi SME Email" }],
+    channels: [{ type: "email", elapsed: "06:12", current: true, preview: "CXi SME Email", address: "ray.torres@outlook.com" }],
     escalationStatus: "in-progress",
     messages: [
       { id: "1", variant: "support-agent", senderName: CURRENT_AGENT_NAME, timestamp: "Today, 06:05AM · Email", text: "Hi Ray, thanks for reaching out about the duplicate charge on your invoice." },
@@ -412,6 +462,24 @@ export function AgentNextGenPage({
   const [navOpen, setNavOpen] = useState(() => window.innerWidth >= NAV_NARROW_BREAKPOINT);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [activeAssignmentId, setActiveAssignmentId] = useState<string | undefined>(undefined);
+  // "Outcome All" (Elevation card's own kebab menu — see `handleOutcomeAll`
+  // below) — which assignment's outcome-for-every-open-channel panel is
+  // open, if any. Only ever set for a card with 2+ open channels, but
+  // tracked independently of `activeAssignmentId` since opening it doesn't
+  // require (or change) which card is currently selected.
+  const [outcomeAllAssignmentId, setOutcomeAllAssignmentId] = useState<string | null>(null);
+  // The single-channel Outcome popup's open state (`InteractionActionsBar`'s
+  // `OutcomeButton`) — lifted up here (rather than left as that button's own
+  // internal state) purely so it and `outcomeAllAssignmentId` above can
+  // enforce "only one Outcome popup visible at once" against each other; see
+  // `handleOutcomeAll` and the `onOutcomeOpenChange` wiring below.
+  const [outcomeButtonOpen, setOutcomeButtonOpen] = useState(false);
+  // One DOM node per rendered assignment card (left-rail `InteractionNavItem`),
+  // keyed by assignment id — read at "Outcome All" click time to position
+  // `OutcomeAllPanel` just to the right of the card that triggered it. A
+  // plain mutable Map (not state) since it only ever needs reading on
+  // demand, never a re-render of its own.
+  const assignmentCardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [activeTab, setActiveTab] = useState<"chat" | "history">("chat");
   const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   const [notifications, setNotifications] = useState(INITIAL_NOTIFICATIONS);
@@ -626,8 +694,20 @@ export function AgentNextGenPage({
 
   const activeAssignment = assignments.find((a) => a.id === activeAssignmentId);
   const activeCurrentChannelKey = activeAssignment ? resolveCurrentChannelKey(activeAssignment) : undefined;
-  const activeChannelType = activeAssignment?.channels.find((c) => channelKey(c) === activeCurrentChannelKey)?.type;
+  const activeChannel = activeAssignment?.channels.find((c) => channelKey(c) === activeCurrentChannelKey);
+  const activeChannelType = activeChannel?.type;
   const isActiveAssignmentVoiceCall = activeChannelType === "voice";
+  // Row 3 (`InteractionInfoBar`) follows whichever channel is current, not a
+  // fixed assignment-level value — see `AssignmentChannel`'s own doc
+  // comment for why (e.g. an elevated card's Email channel can be a
+  // genuinely different case than its Voice channel).
+  // Trailing `?? ""` only matters when there's no active assignment at all
+  // (nothing renders `InteractionInfoBar` in that case anyway) — keeps these
+  // plain `string`, matching that prop's required type, without a third
+  // fallback layer that never actually shows.
+  const activeSubject = activeChannel?.subject ?? activeAssignment?.subject ?? "";
+  const activeCaseId = activeChannel?.caseId ?? activeAssignment?.caseId ?? "";
+  const activeEscalationStatus = activeChannel?.escalationStatus ?? activeAssignment?.escalationStatus;
   const activeCustomer = DIRECTORY_CUSTOMERS.find((c) => c.id === activeAssignment?.customerId);
   /** The outbound-contact record backing the active assignment's customer,
    *  if any — feeds the header's `AddOutboundButton` (name/avatar/channels
@@ -697,8 +777,25 @@ export function AgentNextGenPage({
     });
   };
 
+  // On an elevated (2+ channel) card, each open channel's own status
+  // dropdown is independent — changing one leaves the others exactly as
+  // they were, same as their subject/case ID already behave (see
+  // `AssignmentChannel`'s own doc comment). A single-channel card keeps the
+  // simpler assignment-level status it always had.
   const handleEscalationStatusChange = (assignmentId: string, status: EscalationStatus) => {
-    setAssignments((prev) => prev.map((a) => (a.id === assignmentId ? { ...a, escalationStatus: status } : a)));
+    setAssignments((prev) =>
+      prev.map((a) => {
+        if (a.id !== assignmentId) return a;
+        if (a.channels.length > 1) {
+          const currentKey = resolveCurrentChannelKey(a);
+          return {
+            ...a,
+            channels: a.channels.map((c) => (channelKey(c) === currentKey ? { ...c, escalationStatus: status } : c)),
+          };
+        }
+        return { ...a, escalationStatus: status };
+      })
+    );
   };
 
   // Switching interactions always lands back on the Chat tab — seeing a
@@ -757,6 +854,27 @@ export function AgentNextGenPage({
     setAssignments((prev) => prev.map((a) => (a.id === assignmentId ? { ...a, currentChannelKey: key } : a)));
   };
 
+  // Elevation card's own kebab menu — "Outcome All" (see lyra-ui's
+  // `buildElevatedMenuItems`/`InteractionNavItem.onOutcomeAll`). Opens
+  // `OutcomeAllPanel` (rendered once, below, scoped to whichever assignment
+  // this points at) instead of the single-channel `OutcomeButton` flow.
+  const handleOutcomeAll = (assignmentId: string) => {
+    setOutcomeAllAssignmentId(assignmentId);
+    // Only one Outcome popup visible at a time — see `outcomeButtonOpen`'s
+    // own doc comment above.
+    setOutcomeButtonOpen(false);
+  };
+
+  // Matches every other Outcome save in this app (the single-channel
+  // `OutcomeButton` in `InteractionActionsBar` doesn't wire `onApprove` to
+  // anything persistent either) — logging is the current fidelity level for
+  // "saved" outcomes here; nothing in `Assignment` yet models a stored
+  // outcome to write this into.
+  const handleOutcomeAllApprove = (outcome: OutcomeResult, appliedChannels: { type: ChannelType; label: string }[]) => {
+    // eslint-disable-next-line no-console
+    console.log("Outcome All saved for assignment", outcomeAllAssignmentId, outcome, "applied to:", appliedChannels);
+  };
+
   /** The header's "+" (`AddOutboundButton`, next to the Chat tab) — starts
    *  another channel with the customer already on this interaction. Unlike
    *  `handleStartOutboundCall` below (always creates a brand-new assignment
@@ -769,12 +887,23 @@ export function AgentNextGenPage({
    *  .tsx). */
   const handleAddOutboundChannel = (assignmentId: string, channel: ChannelType, address: string, skillId: string) => {
     const skillLabel = OUTBOUND_CONFIG.skillOptions.find((o) => o.value === skillId)?.label;
-    const newChannel: InteractionChannel = {
+    const channelLabel = OUTBOUND_CONFIG.channelOptions.find((o) => o.id === channel)?.label ?? channel;
+    const newChannel: AssignmentChannel = {
       id: `${channel}-${Date.now()}`,
       type: channel,
       elapsed: "00:00",
       current: true,
       preview: skillLabel,
+      address,
+      // Its own subject/case ID — this is a new, separate case being opened
+      // on the same customer's card (see `AssignmentChannel`'s own doc
+      // comment), not a continuation of whatever the card's other channel(s)
+      // are already about.
+      subject:
+        channel === "email"
+          ? fakeOutboundEmailSubject()
+          : `Outbound ${channelLabel}${skillLabel ? ` — ${skillLabel}` : ""}`,
+      caseId: generateCaseId(),
     };
     setAssignments((prev) =>
       prev.map((a) =>
@@ -860,9 +989,9 @@ export function AgentNextGenPage({
         customerId: contact.id,
         elapsed: "00:00",
         issueSummary: `Outbound ${channelLabel} to ${contact.name}.`,
-        subject: `Outbound ${channelLabel}`,
+        subject: channel === "email" ? fakeOutboundEmailSubject() : `Outbound ${channelLabel}`,
         caseId: generateCaseId(),
-        channels: [{ type: channel, elapsed: "00:00", current: true, preview: skillLabel }],
+        channels: [{ type: channel, elapsed: "00:00", current: true, preview: skillLabel, address: phone }],
         escalationStatus: "in-progress",
         messages: [],
       };
@@ -879,6 +1008,42 @@ export function AgentNextGenPage({
 
     // eslint-disable-next-line no-console
     console.log("Start call:", channel, "→", contact.name, `(phone: ${phone}, skill: ${skillId})`);
+  };
+
+  /** New Outbound's `onStartUnmatchedOutbound` — fired when the agent
+   *  completes the flow for a phone number/email typed into search that
+   *  didn't match anyone in the directory (`OutboundDetailScreen`'s
+   *  `!contact` branch, "No match found in directory"). Mirrors
+   *  `handleStartOutboundCall`'s customer-kind branch above — new tile,
+   *  made active, full-page slide-in dismissed, voice gets a demo
+   *  transcript — just without a `customerId`/directory record to link,
+   *  since there isn't one. There's no name either, so the typed address
+   *  itself becomes `customerName`: more useful to the agent on the tile
+   *  than falling back to `InteractionNavItem`'s generic "Customer" label. */
+  const handleStartUnmatchedOutbound = (input: { channel: ChannelType; value: string; skillId: string }) => {
+    const { channel, value, skillId } = input;
+    const skillLabel = OUTBOUND_CONFIG.skillOptions.find((o) => o.value === skillId)?.label;
+    const channelLabel = OUTBOUND_CONFIG.channelOptions.find((o) => o.id === channel)?.label ?? channel;
+    const id = `outbound-unmatched-${Date.now()}`;
+    const newAssignment: Assignment = {
+      id,
+      customerName: value,
+      elapsed: "00:00",
+      issueSummary: `Outbound ${channelLabel} to ${value}.`,
+      subject: channel === "email" ? fakeOutboundEmailSubject() : `Outbound ${channelLabel}`,
+      caseId: generateCaseId(),
+      channels: [{ type: channel, elapsed: "00:00", current: true, preview: skillLabel, address: value }],
+      escalationStatus: "in-progress",
+      messages: [],
+    };
+    setAssignments((prev) => [newAssignment, ...prev]);
+    setActiveAssignmentId(id);
+    setActiveTab("chat");
+    // Same full-page dismiss as handleStartOutboundCall's branches above.
+    setOpenSlideInPage((v) => (v !== null && FULL_PAGE_DESTINATIONS.has(v) ? null : v));
+    if (channel === "voice") {
+      scheduleOutboundVoiceDemoTranscript(id, value, skillLabel);
+    }
   };
 
   /* AI panel show/hide */
@@ -1344,7 +1509,12 @@ export function AgentNextGenPage({
             <>
               <NewOutboundPopover
                 title="New Outbound"
-                outbound={{ ...OUTBOUND_CONFIG, onStartCall: handleStartOutboundCall, onOpenInternalChat: openInternalChatWith }}
+                outbound={{
+                  ...OUTBOUND_CONFIG,
+                  onStartCall: handleStartOutboundCall,
+                  onStartUnmatchedOutbound: handleStartUnmatchedOutbound,
+                  onOpenInternalChat: openInternalChatWith,
+                }}
                 expanded={navOpen}
               />
               <RailNavButton
@@ -1358,6 +1528,10 @@ export function AgentNextGenPage({
               {assignments.map((a) => (
                 <InteractionNavItem
                   key={a.id}
+                  ref={(el) => {
+                    if (el) assignmentCardRefs.current.set(a.id, el);
+                    else assignmentCardRefs.current.delete(a.id);
+                  }}
                   customerName={a.customerName}
                   active={activeAssignmentId === a.id}
                   onClick={() => handleSelectAssignment(a.id)}
@@ -1369,6 +1543,7 @@ export function AgentNextGenPage({
                   currentChannelKey={resolveCurrentChannelKey(a)}
                   onCurrentChannelChange={(key) => handleChannelSelect(a.id, key)}
                   elevatedLabel={a.channels.length > 1 ? "Elevation" : undefined}
+                  onOutcomeAll={() => handleOutcomeAll(a.id)}
                   avatarIcon={a.isInternalAgentCall ? <Headset className="h-4 w-4" strokeWidth={1.5} /> : undefined}
                   onDismiss={() => handleDismissAssignment(a.id)}
                   onDismissChannel={(channel) => handleDismissChannel(a.id, channel)}
@@ -1501,9 +1676,9 @@ export function AgentNextGenPage({
                   )}
                   {showPageHeader && (
                     <InteractionInfoBar
-                      subject={activeAssignment.subject}
-                      caseId={activeAssignment.caseId}
-                      escalationStatus={activeAssignment.escalationStatus}
+                      subject={activeSubject}
+                      caseId={activeCaseId}
+                      escalationStatus={activeEscalationStatus ?? activeAssignment.escalationStatus}
                       onEscalationStatusChange={(status) => activeAssignmentId && handleEscalationStatusChange(activeAssignmentId, status)}
                     />
                   )}
@@ -1513,6 +1688,15 @@ export function AgentNextGenPage({
                       customerName={activeAssignment.customerName}
                       issueSummary={activeAssignment.issueSummary}
                       caseId={activeAssignment.caseId}
+                      currentChannelType={activeChannelType}
+                      allChannels={activeAssignment.channels.map((c) => ({ type: c.type, label: CHANNEL_TYPE_META[c.type].label }))}
+                      outcomeOpen={outcomeButtonOpen}
+                      onOutcomeOpenChange={(open) => {
+                        setOutcomeButtonOpen(open);
+                        // Only one Outcome popup visible at a time — see
+                        // `outcomeButtonOpen`'s own doc comment above.
+                        if (open) setOutcomeAllAssignmentId(null);
+                      }}
                     />
                   )}
                   {/* Body row: main content. Slide-in panel, when docked,
@@ -1528,6 +1712,8 @@ export function AgentNextGenPage({
                       callEvents={activeAssignment.callEvents}
                       onSendMessage={handleSendMessage}
                       sendOnEnter={activeChannelType !== "email"}
+                      isEmailChannel={activeChannelType === "email"}
+                      toAddress={activeChannel?.address}
                     />
                   </div>
                 </>
@@ -1741,6 +1927,54 @@ export function AgentNextGenPage({
             {...chatSharedProps}
           />
         )}
+
+        {/* Outcome All — Elevation card's kebab menu (see `handleOutcomeAll`
+         *  above). Portals to document.body like the Outcome popup above;
+         *  rendered once here rather than per-card since only one can ever
+         *  be open at a time. */}
+        {(() => {
+          const outcomeAllAssignment = assignments.find((a) => a.id === outcomeAllAssignmentId);
+          // Re-measured every render while open (not cached in state) — cheap,
+          // and `OutcomeAllPanel` itself only ever reads this once per open
+          // (see its own `floatPos` guard), so re-measuring here on every
+          // render doesn't fight the agent dragging the panel afterward.
+          const outcomeAllCardEl = outcomeAllAssignmentId
+            ? assignmentCardRefs.current.get(outcomeAllAssignmentId)
+            : undefined;
+          const outcomeAllAnchorRect = outcomeAllCardEl
+            ? (() => {
+                const r = outcomeAllCardEl.getBoundingClientRect();
+                return { top: r.top, right: r.right };
+              })()
+            : null;
+          // Which channel the toggle narrows back down to if the agent
+          // switches "Outcome All" off — same "current channel" every other
+          // per-card feature (row 3, the header's ChannelTab bar) already
+          // tracks, so it stays consistent with whatever tab the agent had
+          // open when they reached for the kebab menu.
+          const outcomeAllCurrentKey = outcomeAllAssignment ? resolveCurrentChannelKey(outcomeAllAssignment) : undefined;
+          const outcomeAllCurrentChannel = outcomeAllAssignment?.channels.find((c) => channelKey(c) === outcomeAllCurrentKey);
+          return (
+            <OutcomeAllPanel
+              open={outcomeAllAssignmentId !== null}
+              onOpenChange={(open) => {
+                if (!open) setOutcomeAllAssignmentId(null);
+              }}
+              customerName={outcomeAllAssignment?.customerName ?? "this customer"}
+              channels={(outcomeAllAssignment?.channels ?? []).map((c) => ({
+                type: c.type,
+                label: CHANNEL_TYPE_META[c.type].label,
+              }))}
+              currentChannel={
+                outcomeAllCurrentChannel
+                  ? { type: outcomeAllCurrentChannel.type, label: CHANNEL_TYPE_META[outcomeAllCurrentChannel.type].label }
+                  : undefined
+              }
+              anchorRect={outcomeAllAnchorRect}
+              onApprove={handleOutcomeAllApprove}
+            />
+          );
+        })()}
 
       </div>
     </div>

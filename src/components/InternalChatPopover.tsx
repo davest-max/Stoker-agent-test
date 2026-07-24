@@ -134,7 +134,7 @@ function ListHeader({
   return (
     <div className="flex flex-col gap-2 px-3 pb-2 pt-3">
       <div className="flex items-center justify-between">
-        <p className="lyra-heading-md text-lyra-fg-default">Chat</p>
+        <p className="lyra-heading-md text-lyra-fg-default">Internal Chat</p>
         {dockButton}
       </div>
       <SearchInput value={search} onValueChange={onSearchChange} placeholder="Search employees" />
@@ -384,7 +384,7 @@ export function InternalChatDockedPanel({
       className="h-full rounded-lyra-lg border border-lyra-border-subtle bg-lyra-bg-surface-overlay shadow-lg"
       renderHeaderControls={(controls: DraggableHeaderControls) => (
         <div className="flex items-center justify-between px-3 pb-2 pt-3">
-          {view.kind === "list" ? <p className="lyra-heading-md text-lyra-fg-default">Chat</p> : <span />}
+          {view.kind === "list" ? <p className="lyra-heading-md text-lyra-fg-default">Internal Chat</p> : <span />}
           <div className="flex items-center gap-1">
             <DockButtonFromControls controls={controls} />
             <CloseButton onClick={onClose} />
@@ -453,7 +453,7 @@ export function InternalChatFloatPanel({ position, onClose, ...shared }: Interna
               <div {...gripProps}>
                 <GripVertical className="h-4 w-4 text-lyra-fg-secondary" strokeWidth={1.5} aria-hidden="true" />
               </div>
-              {view.kind === "list" && <p className="lyra-heading-md text-lyra-fg-default">Chat</p>}
+              {view.kind === "list" && <p className="lyra-heading-md text-lyra-fg-default">Internal Chat</p>}
             </div>
             <CloseButton onClick={onClose} />
           </div>

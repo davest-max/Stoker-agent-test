@@ -1,4 +1,4 @@
-import { useState, useRef, useLayoutEffect, Fragment } from "react";
+import { useState, useRef, useLayoutEffect, useEffect, Fragment } from "react";
 import {
   ActionIconButton,
   Button,
@@ -12,10 +12,13 @@ import {
   ConversationMessage,
   ConversationDateStamp,
   Textarea,
+  Divider,
+  CHANNEL_TYPE_META,
   type MenuEntry,
   type ConversationVariant,
   type ChipColor,
   type InteractionChannel,
+  type ChannelType,
 } from "@nicecxone/lyra-ui";
 import {
   MessageSquare,
@@ -23,6 +26,7 @@ import {
   Clock,
   Plus,
   User,
+  IdCard,
   ChevronDown,
   Pause,
   MicOff,
@@ -35,6 +39,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   ArrowUpRight,
+  ArrowRight,
   Bold,
   Italic,
   Underline,
@@ -371,6 +376,141 @@ function VoiceTranscriptThread({ messages, events = [] }: { messages: Message[];
   );
 }
 
+/* ── EmailThread ──
+ * Realistic email-client conversation view for the Email channel —
+ * replaces lyra-ui's chat-bubble `ConversationMessage` the same way
+ * `VoiceTranscriptThread` above replaces it for voice: an email reads as a
+ * stack of individual messages (sender → recipient, timestamp, hairline
+ * dividers between them), not a back-and-forth chat. Modeled on the
+ * "AgentWorkspace into Lyra" Figma reference (node 2207:7459) — the most
+ * recent message starts expanded (full body), every earlier one starts
+ * collapsed to a single-line preview; clicking any row (or its trailing
+ * chevron) toggles that one message's own expanded state, same as a real
+ * inbox thread. Not built as a lyra-ui component yet, same reasoning
+ * `VoiceTranscriptThread` gives for itself — a local, single-app
+ * exploration of the pattern. */
+
+/** Generic company inbox address — the "to" side of every customer-sent
+ *  message, and the "from" side of every agent-sent one (paired with
+ *  `customerEmail` below). This app has no real routing-address model yet,
+ *  just this one stand-in constant, same fidelity level as this file's
+ *  other placeholder identifiers (e.g. `CURRENT_AGENT_NAME` in
+ *  AgentNextGenPage.tsx). */
+const SUPPORT_EMAIL_ADDRESS = "support@cxone.com";
+
+/** Which address a message reads as being sent *to* — the other party from
+ *  whoever sent it. `customerEmail` is the channel's own recorded address
+ *  (see `AssignmentChannel.address` in AgentNextGenPage.tsx) — falls back
+ *  to a generic phrase when this particular channel doesn't have one on
+ *  file. */
+function emailRecipient(message: Message, customerEmail?: string): string {
+  return message.variant === "support-agent" ? customerEmail ?? "the customer" : SUPPORT_EMAIL_ADDRESS;
+}
+
+/** Collapsed row's one-line preview — plain-ish text (still runs inline
+ *  formatting so a bolded word etc. still reads correctly), truncated by
+ *  its parent's own `truncate` class rather than sliced by character count,
+ *  so it always breaks at the container's actual width. Only ever looks at
+ *  the message's first line — a real preview wouldn't jump ahead to a later
+ *  paragraph, same as Gmail's own collapsed-row preview never does. */
+function EmailPreviewLine({ text }: { text: string }) {
+  const firstLine = parseLine(text.split("\n")[0] ?? "");
+  return (
+    <p className="truncate lyra-body-sm text-lyra-fg-secondary">
+      {renderInlineFormatting(firstLine.text, "email-preview")}
+    </p>
+  );
+}
+
+function EmailMessageRow({
+  message,
+  customerEmail,
+  expanded,
+  onToggle,
+}: {
+  message: Message;
+  customerEmail?: string;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const isAgent = message.variant === "support-agent";
+  const recipient = emailRecipient(message, customerEmail);
+  return (
+    <button type="button" onClick={onToggle} className="flex w-full items-start gap-4 p-4 text-left">
+      {isAgent ? (
+        <MessageAvatar icon={<User className="h-4 w-4" strokeWidth={1.5} />} className="h-8 w-8 shrink-0 bg-lyra-bg-primary text-lyra-fg-on-primary" />
+      ) : (
+        <MessageAvatar initials={getInitials(message.senderName)} className="h-8 w-8 shrink-0 bg-lyra-accent-blue-soft text-lyra-accent-blue-strong" />
+      )}
+      <div className="flex min-w-0 flex-1 flex-col items-start gap-2">
+        <div className="flex w-full items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 lyra-body-md-emphasis text-lyra-fg-default">{message.senderName}</span>
+            <ArrowRight className="h-3 w-3 shrink-0 text-lyra-fg-secondary" strokeWidth={1.5} aria-hidden="true" />
+            <Tooltip content={`To: ${recipient}`} placement="top" delayMs={400}>
+              <span className="flex min-w-0 items-center gap-1">
+                <span className="truncate lyra-body-sm text-lyra-fg-default">{recipient}</span>
+                <ChevronDown className="h-3 w-3 shrink-0 text-lyra-fg-secondary" strokeWidth={1.5} aria-hidden="true" />
+              </span>
+            </Tooltip>
+          </div>
+          <span className="shrink-0 lyra-body-sm text-lyra-fg-secondary">{message.timestamp}</span>
+        </div>
+        {expanded ? (
+          <div className="w-full lyra-body-sm text-lyra-fg-default">{renderFormattedText(message.text)}</div>
+        ) : (
+          <EmailPreviewLine text={message.text} />
+        )}
+      </div>
+      <ChevronDown
+        className={cn("mt-1 h-4 w-4 shrink-0 text-lyra-fg-secondary transition-transform", expanded && "rotate-180")}
+        strokeWidth={1.5}
+        aria-hidden="true"
+      />
+    </button>
+  );
+}
+
+function EmailThread({ messages, customerEmail }: { messages: Message[]; customerEmail?: string }) {
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const lastMessageId = messages.length ? messages[messages.length - 1]!.id : undefined;
+
+  // A newly-arrived message always opens expanded, collapsing whichever one
+  // used to be "latest" — matches a real inbox thread, where sending or
+  // receiving a new reply is what changes the default, not anything the
+  // agent did themselves. Doesn't touch `expandedIds` otherwise, so an
+  // agent manually expanding an older message to re-read it stays expanded
+  // right up until the next new message resets things.
+  useEffect(() => {
+    if (lastMessageId) setExpandedIds(new Set([lastMessageId]));
+  }, [lastMessageId]);
+
+  const toggleExpanded = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  return (
+    <div className="flex w-full flex-col">
+      {messages.map((message, i) => (
+        <div key={message.id}>
+          {i > 0 && <Divider />}
+          <EmailMessageRow
+            message={message}
+            customerEmail={customerEmail}
+            expanded={expandedIds.has(message.id)}
+            onToggle={() => toggleExpanded(message.id)}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /* ── Escalation status pill (Popover + Menu, mirrors lyra-ui's own
  *  "Menu Popover" story pattern; visual pill is lyra-ui's own Chip
  *  component, wrapped in a plain button for keyboard/focus semantics
@@ -434,7 +574,7 @@ function LeftPanelToggle({ onToggle }: { onToggle?: () => void }) {
         aria-label="Customer Profile"
         className="flex h-8 w-8 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary transition-colors hover:bg-lyra-state-hover active:bg-lyra-state-pressed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus focus-visible:ring-offset-2"
       >
-        <User className="h-5 w-5" strokeWidth={1.5} aria-hidden="true" />
+        <IdCard className="h-[22px] w-[22px]" strokeWidth={1.5} aria-hidden="true" />
       </button>
     </Tooltip>
   );
@@ -782,9 +922,31 @@ export interface InteractionActionsBarProps {
   customerName?: string;
   issueSummary?: string;
   caseId?: string;
+  /** This interaction's currently-active channel, plus every channel open
+   *  on the card — passed straight through to `OutcomeButton`'s own
+   *  `elevated` prop (only when there's more than one open channel; see
+   *  that prop's own doc comment for why) so its "Outcome All" toggle knows
+   *  both where to start and what "all" expands out to. */
+  currentChannelType?: ChannelType;
+  allChannels?: { type: ChannelType; label: string }[];
+  /** Controlled, lifted all the way up to `AgentNextGenPage` so it can
+   *  enforce "only one Outcome popup visible at a time" against
+   *  `OutcomeAllPanel` — opening this one closes that one and vice versa.
+   *  See `OutcomeButton`'s own `open`/`onOpenChange` doc comment. */
+  outcomeOpen: boolean;
+  onOutcomeOpenChange: (open: boolean) => void;
 }
 
-export function InteractionActionsBar({ isVoiceCall = false, customerName, issueSummary, caseId }: InteractionActionsBarProps) {
+export function InteractionActionsBar({
+  isVoiceCall = false,
+  customerName,
+  issueSummary,
+  caseId,
+  currentChannelType,
+  allChannels = [],
+  outcomeOpen,
+  onOutcomeOpenChange,
+}: InteractionActionsBarProps) {
   return (
     <div className="px-6 py-2">
       <div className="inline-flex items-center gap-1 rounded-lyra-lg border-[1.5px] border-lyra-border-medium bg-lyra-bg-surface-overlay p-1 shadow-md">
@@ -812,7 +974,19 @@ export function InteractionActionsBar({ isVoiceCall = false, customerName, issue
           </>
         )}
         <ConsultTransferButton customerName={customerName} issueSummary={issueSummary} caseId={caseId} />
-        <OutcomeButton customerName={customerName ?? "this customer"} />
+        <OutcomeButton
+          customerName={customerName ?? "this customer"}
+          elevated={
+            allChannels.length > 1 && currentChannelType
+              ? {
+                  currentChannel: { type: currentChannelType, label: CHANNEL_TYPE_META[currentChannelType].label },
+                  allChannels,
+                }
+              : undefined
+          }
+          open={outcomeOpen}
+          onOpenChange={onOutcomeOpenChange}
+        />
       </div>
     </div>
   );
@@ -898,6 +1072,12 @@ export interface MessageComposerProps {
   /** See `CustomerInteractionPanelProps.sendOnEnter`'s doc comment. */
   sendOnEnter?: boolean;
   placeholder?: string;
+  /** See `CustomerInteractionPanelProps.isEmailChannel`'s doc comment. */
+  isEmailChannel?: boolean;
+  /** Seeds the To field once, when it (re)mounts against a new email
+   *  channel — see `CustomerInteractionPanelProps.toAddress`'s own doc
+   *  comment for where this comes from. */
+  defaultTo?: string;
 }
 
 /** Extends a selection out to the full line(s) it touches — block actions
@@ -912,11 +1092,40 @@ function expandToLineRange(value: string, start: number, end: number): { lineSta
   return { lineStart, lineEnd };
 }
 
-function MessageComposer({ onSend, sendOnEnter = true, placeholder = "Type a message…" }: MessageComposerProps) {
+function MessageComposer({
+  onSend,
+  sendOnEnter = true,
+  placeholder = "Type a message…",
+  isEmailChannel = false,
+  defaultTo,
+}: MessageComposerProps) {
   const [value, setValue] = useState("");
   const [showFormatting, setShowFormatting] = useState(false);
   const [showMoreFormatting, setShowMoreFormatting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Email header fields — To/Cc/Bcc, typical email-client pattern: To is
+  // always visible (seeded from `defaultTo`, still editable — an agent
+  // replying to a different address than the one on file isn't unusual);
+  // Cc/Bcc start collapsed behind their own toggle and, once revealed, stay
+  // revealed rather than re-collapsing on their own (same one-way "asked
+  // for, then stays available" shape `showFormatting` above already uses).
+  const [to, setTo] = useState(defaultTo ?? "");
+  const [cc, setCc] = useState("");
+  const [bcc, setBcc] = useState("");
+  const [showCc, setShowCc] = useState(false);
+  const [showBcc, setShowBcc] = useState(false);
+
+  // Re-seed (and drop any Cc/Bcc left over from a previous email) whenever
+  // this composer starts representing a different email — e.g. switching
+  // to a different channel/tab, or a different assignment entirely.
+  useEffect(() => {
+    setTo(defaultTo ?? "");
+    setCc("");
+    setBcc("");
+    setShowCc(false);
+    setShowBcc(false);
+  }, [defaultTo]);
 
   // Grow-only: only ever raises the height when content no longer fits, so
   // it never undoes a manual resize-y drag on the next keystroke. Runs as a
@@ -1041,6 +1250,62 @@ function MessageComposer({ onSend, sendOnEnter = true, placeholder = "Type a mes
 
   return (
     <div className="shrink-0 border-t border-lyra-border-subtle bg-lyra-bg-surface-base px-6 py-3">
+      {isEmailChannel && (
+        <div className="mb-2 flex flex-col border-b border-lyra-border-subtle">
+          <div className="flex items-center gap-2 border-t border-lyra-border-subtle py-1.5">
+            <span className="w-9 shrink-0 lyra-body-sm text-lyra-fg-secondary">To</span>
+            <input
+              type="email"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              placeholder="Recipients"
+              className="min-w-0 flex-1 bg-transparent lyra-body-sm text-lyra-fg-default outline-none placeholder:text-lyra-fg-disabled"
+            />
+            <div className="flex shrink-0 items-center gap-2.5 pr-1">
+              {!showCc && (
+                <button
+                  type="button"
+                  onClick={() => setShowCc(true)}
+                  className="lyra-body-sm text-lyra-fg-secondary transition-colors hover:text-lyra-fg-default"
+                >
+                  Cc
+                </button>
+              )}
+              {!showBcc && (
+                <button
+                  type="button"
+                  onClick={() => setShowBcc(true)}
+                  className="lyra-body-sm text-lyra-fg-secondary transition-colors hover:text-lyra-fg-default"
+                >
+                  Bcc
+                </button>
+              )}
+            </div>
+          </div>
+          {showCc && (
+            <div className="flex items-center gap-2 border-t border-lyra-border-subtle py-1.5">
+              <span className="w-9 shrink-0 lyra-body-sm text-lyra-fg-secondary">Cc</span>
+              <input
+                type="email"
+                value={cc}
+                onChange={(e) => setCc(e.target.value)}
+                className="min-w-0 flex-1 bg-transparent lyra-body-sm text-lyra-fg-default outline-none"
+              />
+            </div>
+          )}
+          {showBcc && (
+            <div className="flex items-center gap-2 border-t border-lyra-border-subtle py-1.5">
+              <span className="w-9 shrink-0 lyra-body-sm text-lyra-fg-secondary">Bcc</span>
+              <input
+                type="email"
+                value={bcc}
+                onChange={(e) => setBcc(e.target.value)}
+                className="min-w-0 flex-1 bg-transparent lyra-body-sm text-lyra-fg-default outline-none"
+              />
+            </div>
+          )}
+        </div>
+      )}
       {showFormatting && (
         <div className="mb-2 flex flex-col gap-1">
           <div className="inline-flex w-fit items-center gap-0.5 rounded-lyra-md border border-lyra-border-subtle bg-lyra-bg-surface-canvas p-1">
@@ -1130,6 +1395,17 @@ export interface CustomerInteractionPanelProps {
    *  convention, since an accidental Enter-to-send would be surprising
    *  there in a way it isn't for chat. Default true. */
   sendOnEnter?: boolean;
+  /** Shows the composer's email header (To, with Cc/Bcc toggles — see
+   *  `MessageComposer`'s own doc comment) above the reply field. Kept
+   *  separate from `sendOnEnter` even though both happen to be true only
+   *  for email today — they're different concerns (send convention vs.
+   *  which fields render), and a future channel could need one without the
+   *  other. */
+  isEmailChannel?: boolean;
+  /** Seeds the composer's "To" field — the email channel's own recorded
+   *  address (see `AssignmentChannel.address` in AgentNextGenPage.tsx),
+   *  when there is one. Ignored unless `isEmailChannel` is true. */
+  toAddress?: string;
 }
 
 export function CustomerInteractionPanel({
@@ -1139,6 +1415,8 @@ export function CustomerInteractionPanel({
   callEvents,
   onSendMessage,
   sendOnEnter = true,
+  isEmailChannel = false,
+  toAddress,
 }: CustomerInteractionPanelProps) {
   return (
     <div className="flex flex-1 flex-col min-w-0 overflow-hidden bg-lyra-bg-surface-base">
@@ -1147,9 +1425,15 @@ export function CustomerInteractionPanel({
         <>
           <div className="flex-1 overflow-y-auto px-6 py-6">
             <div className="mx-auto flex max-w-3xl flex-col gap-6">
-              <ConversationDateStamp label={isVoiceCall ? "Today · Call Transcript" : "Today"} />
+              {/* Email skips this — each row already carries its own
+               *  timestamp (see EmailThread), so a "Today" divider above the
+               *  whole thread would just be redundant, not something a real
+               *  inbox thread shows either. */}
+              {!isEmailChannel && <ConversationDateStamp label={isVoiceCall ? "Today · Call Transcript" : "Today"} />}
               {isVoiceCall ? (
                 <VoiceTranscriptThread messages={messages} events={callEvents} />
+              ) : isEmailChannel ? (
+                <EmailThread messages={messages} customerEmail={toAddress} />
               ) : (
                 messages.map((m) => (
                   <ConversationMessage
@@ -1169,7 +1453,12 @@ export function CustomerInteractionPanel({
             </div>
           </div>
           {!isVoiceCall && onSendMessage && (
-            <MessageComposer onSend={onSendMessage} sendOnEnter={sendOnEnter} />
+            <MessageComposer
+              onSend={onSendMessage}
+              sendOnEnter={sendOnEnter}
+              isEmailChannel={isEmailChannel}
+              defaultTo={toAddress}
+            />
           )}
         </>
       ) : (

@@ -129,6 +129,17 @@ export interface InteractionNavItemProps {
    * normally).
    */
   elevatedLabel?: string;
+  /**
+   * Called when the agent chooses "Outcome All" from the collapsed
+   * `elevatedLabel` summary row's own kebab menu (see `buildElevatedMenuItems`
+   * in channel-row.tsx) — the consumer should open its own "apply to every
+   * open channel at once" outcome form in response (status/tags/disposition/
+   * summary, saved once and applied to all of this card's channels). Has no
+   * effect on a single-channel card, same as `elevatedLabel` itself, since
+   * that collapsed row/menu only ever renders once there's more than one
+   * open channel.
+   */
+  onOutcomeAll?: () => void;
   className?: string;
 }
 
@@ -158,6 +169,7 @@ const InteractionNavItem = React.forwardRef<HTMLDivElement, InteractionNavItemPr
       currentChannelKey,
       onCurrentChannelChange,
       elevatedLabel,
+      onOutcomeAll,
       className,
     },
     ref
@@ -236,6 +248,13 @@ const InteractionNavItem = React.forwardRef<HTMLDivElement, InteractionNavItemPr
     const currentChannel = channels.find((c) => channelKey(c) === effectiveCurrentKey) ?? channels[channels.length - 1];
     const currentChannelAccent = currentChannel ? CHANNEL_ACCENT[currentChannel.type] : undefined;
 
+    // True once `ElevatedChannelRow` (see its own doc comment in
+    // channel-row.tsx) has replaced the per-channel row list below — this
+    // card is no longer "about" any single channel, so nothing on it should
+    // borrow that channel's accent color anymore, including the outer
+    // border computed just below.
+    const isElevated = Boolean(elevatedLabel) && channels.length > 1;
+
     // Compact mode only: hovering the icon-rail avatar tile opens a popover
     // previewing the full expanded card (name, headerAction, every channel
     // row) so the agent can read — and act on — the card's detail without
@@ -273,10 +292,20 @@ const InteractionNavItem = React.forwardRef<HTMLDivElement, InteractionNavItemPr
     // (~30% opacity) otherwise — the same strong-vs-faded distinction the
     // old awaiting/active-driven tone used, just recolored per channel.
     // Falls back to the previous neutral info-blue when there's no channel
-    // to color by (a card with an empty `channels` array).
-    const tone = currentChannelAccent
-      ? { bg: currentChannelAccent.bg, text: currentChannelAccent.text, border: active ? currentChannelAccent.border : currentChannelAccent.borderMuted }
-      : { bg: "bg-lyra-status-info-subtle", text: "text-lyra-status-info-strong", border: active ? "border-lyra-border-active" : "border-lyra-border-subtle" };
+    // to color by (a card with an empty `channels` array). An elevated card
+    // (see `isElevated` above) is the one exception to "color by channel" —
+    // same as the expanded card's own border and `ElevatedChannelRow`'s
+    // chip, once there's more than one open channel this tile is no longer
+    // "about" any single one, so it goes neutral (`fg-active-subtle`/
+    // `fg-default`/`state-border-hover-neutral`) instead of picking one
+    // arbitrarily, matching the "Sofia Martinez-card-selected" Figma
+    // reference (node 4348:5824) everywhere a channel accent would
+    // otherwise show through.
+    const tone = isElevated
+      ? { bg: "bg-lyra-fg-active-subtle", text: "text-lyra-fg-default", border: active ? "border-lyra-state-border-hover-neutral" : "border-lyra-border-subtle" }
+      : currentChannelAccent
+        ? { bg: currentChannelAccent.bg, text: currentChannelAccent.text, border: active ? currentChannelAccent.border : currentChannelAccent.borderMuted }
+        : { bg: "bg-lyra-status-info-subtle", text: "text-lyra-status-info-strong", border: active ? "border-lyra-border-active" : "border-lyra-border-subtle" };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
       if (e.key === "Enter" || e.key === " ") {
@@ -305,18 +334,22 @@ const InteractionNavItem = React.forwardRef<HTMLDivElement, InteractionNavItemPr
 
         {channels.length > 0 && (
           <div className="flex flex-col">
-            {elevatedLabel && channels.length > 1 ? (
+            {isElevated ? (
               // Collapsed multi-channel summary — see `elevatedLabel`'s own
               // doc comment above. `currentChannel` (computed above from
               // `effectiveCurrentKey`) supplies the elapsed/preview text,
               // same source every individual row would otherwise use.
               <ElevatedChannelRow
-                label={elevatedLabel}
+                // Non-null: `isElevated` already required `elevatedLabel` to
+                // be truthy above, but it's a separate `const` rather than
+                // an inline `elevatedLabel &&` check, so TS can't narrow it
+                // through that boolean on its own.
+                label={elevatedLabel!}
                 elapsed={currentChannel?.elapsed ?? channels[channels.length - 1]!.elapsed}
                 preview={currentChannel?.preview}
                 highlighted={active}
                 isFirst
-                onDismiss={onDismiss}
+                onOutcomeAll={onOutcomeAll}
               />
             ) : (
               channels.map((ch, i) => {
@@ -385,8 +418,13 @@ const InteractionNavItem = React.forwardRef<HTMLDivElement, InteractionNavItemPr
       // pulsing dot below, so it isn't lost, just no longer duplicated
       // here. Inactive cards stay on the same neutral border as before —
       // only the active (selected) card shows channel color, matching how
-      // only the active card got a colored border previously.
-      active ? currentChannelAccent?.border ?? "border-lyra-border-active" : "border-lyra-border-subtle"
+      // only the active card got a colored border previously. Elevated
+      // (2+ channel) cards are the one exception — per the
+      // "Sofia Martinez-card-selected" Figma reference (node 4348:5824),
+      // an active elevated card's border goes neutral (`state-border-
+      // hover-neutral`) instead of any one channel's accent, matching the
+      // chip above no longer being channel-colored either.
+      active ? (isElevated ? "border-lyra-state-border-hover-neutral" : currentChannelAccent?.border ?? "border-lyra-border-active") : "border-lyra-border-subtle"
     );
 
     /* ── Compact: icon-rail avatar tile ── */
