@@ -10,7 +10,7 @@ import {
 } from "@nicecxone/lyra-ui";
 import { User, Headset, Route, UsersRound, ChevronLeft, Phone, Mail, MessageSquare, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { DirectoryCustomer, DirectoryAgent, DirectorySkill, DirectoryTeam } from "@/data/directory";
+import { contactMatchesQuery, type DirectoryCustomer, type DirectoryAgent, type DirectorySkill, type DirectoryTeam } from "@/data/directory";
 
 /* ── Contact action buttons — one icon button per channel the record
  *  supports, colored via `CHANNEL_ACCENT` (the same lyra-ui map the
@@ -96,11 +96,14 @@ export function DirectoryPage({ customers, agents, skills, teams, onContactActio
     setDrillDown(null);
   };
 
-  const query = search.trim().toLowerCase();
-  const filteredCustomers = customers.filter((c) => c.name.toLowerCase().includes(query));
-  const filteredAgents = agents.filter((a) => a.name.toLowerCase().includes(query));
-  const filteredSkills = skills.filter((s) => s.name.toLowerCase().includes(query));
-  const filteredTeams = teams.filter((t) => t.name.toLowerCase().includes(query));
+  // contactMatchesQuery also matches phone numbers (digits-only, so
+  // formatting differences don't matter) — a genuine capability for
+  // customers/agents, and a harmless no-op fallback to name-only matching
+  // for skills/teams, which have no phone numbers to match against.
+  const filteredCustomers = customers.filter((c) => contactMatchesQuery(c, search));
+  const filteredAgents = agents.filter((a) => contactMatchesQuery(a, search));
+  const filteredSkills = skills.filter((s) => contactMatchesQuery(s, search));
+  const filteredTeams = teams.filter((t) => contactMatchesQuery(t, search));
 
   function renderContactRow(contact: DirectoryCustomer | DirectoryAgent) {
     return (

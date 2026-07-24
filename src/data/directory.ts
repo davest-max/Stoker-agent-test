@@ -149,7 +149,7 @@ export const DIRECTORY_CUSTOMERS: DirectoryCustomer[] = [
     kind: "customer",
     avatarClassName: "bg-lyra-accent-blue-soft text-lyra-accent-blue-strong",
     channels: ["voice", "sms", "email"],
-    phoneNumbers: [{ value: "+15558124407", label: "Mobile · (555) 812-4407" }],
+    phoneNumbers: [{ value: "+14565559981", label: "Mobile · (456) 555-9981" }],
     emailAddresses: [
       { value: "priya.nair@vantiq.io", label: "Work · priya.nair@vantiq.io" },
       { value: "priya.nair@gmail.com", label: "Personal · priya.nair@gmail.com" },
@@ -204,6 +204,7 @@ export const DIRECTORY_AGENTS: DirectoryAgent[] = [
     kind: "agent",
     avatarClassName: "bg-lyra-accent-blue-soft text-lyra-accent-blue-strong",
     channels: ["chat", "voice"],
+    phoneNumbers: [{ value: "+15558140021", label: "Direct · (555) 814-0021" }],
   },
   {
     id: "amara",
@@ -213,6 +214,7 @@ export const DIRECTORY_AGENTS: DirectoryAgent[] = [
     kind: "agent",
     avatarClassName: "bg-lyra-accent-teal-soft text-lyra-accent-teal-strong",
     channels: ["chat", "voice"],
+    phoneNumbers: [{ value: "+15558140034", label: "Direct · (555) 814-0034" }],
   },
   {
     id: "diego",
@@ -222,6 +224,7 @@ export const DIRECTORY_AGENTS: DirectoryAgent[] = [
     kind: "agent",
     avatarClassName: "bg-lyra-accent-purple-soft text-lyra-accent-purple-strong",
     channels: ["chat", "voice"],
+    phoneNumbers: [{ value: "+15558140047", label: "Direct · (555) 814-0047" }],
   },
   {
     id: "lena",
@@ -231,6 +234,7 @@ export const DIRECTORY_AGENTS: DirectoryAgent[] = [
     kind: "agent",
     avatarClassName: "bg-lyra-accent-pink-soft text-lyra-accent-pink-strong",
     channels: ["chat"],
+    phoneNumbers: [{ value: "+15558140058", label: "Direct · (555) 814-0058" }],
   },
   {
     id: "tomas",
@@ -240,6 +244,7 @@ export const DIRECTORY_AGENTS: DirectoryAgent[] = [
     kind: "agent",
     avatarClassName: "bg-lyra-accent-lime-soft text-lyra-accent-lime-strong",
     channels: ["chat", "voice"],
+    phoneNumbers: [{ value: "+15558140062", label: "Direct · (555) 814-0062" }],
   },
   {
     id: "priya-shah",
@@ -249,8 +254,40 @@ export const DIRECTORY_AGENTS: DirectoryAgent[] = [
     kind: "agent",
     avatarClassName: "bg-lyra-accent-slate-soft text-lyra-accent-slate-strong",
     channels: ["chat", "voice"],
+    phoneNumbers: [{ value: "+15558140075", label: "Direct · (555) 814-0075" }],
   },
 ];
+
+/* ── Search ──
+ * Shared by every contact-search box in the app (Directory, New Outbound's
+ * contact picker, the Internal Chat/Consult-Transfer agent pickers) so
+ * phone-number search works identically everywhere instead of each call
+ * site growing its own slightly different matching rule. */
+
+/** Matches a contact against a free-text query by name OR phone number.
+ *  Phone matching compares digits only, so punctuation/spacing differences
+ *  between the query and however a number happens to be stored ("+1 456
+ *  555 9981" vs "456-555-9981" vs "4565559981") never prevent a match —
+ *  checked against both `value` (the dialable E.164 string) and `label`
+ *  (the "{Type} · (456) 555-9981" display string) so a search matches
+ *  regardless of which one a caller happens to have handy. An empty query
+ *  always matches, mirroring every existing call site's own "no query ->
+ *  show everything" behavior. */
+export function contactMatchesQuery(
+  contact: { name: string; phoneNumbers?: { value: string; label: string }[] },
+  query: string
+): boolean {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) return true;
+  if (contact.name.toLowerCase().includes(trimmed)) return true;
+
+  const queryDigits = trimmed.replace(/\D/g, "");
+  if (!queryDigits) return false;
+  return (contact.phoneNumbers ?? []).some((phone) => {
+    const numberDigits = `${phone.value}${phone.label}`.replace(/\D/g, "");
+    return numberDigits.includes(queryDigits);
+  });
+}
 
 export const DIRECTORY_SKILLS: DirectorySkill[] = [
   {

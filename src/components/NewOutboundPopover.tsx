@@ -16,6 +16,7 @@ import {
 import { Plus, ChevronLeft, X, User, Headset, Route, UsersRound, Building2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ContactActionButtons } from "@/components/DirectoryPage";
+import { contactMatchesQuery } from "@/data/directory";
 
 /* ── NewOutboundPopover ──
  * Local replacement for lyra-ui's `CreateNew` (outbound flow), built to the
@@ -491,15 +492,18 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
     if (groupId !== ALL_GROUP_ID || !query) return [];
     return outbound.groups
       .filter((g) => (g.kind ?? "contacts") === "contacts")
-      .map((g) => ({ group: g, contacts: (g.contacts ?? []).filter((c) => c.name.toLowerCase().includes(query)) }))
+      .map((g) => ({ group: g, contacts: (g.contacts ?? []).filter((c) => contactMatchesQuery(c, search)) }))
       .filter((section) => section.contacts.length > 0);
-  }, [groupId, query, outbound.groups]);
+  }, [groupId, query, search, outbound.groups]);
 
   const singleGroupContacts = useMemo(() => {
     if (!activeGroup) return [];
     const base = activeGroup.kind === "favorites" ? allContacts.filter((c) => favoriteIds.has(c.id)) : activeGroup.contacts ?? [];
-    return query ? base.filter((c) => c.name.toLowerCase().includes(query)) : base;
-  }, [activeGroup, query, allContacts, favoriteIds]);
+    // Matches by phone number too (see contactMatchesQuery) — the search
+    // box's own placeholder already promises "Enter phone, email or search
+    // term", so this closes a real gap rather than adding new UI.
+    return query ? base.filter((c) => contactMatchesQuery(c, search)) : base;
+  }, [activeGroup, query, search, allContacts, favoriteIds]);
 
   const noMatches =
     groupId === ALL_GROUP_ID ? query.length > 0 && allSections.length === 0 : query.length > 0 && singleGroupContacts.length === 0;

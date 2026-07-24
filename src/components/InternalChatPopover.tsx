@@ -13,7 +13,7 @@ import {
 } from "@nicecxone/lyra-ui";
 import { MessagesSquare, ChevronLeft, ChevronRight, Phone, Send, PanelRight, GripVertical, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { DIRECTORY_AGENTS, type DirectoryAgent } from "@/data/directory";
+import { DIRECTORY_AGENTS, contactMatchesQuery, type DirectoryAgent } from "@/data/directory";
 import type { InternalChatMessage } from "@/data/internalChat";
 
 /* ── InternalChatPopover ──
@@ -226,8 +226,7 @@ function ChatComposer({ draft, onDraftChange, onSend }: { draft: string; onDraft
 /** Shared list/chat body — the actual scrollable "content" area, same in
  *  both popover and docked presentations. */
 function ChatBody({ view, search, favoriteIds, onToggleFavorite, onViewChange, threads }: InternalChatSharedProps) {
-  const query = search.trim().toLowerCase();
-  const filtered = DIRECTORY_AGENTS.filter((employee) => employee.name.toLowerCase().includes(query));
+  const filtered = DIRECTORY_AGENTS.filter((employee) => contactMatchesQuery(employee, search));
   const favorites = filtered.filter((employee) => favoriteIds.includes(employee.id));
   const others = filtered.filter((employee) => !favoriteIds.includes(employee.id));
   const activeEmployee = view.kind === "chat" ? DIRECTORY_AGENTS.find((employee) => employee.id === view.employeeId) : undefined;

@@ -16,7 +16,7 @@ import {
 } from "@nicecxone/lyra-ui";
 import { Route, Phone, UserPlus, ChevronLeft, ChevronRight, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { DIRECTORY_AGENTS, DIRECTORY_SKILLS, type DirectoryAgent, type DirectorySkill } from "@/data/directory";
+import { DIRECTORY_AGENTS, DIRECTORY_SKILLS, contactMatchesQuery, type DirectoryAgent, type DirectorySkill } from "@/data/directory";
 import type { InternalChatMessage } from "@/data/internalChat";
 import { ConsultTransferIcon } from "@/components/CustomerInteractionPanel";
 
@@ -354,8 +354,7 @@ export function ConsultTransferButton({ customerName, issueSummary, caseId }: Co
 
   const activeAgent = view.kind === "chat" ? DIRECTORY_AGENTS.find((a) => a.id === view.agentId) : undefined;
 
-  const query = search.trim().toLowerCase();
-  const filteredAgents = DIRECTORY_AGENTS.filter((a) => a.name.toLowerCase().includes(query));
+  const filteredAgents = DIRECTORY_AGENTS.filter((a) => contactMatchesQuery(a, search));
 
   const favoriteAgents = DIRECTORY_AGENTS.filter((a) => favoriteIds.has(a.id));
   const favoriteSkills = DIRECTORY_SKILLS.filter((s) => favoriteIds.has(s.id));
