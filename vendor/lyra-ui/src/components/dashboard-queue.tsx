@@ -16,23 +16,33 @@ import { cn } from "../lib/utils";
    1. "cards" (default) — each queue renders as its own standalone
       `DashboardCard` (a "hero" `Icon` for the queue's own type — Digital,
       Inbound Voice, Voicemail, Work Item, etc. — + name + "Wait Time:
-      {wait}" header, Contacts/Agents as "contained" metrics) — no shared
-      enclosing backdrop; each card carries its own `neutral-subtle`
-      surface. Laid
+      {wait}" header, Contacts/Agents as "divided" metrics — plain columns
+      separated by a vertical rule, not boxed) — no shared enclosing
+      backdrop; each card carries its own `neutral-subtle` surface.
+      "divided" (rather than "contained") was picked specifically for this
+      row: with 4+ queues on screen at once, the per-metric boxes'
+      padding was the single biggest driver of each card's height, and
+      this widget is meant to be scanned at a glance, not read closely —
+      dropping the boxes measurably shrinks every card without losing
+      either number. Laid
       out via `.lyra-container-grid-wrap`/`.lyra-container-grid` (see
       lyra-tokens.css) — the same CSS container-query pattern the home
       tab's Activity/Performance/Productivity row uses — so this row
       collapses to a stacked column once its own available width gets
       tight, same as that one, rather than staying a fixed N-column grid
       that squeezes its cards (and their metric numbers/labels) into an
-      unreadably narrow space. Clicking a card selects it
-      (`selectedId`/`onSelect`, controlled/uncontrolled like `FilterChip`'s
-      own selection prop) — the selected card gets the `info-strong` (blue)
-      `Container` treatment instead. Built for a click-to-drill-down
-      pattern (e.g. opening a side panel with that queue's own
-      sub-queues), but `DashboardQueue` itself only reports the selection;
-      anything opened as a result of it is the consumer's concern, not
-      this component's.
+      unreadably narrow space. Because that layout is a flex row of equal-
+      width items (not a fixed-count grid), a 5th (or 6th) queue just
+      joins the same row and everyone gets a little narrower, right up
+      until the container-query thresholds above kick in — nothing about
+      the row itself needs to know how many queues it's holding. Clicking
+      a card selects it (`selectedId`/`onSelect`, controlled/uncontrolled
+      like `FilterChip`'s own selection prop) — the selected card gets the
+      `info-strong` (blue) `Container` treatment instead. Built for a
+      click-to-drill-down pattern (e.g. opening a side panel with that
+      queue's own sub-queues), but `DashboardQueue` itself only reports
+      the selection; anything opened as a result of it is the consumer's
+      concern, not this component's.
    2. "accordion" — the same queue list as expandable `Accordion` rows
       instead of a card grid: icon + name + "{contactsCount} contacts in
       queue" / "Wait: {wait}" subhead, with the Skills/Contacts metrics
@@ -177,7 +187,7 @@ const DashboardQueue = React.forwardRef<HTMLDivElement, DashboardQueueProps>(
                 { value: item.contactsCount, label: "Contacts" },
                 { value: item.agentsCount, label: "Agents" },
               ]}
-              metricVariant="contained"
+              metricVariant="divided"
               role="button"
               tabIndex={0}
               aria-pressed={currentSelectedId === item.id}

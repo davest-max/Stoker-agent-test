@@ -428,6 +428,34 @@ const INITIAL_ASSIGNMENTS: Assignment[] = [
       { id: "ev3", afterMessageId: "12", kind: "ended", label: "Call ended", timestamp: "Today, 02:05AM" },
     ],
   },
+  {
+    // The 4th demo channel (chat/email/voice already covered above) — links
+    // to Priya Nair's real DIRECTORY_CUSTOMERS record (customerId: "priya"),
+    // same as sofia/ray, and reuses her actual phoneNumbers entry as the
+    // channel's address. Short, casual back-and-forth (SMS reads as quick
+    // texts, not the longer chat/email exchanges above) and fully resolved
+    // by the end, unlike sofia/ray's still-open threads — one demo case
+    // that isn't mid-conversation.
+    id: "priya",
+    customerName: "Priya Nair",
+    customerId: "priya",
+    elapsed: "04:12",
+    issueSummary: "Got two order confirmation texts for the same order and worried she'd been charged twice.",
+    subject: "Duplicate order confirmation text",
+    caseId: "CASE-48462",
+    channels: [{ type: "sms", elapsed: "04:12", current: true, preview: "CXi SME SMS", address: "+14565559981" }],
+    escalationStatus: "resolved",
+    messages: [
+      { id: "1", variant: "customer", senderName: "Priya Nair", timestamp: "Today, 09:10AM · SMS", text: "Hi, I got two order confirmation texts for order 55210 today. Was I charged twice?" },
+      { id: "2", variant: "support-agent", senderName: CURRENT_AGENT_NAME, timestamp: "Today, 09:10AM · SMS", text: "Hi Priya, let me take a look — one sec" },
+      { id: "3", variant: "support-agent", senderName: CURRENT_AGENT_NAME, timestamp: "Today, 09:12AM · SMS", text: "Good news — the second text was just a shipping update, not a new order. Only one charge went through." },
+      { id: "4", variant: "customer", senderName: "Priya Nair", timestamp: "Today, 09:12AM · SMS", text: "Oh good, that definitely had me worried lol" },
+      { id: "5", variant: "support-agent", senderName: CURRENT_AGENT_NAME, timestamp: "Today, 09:13AM · SMS", text: "Totally get it! I'll flag it with our notifications team so that message reads clearer next time." },
+      { id: "6", variant: "customer", senderName: "Priya Nair", timestamp: "Today, 09:13AM · SMS", text: "Appreciate it, thank you!" },
+      { id: "7", variant: "support-agent", senderName: CURRENT_AGENT_NAME, timestamp: "Today, 09:14AM · SMS", text: "Anytime! Anything else I can help with today?" },
+      { id: "8", variant: "customer", senderName: "Priya Nair", timestamp: "Today, 09:14AM · SMS", text: "Nope that's it, thanks again!" },
+    ],
+  },
 ];
 
 /* ── Notifications ── (no mock records — starts empty) */
@@ -748,7 +776,10 @@ export function AgentNextGenPage({
   // appends a real outgoing message to whichever assignment is active.
   const handleSendMessage = (text: string) => {
     if (!activeAssignmentId) return;
-    const channelLabel = activeChannelType === "email" ? "Email" : "Chat";
+    // CHANNEL_TYPE_META (lyra-ui) over a hand-rolled ternary — covers every
+    // channel type's real label (e.g. "SMS", not "Chat") instead of just
+    // the two this previously special-cased.
+    const channelLabel = activeChannelType ? CHANNEL_TYPE_META[activeChannelType].label : "Chat";
     appendMessageToAssignment(activeAssignmentId, { variant: "support-agent", senderName: CURRENT_AGENT_NAME, text }, channelLabel);
   };
 

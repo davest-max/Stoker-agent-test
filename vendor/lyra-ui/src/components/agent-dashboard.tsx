@@ -18,6 +18,7 @@ import {
   Info,
   ChevronDown,
   Clock,
+  History,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "../lib/utils";
@@ -108,6 +109,11 @@ export const AGENT_DASHBOARD_QUEUE_SUB_ITEMS: Record<string, AgentDashboardQueue
     { id: "w2", label: "Escalations",     icon: ClipboardList, inQueueCount: 1, wait: "10m", available: 1, working: 1, unavailable: 0 },
     { id: "w3", label: "Billing Review",  icon: ClipboardList, inQueueCount: 0, wait: "0s",  available: 1, working: 0, unavailable: 0 },
   ],
+  "5": [
+    { id: "ov1", label: "Outbound_Sales_Voice",      icon: PhoneOutgoing, inQueueCount: 1, wait: "0s", available: 2, working: 1, unavailable: 0 },
+    { id: "ov2", label: "Outbound_Renewals",         icon: PhoneOutgoing, inQueueCount: 0, wait: "0s", available: 1, working: 0, unavailable: 0 },
+    { id: "ov3", label: "Outbound_Win_Back_Campaign", icon: PhoneOutgoing, inQueueCount: 1, wait: "0s", available: 1, working: 1, unavailable: 1 },
+  ],
 };
 
 function sumInQueue(id: string): number {
@@ -115,7 +121,11 @@ function sumInQueue(id: string): number {
 }
 
 /** Default queue-widget row — same 4 queues (Digital / Inbound Voice /
- *  Voicemail / Work Item) as the reference Home tab, with `contactsCount`/
+ *  Voicemail / Work Item) as the reference Home tab, plus a 5th "Outbound
+ *  Voice" queue (agent-initiated calls, as opposed to "Inbound Voice"'s
+ *  customer-initiated ones — same inbound/outbound split
+ *  `PerformanceSummaryCard`'s own "Channel Type" breakdown already draws,
+ *  just surfaced as its own queue card here too), with `contactsCount`/
  *  `skillsCount` derived from `AGENT_DASHBOARD_QUEUE_SUB_ITEMS` so the two
  *  can never drift apart (the bug this pattern was originally fixed for in
  *  agent-next-gen-v1 — see that file's own comment on `sumInQueue`).
@@ -123,12 +133,18 @@ function sumInQueue(id: string): number {
  *  reference screenshot's Contacts/Agents card redesign — unlike
  *  `contactsCount`, this promoted template doesn't run agent-next-gen-v1's
  *  own live-ticking/simulated-update behavior (that's specific to that
- *  app's Home tab; nothing here needed it). */
+ *  app's Home tab; nothing here needed it). Five queues (rather than four)
+ *  is also this row's own proof that `DashboardQueue`'s "cards" layout
+ *  doesn't assume a fixed count — see `.lyra-container-grid`'s doc comment
+ *  in dashboard-queue.tsx: it's an equal-width flex row that just gains a
+ *  5th column when there's room, and collapses the same way regardless of
+ *  how many queues it holds. */
 export const AGENT_DASHBOARD_QUEUE_ITEMS: DashboardQueueItem[] = [
-  { id: "1", name: "Digital",       icon: MessageSquare, wait: "00:02:34", skillsCount: AGENT_DASHBOARD_QUEUE_SUB_ITEMS["1"].length, contactsCount: sumInQueue("1"), agentsCount: 3 },
-  { id: "2", name: "Inbound Voice", icon: PhoneIncoming, wait: "00:00:00", skillsCount: AGENT_DASHBOARD_QUEUE_SUB_ITEMS["2"].length, contactsCount: sumInQueue("2"), agentsCount: 2 },
-  { id: "3", name: "Voicemail",     icon: Voicemail,     wait: "00:02:00", skillsCount: AGENT_DASHBOARD_QUEUE_SUB_ITEMS["3"].length, contactsCount: sumInQueue("3"), agentsCount: 3 },
-  { id: "4", name: "Work Item",     icon: ClipboardList, wait: "00:00:24", skillsCount: AGENT_DASHBOARD_QUEUE_SUB_ITEMS["4"].length, contactsCount: sumInQueue("4"), agentsCount: 11 },
+  { id: "1", name: "Digital",        icon: MessageSquare, wait: "00:02:34", skillsCount: AGENT_DASHBOARD_QUEUE_SUB_ITEMS["1"].length, contactsCount: sumInQueue("1"), agentsCount: 3 },
+  { id: "2", name: "Inbound Voice",  icon: PhoneIncoming, wait: "00:00:00", skillsCount: AGENT_DASHBOARD_QUEUE_SUB_ITEMS["2"].length, contactsCount: sumInQueue("2"), agentsCount: 2 },
+  { id: "3", name: "Voicemail",      icon: Voicemail,     wait: "00:02:00", skillsCount: AGENT_DASHBOARD_QUEUE_SUB_ITEMS["3"].length, contactsCount: sumInQueue("3"), agentsCount: 3 },
+  { id: "4", name: "Work Item",      icon: ClipboardList, wait: "00:00:24", skillsCount: AGENT_DASHBOARD_QUEUE_SUB_ITEMS["4"].length, contactsCount: sumInQueue("4"), agentsCount: 11 },
+  { id: "5", name: "Outbound Voice", icon: PhoneOutgoing, wait: "00:00:00", skillsCount: AGENT_DASHBOARD_QUEUE_SUB_ITEMS["5"].length, contactsCount: sumInQueue("5"), agentsCount: 4 },
 ];
 
 /** Renders one queue's skill/channel breakdown — the content a consumer's
@@ -671,6 +687,7 @@ function ContactHistoryCard({ onRedial }: ContactHistoryCardProps) {
     <DashboardCard
       variant="neutral-subtle"
       headerTitle="Contact History"
+      headerIcon={<Icon icon={History} size="md" background="info" shape="rounded" decorative />}
       headerActions={
         <>
           <SearchInput

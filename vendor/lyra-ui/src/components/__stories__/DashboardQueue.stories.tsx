@@ -29,8 +29,9 @@ const QUEUE_ITEMS: DashboardQueueItem[] = [
 ];
 
 /* ── QueueCards ──
-   Row of queue widgets, each its own DashboardCard with "contained"
-   Contacts/Agents metrics — the "cards" variant. */
+   Row of queue widgets, each its own DashboardCard with "divided"
+   Contacts/Agents metrics (plain columns, no per-metric box) — the
+   "cards" variant. */
 
 export const QueueCards: Story = {
   name: "QueueCards",
