@@ -322,6 +322,82 @@ function fakeOutboundEmailSubject(): string {
   return OUTBOUND_EMAIL_SUBJECTS[Math.floor(Math.random() * OUTBOUND_EMAIL_SUBJECTS.length)];
 }
 
+/** Same rough "is this actually a name, or just a raw address" judgment
+ *  call `NewOutboundPopover`'s own `looksLikeEmail` heuristic makes (not
+ *  imported from there — that one's private to its own file, and this
+ *  needs the opposite answer: true for a real name, not true for an
+ *  email/phone). Used only to decide whether a demo transcript's opening
+ *  line can address the customer by name ("Hi Sofia,") or has to stay
+ *  generic ("Hi,") — an unmatched outbound's `contactName` is whatever the
+ *  agent typed into search, which is exactly a phone number or email, not
+ *  a name. */
+function isLikelyPersonName(value: string): boolean {
+  return !value.includes("@") && !/^[+\d\s().-]+$/.test(value);
+}
+
+/** Non-voice counterpart to `scheduleOutboundVoiceDemoTranscript` below —
+ *  same "believable opening exchange, not the real conversation" idea, one
+ *  script per channel so each reads in that channel's own voice: chat/SMS/
+ *  WhatsApp as quick, casual messages; email as a couple of complete
+ *  sentences with a little more room to breathe. `variant`/`senderName`
+ *  match `Message`'s own shape so these lines can go straight through
+ *  `appendMessageToAssignment` exactly like the voice version's do. */
+function buildOutboundChannelDemoLines(
+  channel: Exclude<ChannelType, "voice">,
+  contactName: string,
+  skillLabel: string | undefined
+): { variant: Message["variant"]; senderName: string; text: string; delayMs: number }[] {
+  const agentFirstName = CURRENT_AGENT_NAME.split(" ")[0];
+  const topic = skillLabel ?? "your account";
+  const greeting = isLikelyPersonName(contactName) ? `Hi ${contactName.split(" ")[0]},` : "Hi,";
+
+  switch (channel) {
+    case "email":
+      return [
+        { variant: "support-agent", senderName: CURRENT_AGENT_NAME, delayMs: 1500,
+          text: `${greeting} I wanted to follow up regarding ${topic}. Let me know if you have any questions or concerns.` },
+        { variant: "customer", senderName: contactName, delayMs: 4200,
+          text: "Thanks for checking in — everything's been working well on my end." },
+        { variant: "support-agent", senderName: CURRENT_AGENT_NAME, delayMs: 6800,
+          text: "Great to hear! Please don't hesitate to reach out if anything comes up." },
+      ];
+    case "sms":
+      return [
+        { variant: "support-agent", senderName: CURRENT_AGENT_NAME, delayMs: 1200,
+          text: `${greeting} this is ${agentFirstName} from support, reaching out about ${topic}. Got a sec?` },
+        { variant: "customer", senderName: contactName, delayMs: 2600,
+          text: "Hey yeah, what's up?" },
+        { variant: "support-agent", senderName: CURRENT_AGENT_NAME, delayMs: 4400,
+          text: "Just wanted to check in and make sure everything's going okay on our end." },
+        { variant: "customer", senderName: contactName, delayMs: 6200,
+          text: "All good so far, thanks for checking!" },
+      ];
+    case "whatsapp":
+      return [
+        { variant: "support-agent", senderName: CURRENT_AGENT_NAME, delayMs: 1200,
+          text: `${greeting} this is ${agentFirstName} from support, reaching out about ${topic}.` },
+        { variant: "customer", senderName: contactName, delayMs: 2800,
+          text: "Hi! Sure, go ahead." },
+        { variant: "support-agent", senderName: CURRENT_AGENT_NAME, delayMs: 4800,
+          text: "Just checking in to see how things are going — any issues on your end?" },
+        { variant: "customer", senderName: contactName, delayMs: 7000,
+          text: "Nope, all good! Appreciate you checking in." },
+      ];
+    case "chat":
+    default:
+      return [
+        { variant: "support-agent", senderName: CURRENT_AGENT_NAME, delayMs: 1200,
+          text: `${greeting} this is ${agentFirstName} from support — reaching out about ${topic}.` },
+        { variant: "customer", senderName: contactName, delayMs: 3000,
+          text: "Oh hi, thanks for reaching out!" },
+        { variant: "support-agent", senderName: CURRENT_AGENT_NAME, delayMs: 5200,
+          text: "Just wanted to check in and see how things are going on our end." },
+        { variant: "customer", senderName: contactName, delayMs: 7400,
+          text: "Things have been good so far, no complaints!" },
+      ];
+  }
+}
+
 /** Same identity lyra-ui's own `InteractionNavItem`/`ChannelTab` use
  *  internally for a channel — `id` when set, else `type`. Mirrored here
  *  (rather than imported — it's a private helper local to
@@ -808,6 +884,34 @@ export function AgentNextGenPage({
     });
   };
 
+  /** Every customer-facing outbound channel gets a fake, staggered opening
+   *  exchange now, not just voice — starting an outbound chat/email/SMS/
+   *  WhatsApp should never leave the agent looking at a blank thread any
+   *  more than an outbound call would. Voice keeps its own dedicated
+   *  function above (transcript-specific copy); every other channel routes
+   *  through `buildOutboundChannelDemoLines`'s per-channel script. Called
+   *  from all three customer-facing outbound paths — a brand-new New
+   *  Outbound pick, adding a channel to an already-open card, and an
+   *  unmatched phone/email — but deliberately NOT from the agent-to-agent
+   *  internal call branch in `handleStartOutboundCall`: that's a real
+   *  colleague, not a scripted customer, so it stays empty/live. */
+  const scheduleOutboundDemoTranscript = (
+    assignmentId: string,
+    channel: ChannelType,
+    contactName: string,
+    skillLabel?: string
+  ) => {
+    if (channel === "voice") {
+      scheduleOutboundVoiceDemoTranscript(assignmentId, contactName, skillLabel);
+      return;
+    }
+    const channelLabel = CHANNEL_TYPE_META[channel].label;
+    const lines = buildOutboundChannelDemoLines(channel, contactName, skillLabel);
+    lines.forEach(({ delayMs, ...message }) => {
+      setTimeout(() => appendMessageToAssignment(assignmentId, message, channelLabel), delayMs);
+    });
+  };
+
   // On an elevated (2+ channel) card, each open channel's own status
   // dropdown is independent — changing one leaves the others exactly as
   // they were, same as their subject/case ID already behave (see
@@ -944,10 +1048,8 @@ export function AgentNextGenPage({
       )
     );
     setActiveTab("chat");
-    if (channel === "voice") {
-      const assignment = assignments.find((a) => a.id === assignmentId);
-      if (assignment) scheduleOutboundVoiceDemoTranscript(assignmentId, assignment.customerName ?? "the customer", skillLabel);
-    }
+    const assignment = assignments.find((a) => a.id === assignmentId);
+    scheduleOutboundDemoTranscript(assignmentId, channel, assignment?.customerName ?? "the customer", skillLabel);
   };
 
   /** New Outbound's `onStartCall` — fired for every matched-contact outbound
@@ -1031,9 +1133,7 @@ export function AgentNextGenPage({
       setActiveTab("chat");
       // Same full-page dismiss as the internal-agent-call branch above.
       setOpenSlideInPage((v) => (v !== null && FULL_PAGE_DESTINATIONS.has(v) ? null : v));
-      if (channel === "voice") {
-        scheduleOutboundVoiceDemoTranscript(id, contact.name, skillLabel);
-      }
+      scheduleOutboundDemoTranscript(id, channel, contact.name, skillLabel);
       return;
     }
 
@@ -1046,11 +1146,14 @@ export function AgentNextGenPage({
    *  didn't match anyone in the directory (`OutboundDetailScreen`'s
    *  `!contact` branch, "No match found in directory"). Mirrors
    *  `handleStartOutboundCall`'s customer-kind branch above — new tile,
-   *  made active, full-page slide-in dismissed, voice gets a demo
-   *  transcript — just without a `customerId`/directory record to link,
+   *  made active, full-page slide-in dismissed, fake demo transcript
+   *  scheduled — just without a `customerId`/directory record to link,
    *  since there isn't one. There's no name either, so the typed address
    *  itself becomes `customerName`: more useful to the agent on the tile
-   *  than falling back to `InteractionNavItem`'s generic "Customer" label. */
+   *  than falling back to `InteractionNavItem`'s generic "Customer" label
+   *  (`scheduleOutboundDemoTranscript`'s own `isLikelyPersonName` check
+   *  keeps the demo script itself from addressing a phone number as if it
+   *  were a name). */
   const handleStartUnmatchedOutbound = (input: { channel: ChannelType; value: string; skillId: string }) => {
     const { channel, value, skillId } = input;
     const skillLabel = OUTBOUND_CONFIG.skillOptions.find((o) => o.value === skillId)?.label;
@@ -1072,9 +1175,7 @@ export function AgentNextGenPage({
     setActiveTab("chat");
     // Same full-page dismiss as handleStartOutboundCall's branches above.
     setOpenSlideInPage((v) => (v !== null && FULL_PAGE_DESTINATIONS.has(v) ? null : v));
-    if (channel === "voice") {
-      scheduleOutboundVoiceDemoTranscript(id, value, skillLabel);
-    }
+    scheduleOutboundDemoTranscript(id, channel, value, skillLabel);
   };
 
   /* AI panel show/hide */
