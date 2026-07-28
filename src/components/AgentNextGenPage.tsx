@@ -1553,6 +1553,11 @@ export function AgentNextGenPage({
                 name="My New Project"
                 compact={isCompactHeader}
                 aria-expanded={appMenuOpen}
+                // Reads as a plain heading now, not an obvious dropdown —
+                // still opens the same app menu popover on click either way,
+                // this only drops the chevron glyph (see AppName's own
+                // `showChevron` doc comment in app-name.tsx).
+                showChevron={false}
               />
             </PopoverPrimitive.Trigger>
             <PopoverPrimitive.Portal>

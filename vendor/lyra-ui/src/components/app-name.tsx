@@ -12,10 +12,18 @@ interface AppNameProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
    * Name and chevron are hidden; the app name moves into the menu header.
    */
   compact?: boolean;
+  /**
+   * Show the trailing chevron that signals "this opens a menu." Default
+   * `true`. Set `false` for a consumer that wants the name to read as a
+   * plain heading — the button stays clickable (still opens the app menu
+   * popover, still keeps `aria-haspopup`/`aria-expanded`) and `compact`
+   * mode is unaffected; this only ever removes the chevron glyph itself.
+   */
+  showChevron?: boolean;
 }
 
 const AppName = React.forwardRef<HTMLButtonElement, AppNameProps>(
-  ({ className, icon, name, compact = false, ...props }, ref) => (
+  ({ className, icon, name, compact = false, showChevron = true, ...props }, ref) => (
     <button
       ref={ref}
       aria-haspopup="true"
@@ -32,11 +40,13 @@ const AppName = React.forwardRef<HTMLButtonElement, AppNameProps>(
       {!compact && (
         <>
           <span className="lyra-body-lg-emphasis text-lyra-fg-default">{name}</span>
-          <ChevronDown
-            className="h-3.5 w-3.5 text-lyra-fg-secondary"
-            strokeWidth={1.5}
-            aria-hidden="true"
-          />
+          {showChevron && (
+            <ChevronDown
+              className="h-3.5 w-3.5 text-lyra-fg-secondary"
+              strokeWidth={1.5}
+              aria-hidden="true"
+            />
+          )}
         </>
       )}
     </button>

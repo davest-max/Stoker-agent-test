@@ -84,3 +84,14 @@ export const LongName: Story = {
     name: "Agent Workspace Premium Extended Edition",
   },
 };
+
+/* ── No Chevron ── */
+
+export const NoChevron: Story = {
+  name: "No Chevron",
+  args: {
+    icon: <img src={appIcon} alt="App" className="h-6 w-6" />,
+    name: "My New Project",
+    showChevron: false,
+  },
+};
