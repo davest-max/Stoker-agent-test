@@ -396,7 +396,7 @@ function VoiceTranscriptThread({ messages, events = [] }: { messages: Message[];
  *  just this one stand-in constant, same fidelity level as this file's
  *  other placeholder identifiers (e.g. `CURRENT_AGENT_NAME` in
  *  AgentNextGenPage.tsx). */
-const SUPPORT_EMAIL_ADDRESS = "support@cxone.com";
+const SUPPORT_EMAIL_ADDRESS = "support@ourcompany.com";
 
 /** Which address a message reads as being sent *to* — the other party from
  *  whoever sent it. `customerEmail` is the channel's own recorded address

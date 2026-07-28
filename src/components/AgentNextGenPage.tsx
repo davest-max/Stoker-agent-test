@@ -1,11 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
-import * as PopoverPrimitive from "@radix-ui/react-popover";
 import {
   AppHeader,
   AppName,
-  AppMenu,
-  CXoneLogo,
   AiPanel,
   NotificationsBell,
   AgentNotifications,
@@ -21,7 +18,6 @@ import {
   AGENT_DASHBOARD_QUEUE_ITEMS,
   AGENT_DASHBOARD_QUEUE_SUB_ITEMS,
   type AgentStatus,
-  type AppMenuGroup,
   type AgentNotification,
   type DraggableVariant,
   type InteractionChannel,
@@ -155,20 +151,6 @@ function RailNavButton({
       </span>
     </button>
   );
-}
-
-/* ── App menu builder (needs onNavigate so built inside the component) ── */
-
-function buildAppMenuGroups(onNavigate?: (page: Page) => void): AppMenuGroup[] {
-  return [
-    {
-      items: [
-        { label: "Agent Workspace", active: true },
-        { label: "Agent Workspace Premium", onClick: () => onNavigate?.("agent-workspace") },
-        { label: "Outbound Engagement", onClick: () => onNavigate?.("outbound") },
-      ],
-    },
-  ];
 }
 
 /* ── New Outbound config ──
@@ -476,7 +458,7 @@ const INITIAL_ASSIGNMENTS: Assignment[] = [
     issueSummary: "Calling about a shipment that hasn't arrived — tracking shows no movement in 5 days.",
     subject: "Shipment tracking shows no movement",
     caseId: "CASE-48350",
-    channels: [{ type: "voice", elapsed: "02:05", current: true, preview: "CXoneSMS_1-833-457-2672" }],
+    channels: [{ type: "voice", elapsed: "02:05", current: true, preview: "Support_Voice_1-833-457-2672" }],
     escalationStatus: "resolved",
     // Full call transcript (this is the demo voice interaction — its "Chat"
     // tab renders as "Transcript" instead, see InteractionHeader's
@@ -540,8 +522,6 @@ const INITIAL_NOTIFICATIONS: AgentNotification[] = [];
 
 /* ── AgentNextGenPage ── */
 
-type Page = "agent-workspace" | "agent" | "outbound";
-
 const AI_PANEL_DEFAULT_WIDTH = 360;
 /** Matches `InternalChatFloatPanel`'s own default size — used here only to
  *  clamp the float's initial position to the viewport before it mounts. */
@@ -554,11 +534,9 @@ const NAV_NARROW_BREAKPOINT = 1280;
 export function AgentNextGenPage({
   showPageHeader = false,
   showPanelToggle = false,
-  onNavigate,
 }: {
   showPageHeader?: boolean;
   showPanelToggle?: boolean;
-  onNavigate?: (page: Page) => void;
 }) {
   // Expanded by default — unless the viewport is already too narrow at
   // mount, in which case starting expanded would just auto-collapse a tick
@@ -589,7 +567,6 @@ export function AgentNextGenPage({
   const [notifications, setNotifications] = useState(INITIAL_NOTIFICATIONS);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>("available");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [appMenuOpen, setAppMenuOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(
     () => document.documentElement.getAttribute("data-theme") === "dark"
   );
@@ -601,11 +578,6 @@ export function AgentNextGenPage({
       return next;
     });
   };
-
-  const appMenuGroups = buildAppMenuGroups((page) => {
-    setAppMenuOpen(false);
-    onNavigate?.(page);
-  });
 
   /* Panel animation state machine — see AgentNextGenTemplate.stories.tsx for full comment */
   type PanelState = "closed" | "open" | "closing";
@@ -1545,37 +1517,15 @@ export function AgentNextGenPage({
       {/* ── App Header ── */}
       <AppHeader
         appName={
-          <PopoverPrimitive.Root open={appMenuOpen} onOpenChange={setAppMenuOpen}>
-            <PopoverPrimitive.Trigger asChild>
-              <AppName
-                // Hidden for user testing — restore by putting this back:
-                // icon={<img src={appIcon} alt="Agent Workspace" className="h-6 w-6" />}
-                name="Agent Workspace"
-                compact={isCompactHeader}
-                aria-expanded={appMenuOpen}
-                // Reads as a plain heading now, not an obvious dropdown —
-                // still opens the same app menu popover on click either way,
-                // this only drops the chevron glyph (see AppName's own
-                // `showChevron` doc comment in app-name.tsx).
-                showChevron={false}
-              />
-            </PopoverPrimitive.Trigger>
-            <PopoverPrimitive.Portal>
-              <PopoverPrimitive.Content
-                side="bottom"
-                align="start"
-                sideOffset={6}
-                onOpenAutoFocus={(e: Event) => e.preventDefault()}
-                className="z-[9999] animate-in fade-in-0 slide-in-from-top-2 duration-150 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-1 data-[state=closed]:duration-100"
-              >
-                <AppMenu
-                  groups={appMenuGroups}
-                  footer={<CXoneLogo />}
-                  header={isCompactHeader ? "Agent Workspace" : undefined}
-                />
-              </PopoverPrimitive.Content>
-            </PopoverPrimitive.Portal>
-          </PopoverPrimitive.Root>
+          <AppName
+            // Hidden for user testing — restore by putting this back:
+            // icon={<img src={appIcon} alt="Agent Workspace" className="h-6 w-6" />}
+            name="Agent Workspace"
+            compact={isCompactHeader}
+            // Plain heading now — no app-switcher menu behind it at all
+            // (see AppName's own `interactive` doc comment in app-name.tsx).
+            interactive={false}
+          />
         }
         actions={
           <>

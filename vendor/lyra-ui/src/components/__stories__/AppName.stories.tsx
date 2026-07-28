@@ -91,7 +91,18 @@ export const NoChevron: Story = {
   name: "No Chevron",
   args: {
     icon: <img src={appIcon} alt="App" className="h-6 w-6" />,
-    name: "My New Project",
+    name: "Agent Workspace",
     showChevron: false,
+  },
+};
+
+/* ── Non-interactive ── */
+
+export const NonInteractive: Story = {
+  name: "Non-interactive",
+  args: {
+    icon: <img src={appIcon} alt="App" className="h-6 w-6" />,
+    name: "Agent Workspace",
+    interactive: false,
   },
 };
