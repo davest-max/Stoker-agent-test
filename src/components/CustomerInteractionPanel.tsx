@@ -892,10 +892,12 @@ function MutedAudioLinesIcon({ strokeWidth = 2 }: { strokeWidth?: number }) {
  * "Outcome" used to be an inert icon button (no popup) — now opens the
  * wrap-up form in OutcomePanel.tsx, hence the added `customerName` prop
  * (seeds the panel's title and AI-suggested summary). Same reasoning for
- * `issueSummary`/`caseId`, added for ConsultTransferButton's own AI-
- * suggested handoff summary — `issueSummary` specifically (not `subject`,
- * the short header text) since the handoff note needs the fuller
- * description of what's actually going on. */
+ * `issueSummary`, added for ConsultTransferButton's own AI-suggested
+ * handoff summary — `issueSummary` specifically (not `subject`, the short
+ * header text) since the handoff note needs the fuller description of
+ * what's actually going on. No `caseId` here — a case reference number
+ * isn't useful context for an agent deciding whether to pick up an
+ * interaction, so the handoff note dropped it. */
 
 export interface InteractionActionsBarProps {
   isVoiceCall?: boolean;
@@ -904,7 +906,6 @@ export interface InteractionActionsBarProps {
    *  fall back to generic phrasing when omitted. */
   customerName?: string;
   issueSummary?: string;
-  caseId?: string;
   /** This interaction's currently-active channel — drives the leading
    *  channel-type segment's icon/label/kebab below. */
   currentChannelType?: ChannelType;
@@ -925,7 +926,6 @@ export function InteractionActionsBar({
   isVoiceCall = false,
   customerName,
   issueSummary,
-  caseId,
   currentChannelType,
   outcomeOpen,
   onOutcomeOpenChange,
@@ -983,7 +983,7 @@ export function InteractionActionsBar({
           <div className="mx-0.5 h-6 w-px bg-lyra-border-subtle" />
         </>
       )}
-      <ConsultTransferButton customerName={customerName} issueSummary={issueSummary} caseId={caseId} />
+      <ConsultTransferButton customerName={customerName} issueSummary={issueSummary} />
       <OutcomeButton
         customerName={customerName ?? "this customer"}
         open={outcomeOpen}

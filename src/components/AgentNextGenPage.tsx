@@ -337,6 +337,26 @@ function isLikelyPersonName(value: string): boolean {
   return !value.includes("@") && !/^[+\d\s().-]+$/.test(value);
 }
 
+/** Generic outbound issueSummary — replaces the old "Outbound {Channel} to
+ *  {Name}." text, which just restated the channel type and a name already
+ *  shown right next to it everywhere this renders (the tile, the action
+ *  bar, and the Consult/Transfer handoff note — see `buildHandoffSummary`
+ *  in ConsultTransferPopover.tsx, which is what actually prompted this: it
+ *  quotes `issueSummary` verbatim as "the customer's issue", so a generic
+ *  "type + name" string there just repeated information the receiving
+ *  agent already had). There's no real customer-reported issue for a call
+ *  the agent just dialed, so this leans on the selected skill/queue as the
+ *  closest available stand-in for one — same `topic` idea
+ *  `scheduleOutboundVoiceDemoTranscript` below already uses — falling back
+ *  to a generic account check-in when no skill was selected (skill
+ *  selection is currently hidden — see `SHOW_SKILL_SELECTION` in
+ *  NewOutboundPopover.tsx, so this fallback is the common case today). */
+function buildOutboundIssueSummary(skillLabel?: string): string {
+  return skillLabel
+    ? `Reaching out regarding ${skillLabel.toLowerCase()}.`
+    : "Reaching out to check in on their account.";
+}
+
 /** Company script offered on every outbound voice call — matched contact,
  *  unmatched phone number, or a voice channel added onto an existing card
  *  (see the three `script:` call sites below). For demo purposes this is
@@ -1380,7 +1400,7 @@ export function AgentNextGenPage({
         customerName: contact.name,
         customerId: contact.id,
         elapsed: "00:00",
-        issueSummary: `Outbound ${channelLabel} to ${contact.name}.`,
+        issueSummary: buildOutboundIssueSummary(skillLabel),
         subject: channel === "email" ? fakeOutboundEmailSubject() : `Outbound ${channelLabel}`,
         caseId: generateCaseId(),
         channels: [{ type: channel, elapsed: "00:00", current: true, preview: skillLabel, address: phone }],
@@ -1422,7 +1442,7 @@ export function AgentNextGenPage({
       id,
       customerName: value,
       elapsed: "00:00",
-      issueSummary: `Outbound ${channelLabel} to ${value}.`,
+      issueSummary: buildOutboundIssueSummary(skillLabel),
       subject: channel === "email" ? fakeOutboundEmailSubject() : `Outbound ${channelLabel}`,
       caseId: generateCaseId(),
       channels: [{ type: channel, elapsed: "00:00", current: true, preview: skillLabel, address: value }],
@@ -2106,7 +2126,6 @@ export function AgentNextGenPage({
                           isVoiceCall={isActiveAssignmentVoiceCall}
                           customerName={activeAssignment.customerName}
                           issueSummary={activeAssignment.issueSummary}
-                          caseId={activeAssignment.caseId}
                           currentChannelType={activeChannelType}
                           outcomeOpen={outcomeButtonOpen}
                           onOutcomeOpenChange={setOutcomeButtonOpen}

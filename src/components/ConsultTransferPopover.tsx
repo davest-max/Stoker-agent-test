@@ -261,23 +261,31 @@ function ChatComposer({ draft, onDraftChange, onSend }: { draft: string; onDraft
   );
 }
 
-/** Seeded AI-suggested handoff note — a brief summary of the customer's
- *  issue (the fuller `issueSummary`, not the short header `subject`) plus
- *  an explicit ask of whether the receiving agent can take the interaction
- *  on, rather than a one-sided "here's what I did" recap. Falls back to
+/** Seeded AI-suggested handoff note — written like an agent actually typing
+ *  a quick heads-up to a colleague (greeting by name, "I have a customer,
+ *  X" framing) rather than a terse data dump. Still built from the same
+ *  fields as before: a brief summary of the customer's issue (the fuller
+ *  `issueSummary`, not the short header `subject`) plus an explicit ask of
+ *  whether the receiving agent can take the interaction on. Falls back to
  *  generic phrasing when an assignment is missing a field, same tolerance
- *  as OutcomeButton's own `customerName` fallback. */
+ *  as OutcomeButton's own `customerName` fallback. No case # here — a
+ *  case reference number isn't useful context for an agent deciding
+ *  whether to pick up an interaction, just noise ahead of the actual
+ *  summary. */
 function buildHandoffSummary({
+  agentName,
   customerName,
   issueSummary,
-  caseId,
 }: {
-  customerName: string;
+  /** The receiving agent's name (the one this note is addressed to, not
+   *  the one sending it) — greets them by first name. */
+  agentName: string;
+  customerName?: string;
   issueSummary: string;
-  caseId?: string;
 }): string {
-  const caseRef = caseId ? ` (${caseId})` : "";
-  return `${customerName}${caseRef} — ${issueSummary} Would you be able to take this interaction on?`;
+  const agentFirstName = agentName.split(" ")[0];
+  const customerClause = customerName ? `I have a customer, ${customerName}.` : "I have a customer on the line.";
+  return `Hi ${agentFirstName}, ${customerClause} ${issueSummary} Would you be able to take this interaction on?`;
 }
 
 /* ── Root ── */
@@ -289,10 +297,9 @@ export interface ConsultTransferButtonProps {
    *  customerName). */
   customerName?: string;
   issueSummary?: string;
-  caseId?: string;
 }
 
-export function ConsultTransferButton({ customerName, issueSummary, caseId }: ConsultTransferButtonProps) {
+export function ConsultTransferButton({ customerName, issueSummary }: ConsultTransferButtonProps) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("agents");
   const [view, setView] = useState<View>({ kind: "list" });
@@ -315,9 +322,9 @@ export function ConsultTransferButton({ customerName, issueSummary, caseId }: Co
   const handoffSummaryFor = (agent: DirectoryAgent): string =>
     handoffDrafts[agent.id] ??
     buildHandoffSummary({
-      customerName: customerName ?? "this customer",
+      agentName: agent.name,
+      customerName,
       issueSummary: issueSummary ?? "reviewing the open issue.",
-      caseId,
     });
 
   const handleSendHandoff = (agent: DirectoryAgent) => {
