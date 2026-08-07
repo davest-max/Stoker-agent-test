@@ -94,7 +94,7 @@ const SLIDE_IN_META: Record<SlideInDestination, { title: string; icon: React.Rea
  *  `frame-ancestors` to block embedding will still refuse to render here —
  *  that's the third-party site's own header, not something fixable from
  *  this end. */
-const CUSTOM_WORKSPACE_URL = "https://www.delta.com/refund-form/";
+const CUSTOM_WORKSPACE_URL = "https://www.poetryfoundation.org/poems/1618844/love-poem-with-apologies-for-my-appearance";
 
 /** Title for each full-page takeover destination — shown as the header's h1. */
 const FULL_PAGE_META: Record<FullPageDestination, { title: string }> = {
