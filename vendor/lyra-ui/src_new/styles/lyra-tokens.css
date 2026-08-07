@@ -1,0 +1,638 @@
+/* ════════════════════════════════════════════════════
+   Lyra Foundations (Beta) — Design Tokens
+   Mapped from Figma Semantic Colors & Semantic Sizes
+   ════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Background ── */
+  --lyra-color-bg-surface-base: #ffffff;
+  --lyra-color-bg-surface-canvas: #fcfcfd;
+  --lyra-color-bg-surface-container: #ffffff;
+  --lyra-color-bg-surface-container-subtle: #fbfcfe;
+  --lyra-color-bg-surface-shell: #f3f5f6;
+  --lyra-color-bg-surface-backdrop: rgba(0, 0, 0, 0.24);
+  --lyra-color-bg-surface-overlay: #ffffff;
+  --lyra-color-bg-surface-inverse: #2a2d32;
+  --lyra-color-bg-primary: #166cca;
+  --lyra-color-bg-secondary: #ffffff;
+  --lyra-color-bg-destructive: #bc2626;
+  --lyra-color-bg-control: #ffffff;
+  --lyra-color-bg-control-subtle: rgba(0, 0, 0, 0.02);
+  --lyra-color-bg-field: #ffffff;
+  --lyra-color-bg-field-ai: rgba(143, 115, 227, 0.04);
+  --lyra-color-bg-disabled: rgba(0, 0, 0, 0.06);
+  --lyra-color-bg-none: rgba(0, 0, 0, 0.00);
+  --lyra-color-bg-active-strong: #166cca;
+  --lyra-color-bg-active-moderate: #D3E6FD;
+  --lyra-color-bg-active-subtle: #ecf5fe;
+  --lyra-color-bg-conversation-ai: #f3f5f6;
+  --lyra-color-bg-conversation-agent: #eef4fe;
+  --lyra-color-bg-conversation-customer: #eefaf0;
+  --lyra-color-bg-conversation-user: #E5EEFF;
+
+  /* ── Foreground / Text ── */
+  --lyra-color-fg-default: rgba(0, 0, 0, 0.80);
+  --lyra-color-fg-secondary: rgba(0, 0, 0, 0.56);
+  --lyra-color-fg-action: #5D6A79;
+  --lyra-color-fg-disabled: rgba(0, 0, 0, 0.55);
+  --lyra-color-fg-link: #185ba4;
+  --lyra-color-fg-inverse: #ffffff;
+  --lyra-color-fg-inverse-disabled: rgba(255, 255, 255, 0.30);
+  --lyra-color-fg-on-primary: #ffffff;
+  --lyra-color-fg-on-destructive: #ffffff;
+  --lyra-color-fg-active-subtle: #f5faff;
+  --lyra-color-fg-active-strong: #185ba4;
+
+  /* ── Border ── */
+  --lyra-color-border-subtle: rgba(0, 0, 0, 0.10);
+  --lyra-color-border-default: rgba(0, 0, 0, 0.16);
+  --lyra-color-border-medium: rgba(0, 0, 0, 0.32);
+  --lyra-color-border-strong: rgba(0, 0, 0, 0.46);
+  --lyra-color-border-disabled: rgba(0, 0, 0, 0.10);
+  --lyra-color-border-active: #166cca;
+  --lyra-color-border-field-ai: #4e39a8;
+  --lyra-color-border-inverse: rgba(255, 255, 255, 0.80);
+  --lyra-color-border-none: rgba(0, 0, 0, 0.00);
+  --lyra-color-border-focus-default: #185ba4;
+  --lyra-color-border-focus-inverse: #fcce36;
+
+  /* ── Status ── */
+  --lyra-color-status-success-strong: #21742c;
+  --lyra-color-status-success-medium: #5ac368;
+  --lyra-color-status-success-subtle: #ebfaed;
+  --lyra-color-status-info-strong: #2558c1;
+  --lyra-color-status-info-medium: #709cf5;
+  --lyra-color-status-info-subtle: #f0f5ff;
+  --lyra-color-status-critical-strong: #bc2626;
+  --lyra-color-status-critical-medium: #fa7f7f;
+  --lyra-color-status-critical-subtle: #fff0f0;
+  --lyra-color-state-bg-hover-critical-subtle: #ffebeb;
+  --lyra-color-state-bg-pressed-critical-subtle: #ffe0e0;
+  --lyra-color-status-warning-strong: #8e6800;
+  --lyra-color-status-warning-medium: #fcce36;
+  --lyra-color-status-warning-subtle: #fffae0;
+
+  /* ── State ── */
+  --lyra-color-state-bg-hover-opacity: rgba(0, 0, 0, 0.04);
+  --lyra-color-state-bg-pressed-opacity: rgba(0, 0, 0, 0.10);
+  --lyra-color-state-bg-hover-secondary: #fcfcfd;
+  --lyra-color-state-bg-pressed-secondary: #f3f5f6;
+  --lyra-color-state-bg-hover-active-subtle: #e8f1fc;
+  --lyra-color-state-bg-pressed-active-subtle: #c8e1fe;
+  --lyra-color-state-bg-hover-active-strong: #185ba4;
+  --lyra-color-state-bg-pressed-active-strong: #164479;
+  --lyra-color-state-bg-hover-primary: #185ba4;
+  --lyra-color-state-bg-pressed-primary: #164479;
+  --lyra-color-state-bg-hover-destructive: #902222;
+  --lyra-color-state-bg-pressed-destructive: #6d2222;
+  --lyra-color-state-border-hover-neutral: rgba(0, 0, 0, 0.80);
+
+  /* ── Avatar ── */
+  /* Avatar bg is intentionally theme-invariant — same value in light and dark */
+  --lyra-color-avatar-default-bg: #5d6a79;
+
+  /* ── Accent ── */
+  --lyra-color-accent-slate-soft: #e8ebed;
+  --lyra-color-accent-slate-strong: #5d6a79;
+  --lyra-color-accent-red-soft: #ffdbdb;
+  --lyra-color-accent-red-strong: #bc2626;
+  --lyra-color-accent-orange-soft: #ffe2c7;
+  --lyra-color-accent-orange-strong: #a64f00;
+  --lyra-color-accent-yellow-soft: #fff3ad;
+  --lyra-color-accent-yellow-strong: #8e6800;
+  --lyra-color-accent-lime-soft: #def6a7;
+  --lyra-color-accent-lime-strong: #4e760c;
+  --lyra-color-accent-green-soft: #d2f4d5;
+  --lyra-color-accent-green-strong: #21742c;
+  --lyra-color-accent-teal-soft: #c4f0f3;
+  --lyra-color-accent-teal-strong: #11737c;
+  --lyra-color-accent-blue-soft: #d6e4ff;
+  --lyra-color-accent-blue-strong: #2558c1;
+  --lyra-color-accent-purple-soft: #e6e0ff;
+  --lyra-color-accent-purple-strong: #6149c1;
+  --lyra-color-accent-pink-soft: #ffe0f5;
+  --lyra-color-accent-pink-strong: #b53389;
+
+  /* ── Border Radius ── */
+  --lyra-radius-none: 0px;
+  --lyra-radius-xs: 4px;
+  --lyra-radius-sm: 6px;
+  --lyra-radius-md: 8px;
+  --lyra-radius-lg: 12px;
+  --lyra-radius-xl: 16px;
+  --lyra-radius-round: 999px;
+
+  /* ── Spacing (4px base unit) ── */
+  --lyra-spacing-0: 0px;
+  --lyra-spacing-1: 4px;
+  --lyra-spacing-2: 8px;
+  --lyra-spacing-3: 12px;
+  --lyra-spacing-4: 16px;
+  --lyra-spacing-5: 20px;
+  --lyra-spacing-6: 24px;
+  --lyra-spacing-7: 28px;
+  --lyra-spacing-8: 32px;
+  --lyra-spacing-9: 36px;
+
+  /* ── Border Width ── */
+  --lyra-border-none: 0px;
+  --lyra-border-default: 1px;
+  --lyra-border-md: 2px;
+  --lyra-border-lg: 3px;
+}
+
+/* ════════════════════════════════════════════════════
+   Lyra Dark Theme
+   Applied when [data-theme="dark"] is on a parent element
+   ════════════════════════════════════════════════════ */
+
+[data-theme="dark"] {
+  /* ── Background ── */
+  --lyra-color-bg-surface-base: #1f1f1e;
+  --lyra-color-bg-surface-canvas: #141414;
+  --lyra-color-bg-surface-container: #1f1f1e;
+  --lyra-color-bg-surface-container-subtle: #262626;
+  --lyra-color-bg-surface-shell: #2e2e2e;
+  --lyra-color-bg-surface-backdrop: rgba(0, 0, 0, 0.24);
+  --lyra-color-bg-surface-overlay: #2e2e2e;
+  --lyra-color-bg-surface-inverse: #eceff3;
+  --lyra-color-bg-primary: #166cca;
+  --lyra-color-bg-secondary: rgba(255, 255, 255, 0.04);
+  --lyra-color-bg-destructive: #bd2a2a;
+  --lyra-color-bg-control: #1f1f1e;
+  --lyra-color-bg-control-subtle: rgba(255, 255, 255, 0.04);
+  --lyra-color-bg-field: rgba(255, 255, 255, 0.04);
+  --lyra-color-bg-field-ai: rgba(143, 115, 227, 0.08);
+  --lyra-color-bg-disabled: rgba(255, 255, 255, 0.04);
+  --lyra-color-bg-none: rgba(255, 255, 255, 0.00);
+  --lyra-color-bg-active-strong: #4896ec;
+  --lyra-color-bg-active-moderate: rgba(72, 150, 236, 0.20);
+  --lyra-color-bg-active-subtle: rgba(72, 150, 236, 0.12);
+  --lyra-color-bg-conversation-ai: rgba(255, 255, 255, 0.04);
+  --lyra-color-bg-conversation-agent: rgba(44, 138, 242, 0.18);
+  --lyra-color-bg-conversation-customer: #0f2a13;
+  --lyra-color-bg-conversation-user: rgba(44, 138, 242, 0.18);
+
+  /* ── Foreground / Text ── */
+  --lyra-color-fg-default: rgba(255, 255, 255, 0.80);
+  --lyra-color-fg-secondary: rgba(255, 255, 255, 0.60);
+  --lyra-color-fg-action: #acb7c3;
+  --lyra-color-fg-disabled: rgba(255, 255, 255, 0.20);
+  --lyra-color-fg-link: #a7d0fe;
+  --lyra-color-fg-inverse: #1f1f1e;
+  --lyra-color-fg-inverse-disabled: rgba(0, 0, 0, 0.30);
+  --lyra-color-fg-on-primary: #ffffff;
+  --lyra-color-fg-on-destructive: #ffffff;
+  --lyra-color-fg-active-subtle: #0c2845;
+  --lyra-color-fg-active-strong: #a7d0fe;
+
+  /* ── Border ── */
+  --lyra-color-border-subtle: rgba(255, 255, 255, 0.10);
+  --lyra-color-border-default: rgba(255, 255, 255, 0.16);
+  --lyra-color-border-medium: rgba(255, 255, 255, 0.32);
+  --lyra-color-border-strong: rgba(255, 255, 255, 0.46);
+  --lyra-color-border-disabled: rgba(255, 255, 255, 0.10);
+  --lyra-color-border-active: #4896ec;
+  --lyra-color-border-field-ai: #a998e7;
+  --lyra-color-border-inverse: rgba(0, 0, 0, 0.80);
+  --lyra-color-border-none: rgba(255, 255, 255, 0.00);
+  --lyra-color-border-focus-default: #facb33;
+  --lyra-color-border-focus-inverse: #185ba4;
+
+  /* ── Status ── */
+  --lyra-color-status-success-strong: #64b96f;
+  --lyra-color-status-success-medium: #23722d;
+  --lyra-color-status-success-subtle: rgba(33, 116, 44, 0.20);
+  --lyra-color-status-info-strong: #789fed;
+  --lyra-color-status-info-medium: #2d5bb9;
+  --lyra-color-status-info-subtle: rgba(37, 88, 193, 0.20);
+  --lyra-color-status-critical-strong: #fa7f7f;
+  --lyra-color-status-critical-medium: #bd2a2a;
+  --lyra-color-status-critical-subtle: rgba(227, 69, 69, 0.12);
+  --lyra-color-state-bg-hover-critical-subtle: rgba(227, 69, 69, 0.18);
+  --lyra-color-state-bg-pressed-critical-subtle: rgba(227, 69, 69, 0.24);
+  --lyra-color-status-warning-strong: #facb33;
+  --lyra-color-status-warning-medium: #8e6800;
+  --lyra-color-status-warning-subtle: rgba(142, 104, 0, 0.20);
+
+  /* ── State ── */
+  --lyra-color-state-bg-hover-opacity: rgba(255, 255, 255, 0.06);
+  --lyra-color-state-bg-pressed-opacity: rgba(255, 255, 255, 0.12);
+  --lyra-color-state-bg-hover-secondary: rgba(255, 255, 255, 0.10);
+  --lyra-color-state-bg-pressed-secondary: rgba(255, 255, 255, 0.16);
+  --lyra-color-state-bg-hover-active-subtle: rgba(72, 150, 236, 0.18);
+  --lyra-color-state-bg-pressed-active-subtle: rgba(72, 150, 236, 0.24);
+  --lyra-color-state-bg-hover-active-strong: #a7d0fe;
+  --lyra-color-state-bg-pressed-active-strong: #d3e6fd;
+  --lyra-color-state-bg-hover-primary: #185ba4;
+  --lyra-color-state-bg-pressed-primary: #164479;
+  --lyra-color-state-bg-hover-destructive: #a32424;
+  --lyra-color-state-bg-pressed-destructive: #8a1f1f;
+  --lyra-color-state-border-hover-neutral: rgba(255, 255, 255, 0.80);
+
+  /* ── Avatar ── */
+  --lyra-color-avatar-default-bg: #5d6a79;
+
+  /* ── Accent ── */
+  --lyra-color-accent-slate-soft: #49515a;
+  --lyra-color-accent-slate-strong: #d0d6dc;
+  --lyra-color-accent-red-soft: #a32424;
+  --lyra-color-accent-red-strong: #ffb8b8;
+  --lyra-color-accent-orange-soft: #7d420c;
+  --lyra-color-accent-orange-strong: #ffcc9e;
+  --lyra-color-accent-yellow-soft: #674b13;
+  --lyra-color-accent-yellow-strong: #ffe680;
+  --lyra-color-accent-lime-soft: #446311;
+  --lyra-color-accent-lime-strong: #c9ea80;
+  --lyra-color-accent-green-soft: #1f5c27;
+  --lyra-color-accent-green-strong: #b0e8b7;
+  --lyra-color-accent-teal-soft: #1b636a;
+  --lyra-color-accent-teal-strong: #aae0e5;
+  --lyra-color-accent-blue-soft: #264c97;
+  --lyra-color-accent-blue-strong: #b9cef8;
+  --lyra-color-accent-purple-soft: #4e39a8;
+  --lyra-color-accent-purple-strong: #d1c9f2;
+  --lyra-color-accent-pink-soft: #91296e;
+  --lyra-color-accent-pink-strong: #fccaeb;
+
+  /* Tailwind class overrides for dark mode */
+  color-scheme: dark;
+}
+
+/* Utility classes for state layers in dark mode */
+[data-theme="dark"] .hover\:bg-lyra-state-hover:hover {
+  background-color: rgba(255, 255, 255, 0.06);
+}
+[data-theme="dark"] .active\:bg-lyra-state-pressed:active {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+[data-theme="dark"] .focus-visible\:ring-lyra-border-focus {
+  --tw-ring-color: #facb33;
+}
+
+/* ════════════════════════════════════════════════════
+   Lyra Typography Scale (Inter)
+   From Figma: Lyra Foundations (Beta)
+   ════════════════════════════════════════════════════ */
+
+/* Headings */
+/* 2xl added for DashboardCard's metric numbers — every existing heading
+   tier (xl and below) was designed for section/card titles, not a large
+   standalone stat figure; xl (24px/500) read too small and too light next
+   to a "Metric Name" caption underneath it. One step up in both size and
+   weight, kept as its own preset (not a one-off className override) so any
+   future stat/metric display reuses the same value instead of guessing at
+   a bespoke size again. */
+.lyra-heading-2xl { font-size: 28px; line-height: 32px; font-weight: 700; letter-spacing: -0.02rem; }
+.lyra-heading-xl { font-size: 24px; line-height: 28px; font-weight: 500; letter-spacing: -0.02rem; }
+.lyra-heading-lg { font-size: 20px; line-height: 24px; font-weight: 500; letter-spacing: -0.01rem; }
+.lyra-heading-md { font-size: 16px; line-height: 24px; font-weight: 500; letter-spacing: -0.01rem; }
+.lyra-heading-sm { font-size: 14px; line-height: 20px; font-weight: 500; letter-spacing: 0; }
+.lyra-heading-xs { font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: 0.01rem; }
+
+/* Label
+   Defined before the Body block below on purpose: Label is the default
+   typography `<Label>` applies to itself (see label.tsx), and some
+   consumers (e.g. Checkbox) override it with a `.lyra-body-*` className to
+   get regular-weight option text instead of emphasized field-label text.
+   Both classes end up on the same element in that case, and with equal
+   specificity the *later* rule in the cascade wins — so `.lyra-label` has
+   to come first, or a consumer's `.lyra-body-md` override silently loses
+   to it (as happened with Checkbox/CheckboxGroup option labels rendering
+   at weight 500 instead of the intended 400). */
+.lyra-label { font-size: 14px; line-height: 20px; font-weight: 500; letter-spacing: 0; }
+
+/* Body */
+.lyra-body-lg          { font-size: 16px; line-height: 24px; font-weight: 400; letter-spacing: -0.01rem; }
+.lyra-body-lg-emphasis { font-size: 16px; line-height: 24px; font-weight: 500; letter-spacing: -0.01rem; }
+.lyra-body-md          { font-size: 14px; line-height: 20px; font-weight: 400; letter-spacing: 0; }
+.lyra-body-md-emphasis { font-size: 14px; line-height: 20px; font-weight: 500; letter-spacing: 0; }
+.lyra-body-sm          { font-size: 12px; line-height: 16px; font-weight: 400; letter-spacing: 0.01rem; }
+.lyra-body-sm-emphasis { font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: 0.01rem; }
+.lyra-body-xs          { font-size: 10px; line-height: 14px; font-weight: 400; letter-spacing: 0.01rem; }
+.lyra-body-xs-emphasis { font-size: 10px; line-height: 14px; font-weight: 500; letter-spacing: 0.01rem; }
+
+/* ════════════════════════════════════════════════════
+   Main container content grid (CSS container query)
+   ════════════════════════════════════════════════════
+   For a row of cards inside a page's main content area (e.g. dashboard
+   summary/stat cards) that needs to collapse to a single column once space
+   gets tight — driven by the ACTUAL AVAILABLE WIDTH of the content area
+   itself, not the browser window. A plain `@media` query only reacts to the
+   window resizing, so it can't catch a side panel/nav opening and shrinking
+   the content area while the window stays the same size; a container query
+   can, because it measures the nearest ancestor container element instead.
+
+   Usage: put `.lyra-container-grid-wrap` on the content-area wrapper (it
+   just establishes the query boundary) and `.lyra-container-grid` on the
+   grid of cards somewhere inside it. Per the CSS container-query spec, an
+   element can't query its own size, so these must be two different
+   elements — usually parent + child, as in this example:
+     <div class="lyra-container-grid-wrap">
+       <div class="lyra-container-grid"> ...cards... </div>
+     </div>
+
+   `.lyra-container-grid` collapses in two ordered stages as its own
+   available width gets tight, not a single row→column jump:
+     1. (≤991px) 2-up grid — `display: grid; grid-template-columns:
+        repeat(2, minmax(0, 1fr))`, wrapping a 3rd/4th card onto a second
+        row instead of squeezing all of them into a still-too-narrow row.
+     2. (≤767px) Full single column — back to `display: flex;
+        flex-direction: column`, since at this point the whole row
+        genuinely needs to *become* a column (what `flex-direction` models
+        directly), not just a track-count change.
+   The unconstrained (wide) state is plain Flexbox (`flex-direction: row`).
+   The name is kept as-is (it's the established, referenced-elsewhere
+   pattern name) despite the implementation switching between Grid and
+   Flexbox across the three stages. */
+/* Keeps an element scrollable (overflow-y: auto/scroll still works, wheel/
+   trackpad/keyboard scrolling all still work) while hiding the browser's
+   own scrollbar chrome — e.g. LeftNav's rail, where a visible scrollbar
+   track/thumb clutters a narrow 256px surface. `scrollbar-width`/
+   `-ms-overflow-style` cover Firefox/legacy Edge; the `::-webkit-scrollbar`
+   rule covers Chrome/Safari/modern Edge — both are needed, there's no
+   single cross-browser property for this. */
+.lyra-scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.lyra-scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+.lyra-container-grid-wrap {
+  container-type: inline-size;
+}
+/* `min-width: 0` on children keeps a long/unbreakable child (e.g. a wide
+   table) from pushing the row wider than its container — needed under both
+   Flexbox (overrides `min-width: auto`) and Grid (same default there too),
+   so it's left unscoped to either display mode. */
+.lyra-container-grid {
+  display: flex;
+  flex-direction: row;
+  gap: 1rem;
+}
+.lyra-container-grid > * {
+  flex: 1 1 0%;
+  min-width: 0;
+}
+@container (max-width: 991px) {
+  .lyra-container-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container (max-width: 767px) {
+  .lyra-container-grid {
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+/* ════════════════════════════════════════════════════
+   Metric row (CSS container query)
+   ════════════════════════════════════════════════════
+   Same rationale as `.lyra-container-grid-wrap` above, applied to
+   `DashboardCard`'s metric row (`dashboard-card.tsx`): a metric card can
+   end up narrow for reasons that have nothing to do with the browser
+   window (a sidebar widget, a dense grid layout, a docked panel), so it
+   needs to adapt its 1-4 metrics once its own actual available width gets
+   tight — not the viewport's. Three ordered stages as width shrinks
+   (explicitly requested in that order, not something to collapse into a
+   single breakpoint):
+
+     1. (≤760px) The sparkline moves from beside each metric's value/trend
+        text to below it (`.lyra-metric-content` row → column). The row of
+        metrics itself is untouched — still one flex row, however many
+        metrics there are — this stage only reclaims the width a
+        side-by-side sparkline was taking.
+     2. (≤560px) The row becomes a strict 2-column grid (`.lyra-metric-row`
+        flex → grid, `repeat(2, minmax(0,1fr))`), wrapping 3-4 metrics onto
+        a second row. A flat `Divider` sibling can't represent "between
+        column 1 and 2" *and* "between row 1 and 2" at once, so both
+        dividers hide here and a real `gap` takes over spacing instead —
+        the same convention "contained" metrics (bordered boxes, no
+        dividers) already used at every width.
+     3. (≤360px) The grid drops to 1 column — every metric fully stacked.
+        Unlike stage 2, there's no "which pair of neighbors" ambiguity in
+        a single column, so `.lyra-metric-row-divider--horizontal` comes
+        back ("divided" only; "contained" metrics are already separated by
+        their own border).
+
+   Reuses `.lyra-container-grid`'s 761px as this system's *widest*
+   threshold (rounded to 760px) for consistency — both are "collapse once
+   space gets tight" at heart — then adds two narrower thresholds of its
+   own for the extra stages a plain row-of-cards doesn't need.
+
+   Usage: `.lyra-metric-row-wrap` goes on the metric row's own container
+   boundary (`DashboardCard` puts it on the `Container` div itself when
+   `metrics` is set); `.lyra-metric-row` on the row/grid of metrics inside
+   it; `.lyra-metric-content` on each metric's own value/trend+sparkline
+   wrapper (`MetricContent` in `dashboard-card.tsx`) and `.lyra-metric-
+   sparkline` on the `Sparkline`'s own wrapper div, both queried against
+   the same ancestor container as the row itself. `.lyra-metric-row-item`
+   ("divided" only — "contained" boxes carry their own uniform `p-4`
+   already) owns the same left/right padding Tailwind's `first:pl-0
+   last:pr-0` used to provide in row mode, but as plain CSS instead of a
+   Tailwind pseudo-class utility, specifically so it can be reset once
+   metrics no longer sit in one strict row (stage 2 onward, where a real
+   `gap` replaces item-edge padding entirely). */
+.lyra-metric-row-wrap {
+  container-type: inline-size;
+}
+.lyra-metric-row {
+  display: flex;
+  flex-direction: row;
+}
+/* "divided" variant only — the vertical Divider between metrics relies on
+   zero flex gap in row mode (the Divider + each item's own px-4 provide
+   all the spacing); once stacked, there's no Divider doing that job in
+   the cross axis, so a real gap is needed instead. "contained" doesn't
+   use this class — its own `gap-3` Tailwind utility already looks right
+   at every stage, since a single-value `gap` isn't direction specific. */
+.lyra-metric-row--divided {
+  gap: 0;
+}
+.lyra-metric-row-item {
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+.lyra-metric-row-item:first-child {
+  padding-left: 0;
+}
+.lyra-metric-row-item:last-child {
+  padding-right: 0;
+}
+.lyra-metric-row-divider--horizontal {
+  display: none;
+}
+.lyra-metric-row-divider--vertical {
+  display: block;
+}
+.lyra-metric-content {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+.lyra-metric-sparkline {
+  width: 5rem; /* matches Tailwind's w-20 */
+  height: 2.5rem; /* matches Tailwind's h-10 */
+  flex-shrink: 0;
+}
+
+/* Stage 1 — sparkline below the text; row arrangement unchanged. */
+@container (max-width: 760px) {
+  .lyra-metric-content {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .lyra-metric-sparkline {
+    width: 100%; /* was a fixed 5rem for the beside-text layout — full width once it's its own line */
+  }
+}
+
+/* Stage 2 — 2-up grid; dividers give way to a real gap. */
+@container (max-width: 560px) {
+  .lyra-metric-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem; /* matches Tailwind's gap-3 — same value "contained" already uses unconditionally */
+  }
+  .lyra-metric-row-item {
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .lyra-metric-row-divider--horizontal,
+  .lyra-metric-row-divider--vertical {
+    display: none;
+  }
+}
+
+/* Stage 3 — 1-up grid; horizontal Divider comes back (unambiguous with
+   only one column). */
+@container (max-width: 360px) {
+  .lyra-metric-row {
+    grid-template-columns: 1fr;
+  }
+  .lyra-metric-row-divider--horizontal {
+    display: block;
+  }
+}
+
+/* Compact override — a metric row of 2 or fewer items (e.g. DashboardQueue's
+   per-card Skills/Contacts pair) never needs Stage 3's single-column
+   collapse: two items already fit side by side at widths where a 4-metric
+   row genuinely needs to stack. `.lyra-metric-row--compact` (set by
+   `MetricRow` when `metrics.length <= 2`) keeps the row at Stage 2's 2-up
+   grid instead. Two classes on the row (vs. Stage 3's one) wins this
+   without `!important`; three classes for the divider override (vs. one)
+   does the same. */
+@container (max-width: 360px) {
+  .lyra-metric-row.lyra-metric-row--compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .lyra-metric-row.lyra-metric-row--compact .lyra-metric-row-divider--horizontal {
+    display: none;
+  }
+}
+
+/* ════════════════════════════════════════════════════
+   Channel tab bar (CSS container query)
+   ════════════════════════════════════════════════════
+   Same rationale as `.lyra-container-grid-wrap`/`.lyra-metric-row-wrap`
+   above, applied to the `ChannelTab` bar (`channel-row.tsx`,
+   `AgentNextGenTemplate.stories.tsx`'s `activeInteraction` block): the tab
+   bar can end up narrow for reasons that have nothing to do with the
+   browser window (the side panel opening, the LeftNav expanding), so each
+   tab needs to shed its own text before the bar starts wrapping/scrolling
+   — not react to the viewport. Two ordered stages as width shrinks:
+
+     1. (≤480px) Each tab's "| address" (`.lyra-channel-tab-address`,
+        the phone number/email address/WhatsApp handle after the type
+        label) hides. The type label and icon stay — a tab still reads as
+        "SMS", just without the number that made two same-type tabs
+        distinguishable. That distinguishing info moves to the tab's
+        `Tooltip` instead (see `ChannelTab`), which is unaffected by any of
+        this — it's rendered in a Radix `Portal`, outside this container's
+        DOM subtree entirely.
+     2. (≤320px) The type label itself (`.lyra-channel-tab-label`) also
+        hides, leaving icon + kebab only — the narrowest a tab can get
+        while still being clickable/distinguishable by icon+Tooltip alone.
+        `max-width: 320px` is narrower than stage 1's `480px`, so both
+        rules are simultaneously true here — no need to re-hide the
+        address, it's already gone.
+
+   Usage: `.lyra-channel-tab-list-wrap` goes on the `TabList` that wraps
+   the `ChannelTab`s (passed via its own `className` prop — `TabList`
+   doesn't need to know this class exists); `.lyra-channel-tab-label`/
+   `.lyra-channel-tab-address` go on the two text spans inside `ChannelTab`
+   itself, queried against that same `TabList` ancestor. */
+.lyra-channel-tab-list-wrap {
+  container-type: inline-size;
+}
+
+/* Stage 1 — address hides; icon + type label remain. */
+@container (max-width: 480px) {
+  .lyra-channel-tab-address {
+    display: none;
+  }
+}
+
+/* Stage 2 — type label also hides; icon (+ kebab) only. */
+@container (max-width: 320px) {
+  .lyra-channel-tab-label {
+    display: none;
+  }
+}
+
+/* ════════════════════════════════════════════════════
+   Tab overflow (CSS container query)
+   ════════════════════════════════════════════════════
+   `TabList`'s native `overflowMenu` prop (`tabs.tsx`): once its own actual
+   available width drops to 991px or below, collapse the tab row down to
+   exactly two full-width slots — the active tab, and a "{n} More" dropdown
+   holding every other tab in its original order (e.g. a record detail
+   panel's Overview/Details/Tickets/Accounts/... tab bar). Same "react to
+   this component's own width, not the viewport" rationale as
+   `.lyra-container-grid-wrap`/`.lyra-metric-row-wrap`/`.lyra-channel-tab-
+   list-wrap` above — a docked side panel, a narrow card, or any other
+   layout squeeze can make this width small for reasons that have nothing
+   to do with the browser window.
+
+   `.lyra-tab-overflow-wrap` (the outer wrapper `TabList` renders only when
+   `overflowMenu` is set) owns the container query boundary; the real
+   `role="tablist"` row gets `.lyra-tab-overflow-full` (hidden below
+   991px — it stays in the DOM so its buttons can still be `.click()`ed
+   programmatically when a dropdown entry is chosen, same as this file's
+   own arrow-key navigation does); the two-slot collapsed row gets
+   `.lyra-tab-overflow-collapsed` (the reverse — hidden above 991px, shown
+   as a flex row below it).
+
+   Both rules are scoped with the `.lyra-tab-overflow-wrap` ancestor
+   (`.lyra-tab-overflow-wrap .lyra-tab-overflow-full`, not just
+   `.lyra-tab-overflow-full` on its own) rather than left as bare single
+   classes. `TabList`'s own row already carries Tailwind's `flex` utility
+   (`display: flex`) alongside `.lyra-tab-overflow-full` on the same
+   element — a bare `.lyra-tab-overflow-full { display: none }` has the
+   exact same specificity as `.flex { display: flex }`, so whichever rule
+   happens to land later in the final bundle wins, and that ordering isn't
+   something this component controls (confirmed live: it worked in
+   Storybook's build but silently lost to `.flex` in `agent-next-gen-v1`'s
+   Vite build, which happened to emit Tailwind's utilities after this
+   file). The two-class ancestor selector has higher specificity than a
+   single-class utility regardless of source order, so it wins
+   unconditionally instead of by bundler-order coincidence. */
+.lyra-tab-overflow-wrap {
+  container-type: inline-size;
+}
+.lyra-tab-overflow-wrap .lyra-tab-overflow-collapsed {
+  display: none;
+}
+@container (max-width: 991px) {
+  .lyra-tab-overflow-wrap .lyra-tab-overflow-full {
+    display: none;
+  }
+  .lyra-tab-overflow-wrap .lyra-tab-overflow-collapsed {
+    display: flex;
+  }
+}

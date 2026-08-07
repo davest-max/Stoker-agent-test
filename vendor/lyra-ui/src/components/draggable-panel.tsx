@@ -47,6 +47,15 @@ export interface DraggablePanelProps {
   onResizeStateChange?: (isResizing: boolean) => void;
   /** Called on any mousedown inside the panel — use for z-index "bring to front" logic */
   onInteract?: () => void;
+  /**
+   * Extra action button(s) rendered before the dock/float toggle (and the
+   * built-in close button) — e.g. a "Maximize" trigger that takes this
+   * panel's content over the whole content column, matching `SidePanel`'s
+   * own `headerActions` prop of the same name/purpose. Omit for the plain
+   * dock-toggle-only header every other `DraggablePanel` consumer already
+   * gets.
+   */
+  headerActions?: React.ReactNode;
   className?: string;
 }
 
@@ -56,6 +65,7 @@ const DraggablePanel = React.forwardRef<HTMLDivElement, DraggablePanelProps>(
     defaultWidth = 320, maxWidth, defaultHeight = 480, height,
     draggableVariant: draggableVariantProp = "float",
     onVariantChange, onWidthChange, onResizeStateChange, onInteract,
+    headerActions,
     className,
   }, ref) => {
     const [draggableVariant, setDraggableVariant] = React.useState<DraggableVariant>(draggableVariantProp);
@@ -94,14 +104,17 @@ const DraggablePanel = React.forwardRef<HTMLDivElement, DraggablePanelProps>(
                 )
               }
               actions={
-                <Tooltip content={dockButtonProps["aria-label"]} placement="bottom" asLabel>
-                  <button
-                    {...dockButtonProps}
-                    className="flex h-8 w-8 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary hover:bg-lyra-state-hover hover:text-lyra-fg-default transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus focus-visible:ring-offset-2"
-                  >
-                    {dockIcon}
-                  </button>
-                </Tooltip>
+                <>
+                  {headerActions}
+                  <Tooltip content={dockButtonProps["aria-label"]} placement="bottom" asLabel>
+                    <button
+                      {...dockButtonProps}
+                      className="flex h-8 w-8 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary hover:bg-lyra-state-hover hover:text-lyra-fg-default transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus focus-visible:ring-offset-2"
+                    >
+                      {dockIcon}
+                    </button>
+                  </Tooltip>
+                </>
               }
               onClose={onClose}
               /* When `headerContent` is provided, the divider moves below

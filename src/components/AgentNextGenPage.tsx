@@ -36,17 +36,17 @@ import {
   type EscalationStatus,
   type Message,
   type CallTranscriptEvent,
+  type CallScriptSection,
   type SlideInDestination,
   type FullPageDestination,
   type NavDestination,
 } from "@/components/CustomerInteractionPanel";
 import { SlideInPage, SlideInPlaceholder } from "@/components/SlideInPage";
 import { NewOutboundPopover, AddOutboundButton, type NewOutboundConfig } from "@/components/NewOutboundPopover";
-import { OutcomeAllPanel, type OutcomeResult } from "@/components/OutcomePanel";
-import { InternalChatTrigger, InternalChatDockedPanel, InternalChatFloatPanel, type ChatView } from "@/components/InternalChatPopover";
+import { InternalChatTrigger, InternalChatDockedPanel, InternalChatFloatPanel, InternalChatMaximizedPanel, type ChatView } from "@/components/InternalChatPopover";
 import { INITIAL_FAVORITE_EMPLOYEE_IDS, INITIAL_CHAT_THREADS, type InternalChatMessage } from "@/data/internalChat";
 import { DirectoryPage } from "@/components/DirectoryPage";
-import { CustomerSnapshotPanel } from "@/components/CustomerSnapshotPanel";
+import { CustomerProfilePanel } from "@/components/CustomerSnapshotPanel";
 import {
   DIRECTORY_CUSTOMERS,
   DIRECTORY_AGENTS,
@@ -69,17 +69,32 @@ import {
   Settings,
   Headset,
   X,
+  Maximize2,
+  Minimize2,
+  Monitor,
 } from "lucide-react";
 
 /** Title + icon for each right-side slide-in destination — Directory has
- *  real content (DirectoryPage below); the rest render SlideInPlaceholder.
- *  Settings/Dashboard aren't here — they take over the content column
- *  instead of sliding in (see FULL_PAGE_META below). */
+ *  real content (DirectoryPage below); Custom Workspace embeds a
+ *  third-party URL (see `renderSlideInContent`); the rest render
+ *  SlideInPlaceholder. Settings/Dashboard aren't here — they take over the
+ *  content column instead of sliding in (see FULL_PAGE_META below). */
 const SLIDE_IN_META: Record<SlideInDestination, { title: string; icon: React.ReactNode }> = {
   contacts: { title: "Contacts", icon: <Users className="h-4 w-4" strokeWidth={1.5} /> },
   directory: { title: "Directory", icon: <BookUser className="h-4 w-4" strokeWidth={1.5} /> },
   schedule: { title: "Schedule", icon: <CalendarDays className="h-4 w-4" strokeWidth={1.5} /> },
+  customWorkspace: { title: "Custom Workspace", icon: <Monitor className="h-4 w-4" strokeWidth={1.5} /> },
 };
+
+/** Third-party URL embedded in the Custom Workspace slide-in (see
+ *  `renderSlideInContent`) — a real destination outside this app, framed
+ *  in an `<iframe>` sized to fill whatever container it's rendered in
+ *  (panel or full-page). Demo value from Dave; swap for whatever URL this
+ *  workspace should actually point to. Sites that set `X-Frame-Options`/
+ *  `frame-ancestors` to block embedding will still refuse to render here —
+ *  that's the third-party site's own header, not something fixable from
+ *  this end. */
+const CUSTOM_WORKSPACE_URL = "https://www.delta.com/refund-form/";
 
 /** Title for each full-page takeover destination — shown as the header's h1. */
 const FULL_PAGE_META: Record<FullPageDestination, { title: string }> = {
@@ -265,6 +280,11 @@ interface Assignment {
    *  see CustomerInteractionPanel's own CallTranscriptEvent doc comment.
    *  Only meaningful for a voice interaction; ignored otherwise. */
   callEvents?: CallTranscriptEvent[];
+  /** Company-authored script for this call — see CustomerInteractionPanel's
+   *  own CallScriptSection doc comment. Only meaningful for a voice
+   *  interaction, and only shows the Live Transcript/Script toggle at all
+   *  when present — most calls have none. */
+  script?: CallScriptSection[];
   /** True for an internal agent-to-agent voice call (created from New
    *  Outbound's Agents group — see `handleStartOutboundCall`) rather than a
    *  customer interaction. Swaps the compact tile's initials avatar for a
@@ -315,6 +335,40 @@ function fakeOutboundEmailSubject(): string {
  *  a name. */
 function isLikelyPersonName(value: string): boolean {
   return !value.includes("@") && !/^[+\d\s().-]+$/.test(value);
+}
+
+/** Company script offered on every outbound voice call — matched contact,
+ *  unmatched phone number, or a voice channel added onto an existing card
+ *  (see the three `script:` call sites below). For demo purposes this is
+ *  deliberately broader than the one seeded inbound call
+ *  (`INITIAL_ASSIGNMENTS`'s "call" entry above, which has its own
+ *  topic-specific script): there's no real per-call "topic" for a freshly
+ *  dialed demo call the way that seeded one has, so this stays a generic
+ *  outbound-intro script, parameterized by contact name/skill the same way
+ *  `scheduleOutboundVoiceDemoTranscript`'s own fake transcript already is.
+ *  Never offered on the agent-to-agent internal call branch — that's a
+ *  real colleague, not a scripted customer (same exclusion
+ *  `scheduleOutboundDemoTranscript`'s own doc comment explains). */
+function buildOutboundVoiceScript(contactName: string, skillLabel?: string): CallScriptSection[] {
+  const agentFirstName = CURRENT_AGENT_NAME.split(" ")[0];
+  const topic = skillLabel ?? "your account";
+  return [
+    {
+      heading: "Opening",
+      lines: [`Hi, this is ${agentFirstName} calling from support — is now an okay time to chat?`],
+    },
+    {
+      heading: "Purpose",
+      lines: [`I'm calling about ${topic}. I just wanted to check in and see how everything's going.`],
+    },
+    {
+      heading: "Closing",
+      lines: [
+        "Is there anything else I can help with before we wrap up?",
+        "Great, take care! Goodbye.",
+      ],
+    },
+  ];
 }
 
 /** Non-voice counterpart to `scheduleOutboundVoiceDemoTranscript` below —
@@ -485,6 +539,40 @@ const INITIAL_ASSIGNMENTS: Assignment[] = [
       { id: "ev2", afterMessageId: "3", kind: "resume", label: "Call resumed", timestamp: "Today, 02:00AM" },
       { id: "ev3", afterMessageId: "12", kind: "ended", label: "Call ended", timestamp: "Today, 02:05AM" },
     ],
+    // Demo content for the Live Transcript/Script toggle (see
+    // CustomerInteractionPanel's own CallScriptSection doc comment) — a
+    // "lost/delayed shipment" script that lines up with how this call
+    // actually plays out above, so switching to Script mid-demo still reads
+    // as plausible guidance for the same call.
+    script: [
+      {
+        heading: "Greeting",
+        lines: [
+          "Thanks for calling in — can I get your name and the order number for the package you're asking about?",
+        ],
+      },
+      {
+        heading: "Verify & Acknowledge",
+        lines: [
+          "Thanks, [Customer Name] — give me just a moment while I pull up the tracking details.",
+          "I can see your package has been sitting at the regional facility for [X] days with no scan movement — that's not typical for this carrier, and it's on us to fix.",
+        ],
+      },
+      {
+        heading: "Resolution",
+        lines: [
+          "I completely understand, and I'm sorry for the inconvenience. I'm filing a lost-package claim with the carrier right now and having a replacement shipped overnight at no cost to you.",
+          "You'll get a confirmation email with the new tracking number within the hour, and the replacement should arrive by tomorrow afternoon.",
+        ],
+      },
+      {
+        heading: "Closing",
+        lines: [
+          "Is there anything else I can help with today?",
+          "You're very welcome. Take care, and again, sorry for the delay. Goodbye!",
+        ],
+      },
+    ],
   },
   {
     // The 4th demo channel (chat/email/voice already covered above) — links
@@ -544,25 +632,11 @@ export function AgentNextGenPage({
   const [navOpen, setNavOpen] = useState(() => window.innerWidth >= NAV_NARROW_BREAKPOINT);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [activeAssignmentId, setActiveAssignmentId] = useState<string | undefined>(undefined);
-  // "Outcome All" (Elevation card's own kebab menu — see `handleOutcomeAll`
-  // below) — which assignment's outcome-for-every-open-channel panel is
-  // open, if any. Only ever set for a card with 2+ open channels, but
-  // tracked independently of `activeAssignmentId` since opening it doesn't
-  // require (or change) which card is currently selected.
-  const [outcomeAllAssignmentId, setOutcomeAllAssignmentId] = useState<string | null>(null);
-  // The single-channel Outcome popup's open state (`InteractionActionsBar`'s
+  // The Outcome popup's open state (`InteractionActionsBar`'s
   // `OutcomeButton`) — lifted up here (rather than left as that button's own
-  // internal state) purely so it and `outcomeAllAssignmentId` above can
-  // enforce "only one Outcome popup visible at once" against each other; see
-  // `handleOutcomeAll` and the `onOutcomeOpenChange` wiring below.
+  // internal state) so a future consumer of this same interaction could
+  // coordinate against it if needed; currently just passed straight through.
   const [outcomeButtonOpen, setOutcomeButtonOpen] = useState(false);
-  // One DOM node per rendered assignment card (left-rail `InteractionNavItem`),
-  // keyed by assignment id — read at "Outcome All" click time to position
-  // `OutcomeAllPanel` just to the right of the card that triggered it. A
-  // plain mutable Map (not state) since it only ever needs reading on
-  // demand, never a re-render of its own.
-  const assignmentCardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  const [activeTab, setActiveTab] = useState<"chat" | "history">("chat");
   const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   const [notifications, setNotifications] = useState(INITIAL_NOTIFICATIONS);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>("available");
@@ -610,15 +684,36 @@ export function AgentNextGenPage({
   const notifPanelRef  = useRef<HTMLDivElement>(null);
   const notifAnimTimer = useRef<ReturnType<typeof setTimeout>>();
 
-  /* Internal chat state — popover by default; can dock to the side like AI
-   *  Assistant/Notifications (single-dock rule applies across all three).
-   *  The header's own "Undock" toggle still has no floating step in
-   *  between (pops straight back to the anchored popover) — but a separate
-   *  entry point (New Outbound's Agents chat icon) can open a genuine
-   *  floating window near wherever it was clicked; see `chatFloatPosition`
-   *  and `openInternalChatWith` below. */
+  /* Internal chat state — defaults docked, same as the Contacts/Directory/
+   *  Schedule slide-in (`slideInVariant` below). AI Assistant and Chat are
+   *  meant to dock side by side (AI left, Chat right — see the docked-panel
+   *  render order further down), so they're exempt from each other's
+   *  single-dock rule; docking AI no longer touches this at all, which is
+   *  also what keeps this defaulting to docked in practice — it used to
+   *  get silently flipped to false the moment AI was docked, even before
+   *  Chat was ever opened. Notifications is still the odd one out: docking
+   *  Notifications forces both AI and Chat to undock, and docking either
+   *  one still forces Notifications to float (see handleAiVariantChange/
+   *  handleChatVariantChange/handleNotifVariantChange).
+   *
+   *  Not docked means a real floating `Draggable` window
+   *  (`InternalChatFloatPanel`), not an anchored popover — there's no third
+   *  presentation. `chatFloatPosition` is only ever an explicit override:
+   *  set by `openInternalChatWith` (New Outbound's Agents chat icon) so
+   *  that entry point opens right where it was clicked; `null` otherwise,
+   *  in which case `getChatFloatPosition` computes a generic default. See
+   *  `InternalChatFloatPanel`'s own class doc comment for the full picture. */
   const [chatOpen,        setChatOpen]        = useState(false);
-  const [chatDocked,      setChatDocked]      = useState(false);
+  const [chatDocked,      setChatDocked]      = useState(true);
+  /** "Maximize" on chat — approved as "Auto-dock, then maximize" (chat has
+   *  no fixed content-column spot to take over while floating, unlike the
+   *  SlideInPage-based destinations, which already have a "full" variant —
+   *  see `slideInMaximized`'s own doc comment). `handleChatMaximize` below
+   *  docks first if currently floating, then sets this. Checked directly at
+   *  the render-branch call site (`chatOpen && chatMaximized`) rather than
+   *  folded into `isFullPageActive`, since that flag also drives
+   *  `slideInOpen` and has no reason to know about chat. Reset on close. */
+  const [chatMaximized,   setChatMaximized]   = useState(false);
   const [chatFloatPosition, setChatFloatPosition] = useState<{ top: number; left: number } | null>(null);
   const [chatWidth,       setChatWidth]       = useState(380);
   const [chatIsResizing,  setChatIsResizing]  = useState(false);
@@ -627,6 +722,26 @@ export function AgentNextGenPage({
   const [chatFavoriteIds, setChatFavoriteIds] = useState<string[]>(INITIAL_FAVORITE_EMPLOYEE_IDS);
   const [chatThreads,     setChatThreads]     = useState<Record<string, InternalChatMessage[]>>(INITIAL_CHAT_THREADS);
   const [chatDraft,       setChatDraft]       = useState("");
+
+  // Shared by every "close chat" path (header trigger's onOpenChange(false),
+  // the docked panel's own close button, and handleNavClick below when
+  // Contacts/Directory/Schedule takes over) so they all reset the same
+  // fields rather than each open-coding a subset.
+  const closeInternalChat = () => {
+    setChatOpen(false);
+    setChatFloatPosition(null);
+    setChatView({ kind: "list" });
+    setChatSearch("");
+    setChatMaximized(false);
+  };
+
+  /** Maximize handler passed to both `InternalChatDockedPanel` and
+   *  `InternalChatFloatPanel` — see `chatMaximized`'s own doc comment for
+   *  why chat auto-docks first instead of maximizing straight from float. */
+  const handleChatMaximize = () => {
+    if (!chatDocked) setChatDocked(true);
+    setChatMaximized(true);
+  };
 
   /* Right-side nav destinations — one per header nav icon. Most slide in
    *  beside the interaction; Settings/Dashboard instead take over the whole
@@ -650,7 +765,13 @@ export function AgentNextGenPage({
    *  AI/Notifications/Chat do, so a docked slide-in and a docked AI panel
    *  don't actually compete for the same screen real estate — nothing
    *  forces them to stay mutually exclusive the way AI/Notifications/Chat
-   *  do among themselves. */
+   *  do among themselves.
+   *
+   *  Separately, Contacts/Directory/Schedule/Internal Chat *are* mutually
+   *  exclusive with each other — one replaces the other. That's a different
+   *  axis than the float/dock single-dock-rule above (it's about whether
+   *  the panel is open at all, not where it docks) — see handleNavClick
+   *  and closeInternalChat above. */
   const [slideInVariant,    setSlideInVariant]    = useState<DraggableVariant>("docked");
   const [slideInMounted,    setSlideInMounted]    = useState(false);
   const [slideInState,      setSlideInState]      = useState<PanelState>("closed");
@@ -661,6 +782,21 @@ export function AgentNextGenPage({
   const slideInFloatTop  = useRef<number | null>(null);
   const slideInPanelRef  = useRef<HTMLDivElement>(null);
   const slideInAnimTimer = useRef<ReturnType<typeof setTimeout>>();
+  /** "Maximize" on a docked/floating slide-in (Contacts/Directory/Schedule/
+   *  Custom Workspace) — takes the same content over the whole content
+   *  column, same idea as `customerProfileMaximized` above (see its own
+   *  doc comment) but folded into `isFullPageActive` below instead of a
+   *  separate body-row-level branch, since "take over all panels" here
+   *  means the same content-column takeover Settings/Dashboard already do,
+   *  not just this row. Only ever meaningful while `activeAssignment`
+   *  exists and the panel would otherwise render docked/floating — with no
+   *  active interaction, a slide-in destination already renders full (see
+   *  the no-`activeAssignment` branch below), so there's nothing to
+   *  maximize there and no button is shown. Reset on close and on
+   *  switching which slide-in destination is open (see the effects below)
+   *  so reopening — or switching to — a destination never surprises the
+   *  agent by starting already maximized. */
+  const [slideInMaximized, setSlideInMaximized] = useState(false);
 
   /* Control Center (dashboard) — queue widget drill-down selection, mirrors
    *  lyra-ui's own Templates/Dashboards story exactly (AgentDashboard +
@@ -669,14 +805,71 @@ export function AgentNextGenPage({
   const handleNavClick = (item: NavDestination) => {
     setOpenSlideInPage((v) => {
       const next = v === item ? null : item;
-      if (next && !FULL_PAGE_DESTINATIONS.has(next)) setLastSlideIn(next as SlideInDestination);
+      if (next && !FULL_PAGE_DESTINATIONS.has(next)) {
+        setLastSlideIn(next as SlideInDestination);
+        // Contacts/Directory/Schedule/Internal Chat are mutually exclusive
+        // (see slideInVariant's doc comment above) — opening one of these
+        // three closes chat if it's currently open, in any presentation.
+        if (chatOpen) closeInternalChat();
+      }
       return next;
     });
   };
-  const isFullPageActive = openSlideInPage !== null && FULL_PAGE_DESTINATIONS.has(openSlideInPage);
+  /** True for Settings/Dashboard (always full-page) and for a maximized
+   *  slide-in destination while an interaction is active (see
+   *  `slideInMaximized`'s own doc comment) — both take over the whole
+   *  content column the same way, just for different reasons, so every
+   *  existing consumer of this flag (the render branch below, `slideInOpen`)
+   *  already does the right thing for both without needing to know which
+   *  case it is. */
+  const isFullPageActive =
+    openSlideInPage !== null && (FULL_PAGE_DESTINATIONS.has(openSlideInPage) || slideInMaximized);
+  // Reset whenever the slide-in closes entirely, or the agent switches to a
+  // *different* destination while one was maximized — otherwise reopening
+  // Contacts after minimizing Directory (say) would start already maximized,
+  // and switching straight from a maximized Directory to Contacts would
+  // carry the maximized state over to a destination that never asked for it.
+  useEffect(() => {
+    if (openSlideInPage === null) setSlideInMaximized(false);
+  }, [openSlideInPage]);
+  useEffect(() => {
+    setSlideInMaximized(false);
+  }, [lastSlideIn]);
   const handleDirectoryContactAction = (contact: DirectoryCustomer | DirectoryAgent, channel: ChannelType) => {
     // eslint-disable-next-line no-console
     console.log("Directory contact action:", channel, contact.name);
+  };
+
+  /** Dispatches a `SlideInDestination` to its actual content — shared by
+   *  every place this needs rendering (the docked/float `slideInPanel`
+   *  instance below, the no-interaction "full" branch, and the maximized-
+   *  with-an-interaction "full" branch), so the three don't drift out of
+   *  sync the way three independent copies of this same ternary would.
+   *  Custom Workspace's `<iframe>` fills whatever container it's placed in
+   *  (`h-full w-full`) — same content regardless of panel vs. full variant. */
+  const renderSlideInContent = (destination: SlideInDestination): React.ReactNode => {
+    switch (destination) {
+      case "directory":
+        return (
+          <DirectoryPage
+            customers={DIRECTORY_CUSTOMERS}
+            agents={DIRECTORY_AGENTS}
+            skills={DIRECTORY_SKILLS}
+            teams={DIRECTORY_TEAMS}
+            onContactAction={handleDirectoryContactAction}
+          />
+        );
+      case "customWorkspace":
+        return (
+          <iframe
+            src={CUSTOM_WORKSPACE_URL}
+            title="Custom Workspace"
+            className="h-full w-full flex-1 border-0"
+          />
+        );
+      default:
+        return <SlideInPlaceholder />;
+    }
   };
 
   /* Customer Snapshot (left "Designer" panel) — notes live here (not in the
@@ -696,13 +889,48 @@ export function AgentNextGenPage({
     console.log("Customer snapshot contact action:", channel);
   };
 
-  /* Side panel — lyra-ui's CreateNew no longer supports a "view customer
-   *  card" action from an outbound search result (dropped along with the
-   *  flat-search API this app used to build OUTBOUND_CONFIG against — see
-   *  the comment above it), so this panel now only ever shows the active
-   *  interaction's own customer. */
-  const [sidePanelOpen,      setSidePanelOpen]      = useState(false);
-  const [sidePanelWidth,     setSidePanelWidth]     = useState(256);
+  /** Overview tab's CRM field edits (Address/Customer Since/Company/Account
+   *  Owner/Language/Timezone/Status) — same "live state here, not on
+   *  DIRECTORY_CUSTOMERS itself" reasoning as `customerNotes` above, keyed
+   *  by customer id so editing one customer's record never bleeds into
+   *  another's. Only ever holds the fields the agent has actually saved —
+   *  merged onto the seed record at the render site below, so an
+   *  unedited field just falls through to its original seed value. */
+  const [customerFieldOverrides, setCustomerFieldOverrides] = useState<Record<string, Partial<DirectoryCustomer>>>({});
+  const handleUpdateCustomerFields = (customerId: string, fields: Partial<DirectoryCustomer>) => {
+    setCustomerFieldOverrides((prev) => ({ ...prev, [customerId]: { ...prev[customerId], ...fields } }));
+  };
+
+  /* Customer Profile panel — lyra-ui's CreateNew no longer supports a "view
+   *  customer card" action from an outbound search result (dropped along
+   *  with the flat-search API this app used to build OUTBOUND_CONFIG
+   *  against — see the comment above it), so this panel now only ever
+   *  shows the active interaction's own customer. Docks to the right of
+   *  the conversation (inside the body row, below the header rows — see
+   *  the render site below) rather than the left of the whole content
+   *  column like it used to; defaults open (not closed) since it's meant
+   *  to be there by default now, not an occasional lookup. */
+  const [sidePanelOpen,      setSidePanelOpen]      = useState(true);
+  const [sidePanelWidth,     setSidePanelWidth]     = useState(320);
+  /** Takes over the whole body row (conversation hidden) instead of
+   *  sharing it with `CustomerInteractionPanel` — same "swap the tab
+   *  switcher for a real TabList once there's room" idea `CustomerProfilePanel`'s
+   *  own `collapsed` prop describes; this is what drives that prop.
+   *  Reset whenever the panel itself closes, so re-opening it never comes
+   *  back maximized by surprise. */
+  const [customerProfileMaximized, setCustomerProfileMaximized] = useState(false);
+  /** The body row's own container — measured below so the auto-maximize
+   *  effect can tell how much width the conversation actually has left,
+   *  independent of window resize alone (dragging the panel wider, or the
+   *  left nav expanding/collapsing, both change this without firing a
+   *  window resize event). */
+  const bodyRowRef = useRef<HTMLDivElement>(null);
+
+  // See customerProfileMaximized's doc comment above — closing the panel
+  // always drops it out of the maximized takeover too.
+  useEffect(() => {
+    if (!sidePanelOpen) setCustomerProfileMaximized(false);
+  }, [sidePanelOpen]);
 
   // Clear any open queue drill-down once Control Center isn't on screen, so
   // reopening it later doesn't resurrect a stale InteriorPanel selection.
@@ -742,6 +970,72 @@ export function AgentNextGenPage({
       }
     }
   }, [isNavNarrow]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Below this, chat bubbles/email rows/voice transcript rows all start
+   *  wrapping badly — matches `chatWidth`'s own default float width (380)
+   *  as a "comfortably narrow panel" benchmark already used elsewhere in
+   *  this file, rather than inventing a new number. */
+  const MIN_CONVERSATION_WIDTH = 380;
+
+  // Auto-maximize Customer Profile once its own docked width is squeezing
+  // the conversation below MIN_CONVERSATION_WIDTH. Within a single
+  // interaction this is one-way: it takes over but doesn't automatically
+  // restore itself once space frees up again (e.g. the agent drags the
+  // panel narrower, or widens the window), so sitting right at the
+  // threshold doesn't flicker back and forth — the Minimize2 button in the
+  // maximized header is still there to go back manually. Switching to a
+  // *different* interaction, though, re-evaluates from scratch (per-
+  // interaction, not session-sticky) — a roomy interaction never inherits
+  // maximized state left over from a squeezed one.
+  //
+  // Re-checked three different ways, because the row can get squeezed (or
+  // its squeeze can become irrelevant) for different reasons:
+  //  1. A different interaction becomes active — reset and re-measure fresh
+  //     for it, per the per-interaction behavior above.
+  //  2. The row's own box shrinks for a reason other than switching
+  //     interactions — window resize, nav collapsing/expanding, or another
+  //     docked panel (AI Assistant/Notifications/Internal Chat) appearing
+  //     alongside this one. A `ResizeObserver` on the row catches all of
+  //     these for free, instead of hand-listing every possible cause as a
+  //     dependency (the previous version only listed `windowWidth` and
+  //     `navOpen`, so docking another panel never re-ran the check at all).
+  //  3. The row stays the same size but the split *within* it changes —
+  //     dragging this panel's own resize handle wider. That doesn't resize
+  //     the row, so the observer alone wouldn't see it; re-run on
+  //     `sidePanelWidth` changes to cover it.
+  const checkSqueezeRef = useRef<() => void>(() => {});
+  checkSqueezeRef.current = () => {
+    if (!sidePanelOpen || customerProfileMaximized) return;
+    const row = bodyRowRef.current;
+    if (!row) return;
+    const conversationWidth = row.getBoundingClientRect().width - sidePanelWidth;
+    if (conversationWidth < MIN_CONVERSATION_WIDTH) setCustomerProfileMaximized(true);
+  };
+
+  // Reset-and-recompute fresh for the newly active interaction — computed
+  // directly (not via checkSqueezeRef, which only ever flips false→true)
+  // since this specific case can go either direction.
+  useEffect(() => {
+    if (!sidePanelOpen) { setCustomerProfileMaximized(false); return; }
+    const row = bodyRowRef.current;
+    if (!row) { setCustomerProfileMaximized(false); return; }
+    const conversationWidth = row.getBoundingClientRect().width - sidePanelWidth;
+    setCustomerProfileMaximized(conversationWidth < MIN_CONVERSATION_WIDTH);
+    // Only meant to fire on interaction switch — sidePanelWidth/sidePanelOpen
+    // changes are handled by the other effects below.
+  }, [activeAssignmentId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const row = bodyRowRef.current;
+    if (!row) return;
+    const observer = new ResizeObserver(() => checkSqueezeRef.current());
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [activeAssignmentId]);
+
+  useEffect(() => {
+    checkSqueezeRef.current();
+  }, [sidePanelWidth, sidePanelOpen]);
 
   const MAX_PANEL_HEIGHT = 860;
   const BOTTOM_PADDING   = 8;
@@ -784,16 +1078,23 @@ export function AgentNextGenPage({
   const activeSubject = activeChannel?.subject ?? activeAssignment?.subject ?? "";
   const activeCaseId = activeChannel?.caseId ?? activeAssignment?.caseId ?? "";
   const activeEscalationStatus = activeChannel?.escalationStatus ?? activeAssignment?.escalationStatus;
-  const activeCustomer = DIRECTORY_CUSTOMERS.find((c) => c.id === activeAssignment?.customerId);
-  /** The outbound-contact record backing the active assignment's customer,
-   *  if any — feeds the header's `AddOutboundButton` (name/avatar/channels
-   *  it supports) the same way `useOutboundAddButton`'s lyra-ui equivalent
-   *  looks a contact up by id. `undefined` (internal agent calls, a
-   *  not-yet-identified caller) just means no "+" renders — see
-   *  `addOutboundAction` below. */
-  const activeOutboundContact: CreateNewOutboundContact | undefined = DIRECTORY_CUSTOMERS.find(
-    (c) => c.id === activeAssignment?.customerId
-  );
+  // Merges any saved Overview-tab edits (see `customerFieldOverrides` above)
+  // onto the seed record — the panel itself only ever sees this merged
+  // view, never DIRECTORY_CUSTOMERS directly, so an edited field survives
+  // switching tabs/interactions same as a note does.
+  const baseActiveCustomer = DIRECTORY_CUSTOMERS.find((c) => c.id === activeAssignment?.customerId);
+  const activeCustomer = baseActiveCustomer
+    ? { ...baseActiveCustomer, ...customerFieldOverrides[baseActiveCustomer.id] }
+    : undefined;
+  /** The outbound-contact record backing a given assignment's customer, if
+   *  any — feeds each card's own `AddOutboundButton` (name/avatar/channels
+   *  it supports), rendered as `InteractionNavItem.headerAction` now (see
+   *  the assignment-card render below) rather than just the active
+   *  assignment's header, since every card gets its own "+" next to the
+   *  customer name. `undefined` (internal agent calls, a not-yet-identified
+   *  caller) just means no "+" renders for that card. */
+  const getOutboundContact = (customerId?: string): CreateNewOutboundContact | undefined =>
+    DIRECTORY_CUSTOMERS.find((c) => c.id === customerId);
 
   // Shared by the composer's real Send action and the fake outbound-call
   // transcript below — appends one message to a specific assignment
@@ -909,7 +1210,6 @@ export function AgentNextGenPage({
   // different customer's history tab still open after switching would be odd.
   const handleSelectAssignment = (id: string) => {
     setActiveAssignmentId(id);
-    setActiveTab("chat");
     // Selecting an assignment card always returns to the interaction view —
     // if Settings/Dashboard currently has the screen, close it. Other
     // slide-ins (Directory, etc.) are left alone since they can coexist
@@ -953,45 +1253,23 @@ export function AgentNextGenPage({
   };
 
   // Shared by `InteractionNavItem`'s own `onCurrentChannelChange` (clicking
-  // a channel row on the card) and `InteractionHeader`'s new `ChannelTab`
-  // bar (clicking a tab) — both drive this same piece of state, so clicking
-  // either stays in lockstep with the other (see `Assignment
-  // .currentChannelKey`'s own doc comment).
+  // a channel row on the card) and `InteractionActionsBar`'s channel-type
+  // segment (its kebab's "Unassign & Dismiss" aside, selecting a different
+  // channel now only happens on the card itself) — both read this same
+  // piece of state (see `Assignment.currentChannelKey`'s own doc comment).
   const handleChannelSelect = (assignmentId: string, key: string) => {
     setAssignments((prev) => prev.map((a) => (a.id === assignmentId ? { ...a, currentChannelKey: key } : a)));
   };
 
-  // Elevation card's own kebab menu — "Outcome All" (see lyra-ui's
-  // `buildElevatedMenuItems`/`InteractionNavItem.onOutcomeAll`). Opens
-  // `OutcomeAllPanel` (rendered once, below, scoped to whichever assignment
-  // this points at) instead of the single-channel `OutcomeButton` flow.
-  const handleOutcomeAll = (assignmentId: string) => {
-    setOutcomeAllAssignmentId(assignmentId);
-    // Only one Outcome popup visible at a time — see `outcomeButtonOpen`'s
-    // own doc comment above.
-    setOutcomeButtonOpen(false);
-  };
-
-  // Matches every other Outcome save in this app (the single-channel
-  // `OutcomeButton` in `InteractionActionsBar` doesn't wire `onApprove` to
-  // anything persistent either) — logging is the current fidelity level for
-  // "saved" outcomes here; nothing in `Assignment` yet models a stored
-  // outcome to write this into.
-  const handleOutcomeAllApprove = (outcome: OutcomeResult, appliedChannels: { type: ChannelType; label: string }[]) => {
-    // eslint-disable-next-line no-console
-    console.log("Outcome All saved for assignment", outcomeAllAssignmentId, outcome, "applied to:", appliedChannels);
-  };
-
-  /** The header's "+" (`AddOutboundButton`, next to the Chat tab) — starts
-   *  another channel with the customer already on this interaction. Unlike
-   *  `handleStartOutboundCall` below (always creates a brand-new assignment
-   *  tile), this appends to the *existing* assignment's own `channels`
-   *  array and makes the new channel current, so the agent sees one card
-   *  with two live channels instead of two separate cards for the same
-   *  customer — matches `InteractionNavItem`'s `elevatedLabel` prop, which
-   *  swaps that card's per-channel chip for a single "Elevation" chip once
-   *  `channels.length > 1` (see its own doc comment in interaction-nav-item
-   *  .tsx). */
+  /** The card's own "+" (`AddOutboundButton`, `InteractionNavItem
+   *  .headerAction`) — starts another channel with the customer already on
+   *  this interaction. Unlike `handleStartOutboundCall` below (always
+   *  creates a brand-new assignment tile), this appends to the *existing*
+   *  assignment's own `channels` array and makes the new channel current,
+   *  so the agent sees one card with two live channels instead of two
+   *  separate cards for the same customer — each channel gets its own full
+   *  row on that card (see `InteractionNavItem`'s own doc comment), stacked
+   *  under the first. */
   const handleAddOutboundChannel = (assignmentId: string, channel: ChannelType, address: string, skillId: string) => {
     const skillLabel = OUTBOUND_CONFIG.skillOptions.find((o) => o.value === skillId)?.label;
     const channelLabel = OUTBOUND_CONFIG.channelOptions.find((o) => o.id === channel)?.label ?? channel;
@@ -1015,11 +1293,21 @@ export function AgentNextGenPage({
     setAssignments((prev) =>
       prev.map((a) =>
         a.id === assignmentId
-          ? { ...a, channels: [...a.channels, newChannel], currentChannelKey: channelKey(newChannel) }
+          ? {
+              ...a,
+              channels: [...a.channels, newChannel],
+              currentChannelKey: channelKey(newChannel),
+              // Same "every outbound voice call gets a script" rule as
+              // handleStartOutboundCall/handleStartUnmatchedOutbound above —
+              // this is a customer-facing card (never reached for the
+              // agent-to-agent internal call, which has its own branch),
+              // just adding voice as a second channel rather than starting
+              // the whole card fresh.
+              script: channel === "voice" ? buildOutboundVoiceScript(a.customerName ?? "the customer", skillLabel) : a.script,
+            }
           : a
       )
     );
-    setActiveTab("chat");
     const assignment = assignments.find((a) => a.id === assignmentId);
     scheduleOutboundDemoTranscript(assignmentId, channel, assignment?.customerName ?? "the customer", skillLabel);
   };
@@ -1074,8 +1362,7 @@ export function AgentNextGenPage({
       };
       setAssignments((prev) => [newAssignment, ...prev]);
       setActiveAssignmentId(id);
-      setActiveTab("chat");
-      // Starting this call always surfaces the interaction panel — if
+        // Starting this call always surfaces the interaction panel — if
       // Control Center/Settings currently has the whole content column
       // (see `isFullPageActive`), close it so `activeAssignment` takes over
       // there instead of leaving the agent on the page they started from.
@@ -1099,11 +1386,11 @@ export function AgentNextGenPage({
         channels: [{ type: channel, elapsed: "00:00", current: true, preview: skillLabel, address: phone }],
         escalationStatus: "in-progress",
         messages: [],
+        script: channel === "voice" ? buildOutboundVoiceScript(contact.name, skillLabel) : undefined,
       };
       setAssignments((prev) => [newAssignment, ...prev]);
       setActiveAssignmentId(id);
-      setActiveTab("chat");
-      // Same full-page dismiss as the internal-agent-call branch above.
+        // Same full-page dismiss as the internal-agent-call branch above.
       setOpenSlideInPage((v) => (v !== null && FULL_PAGE_DESTINATIONS.has(v) ? null : v));
       scheduleOutboundDemoTranscript(id, channel, contact.name, skillLabel);
       return;
@@ -1141,10 +1428,14 @@ export function AgentNextGenPage({
       channels: [{ type: channel, elapsed: "00:00", current: true, preview: skillLabel, address: value }],
       escalationStatus: "in-progress",
       messages: [],
+      // isLikelyPersonName guards the fake transcript's own opening line
+      // above (never addresses a raw phone/email as if it were a name);
+      // the script's "Hi, this is..." intro only ever names the agent, so
+      // it doesn't need that same guard.
+      script: channel === "voice" ? buildOutboundVoiceScript(value, skillLabel) : undefined,
     };
     setAssignments((prev) => [newAssignment, ...prev]);
     setActiveAssignmentId(id);
-    setActiveTab("chat");
     // Same full-page dismiss as handleStartOutboundCall's branches above.
     setOpenSlideInPage((v) => (v !== null && FULL_PAGE_DESTINATIONS.has(v) ? null : v));
     scheduleOutboundDemoTranscript(id, channel, value, skillLabel);
@@ -1275,8 +1566,8 @@ export function AgentNextGenPage({
       aiFloatTop.current  = null; // use computed default top
       setAiVariant("float");
     }
-    // Single-dock rule: chat has no float mode, so docking here just undocks it
-    // (pops back into its own anchored popover) rather than forcing a float position.
+    // Single-dock rule: undock chat rather than forcing a float position —
+    // getChatFloatPosition computes one on render instead.
     if (v === "docked" && chatDocked) setChatDocked(false);
     setNotifVariant(v);
   };
@@ -1337,25 +1628,29 @@ export function AgentNextGenPage({
       notifFloatTop.current  = null; // use computed default top
       setNotifVariant("float");
     }
-    // Single-dock rule: chat has no float mode, so docking here just undocks it.
-    if (v === "docked" && chatDocked) setChatDocked(false);
+    // AI and Chat are deliberately exempt from the single-dock rule between
+    // each other — they're meant to dock side by side (AI left, Chat right,
+    // see the docked-panel render order below), so docking AI here no
+    // longer touches `chatDocked` at all. Notifications stays the odd one
+    // out, still exclusive against both (the block above, and the mirrored
+    // one in handleChatVariantChange/handleNotifVariantChange below).
     setAiVariant(v);
   };
 
-  /* Chat: docking here undocks AI/Notifications if either is currently docked
-   *  (single-dock rule); chat itself has no float mode, so its own
-   *  onVariantChange just toggles chatDocked (see InternalChatDockedPanel's
-   *  "Undock" button, which fires v === "float"). */
+  /* Chat: docking here undocks Notifications if it's currently docked (still
+   *  exclusive — see handleAiVariantChange's own comment on why AI/Chat are
+   *  exempt from that rule between each other, just not against
+   *  Notifications); chat itself only ever toggles `chatDocked` (see
+   *  InternalChatDockedPanel's "Undock" button, which fires v === "float",
+   *  and InternalChatFloatPanel's own "Dock to side" button, which fires
+   *  v === "docked"). Undocking clears any explicit `chatFloatPosition` so
+   *  it lands via `getChatFloatPosition`'s computed default rather than a
+   *  stale one-off position from an earlier `openInternalChatWith` call. */
   const handleChatVariantChange = (v: DraggableVariant) => {
     if (v === "float") {
+      setChatFloatPosition(null);
       setChatDocked(false);
       return;
-    }
-    if (aiVariant === "docked" && containerRef.current) {
-      const r = containerRef.current.getBoundingClientRect();
-      aiFloatLeft.current = r.left + containerRef.current.offsetWidth - aiWidth - 16;
-      aiFloatTop.current  = null;
-      setAiVariant("float");
     }
     if (notifVariant === "docked" && containerRef.current) {
       const r = containerRef.current.getBoundingClientRect();
@@ -1366,28 +1661,47 @@ export function AgentNextGenPage({
     setChatDocked(true);
   };
 
+  /** Default float position for the header-opened case (no explicit
+   *  `chatFloatPosition` from `openInternalChatWith`) — near the top-right
+   *  of the interaction area, same fallback formula AI/Notifications use
+   *  for their own float defaults (see `getAiFloatStyle`/`getNotifFloatStyle`
+   *  above). */
+  const getChatFloatPosition = (): { top: number; left: number } => {
+    if (chatFloatPosition) return chatFloatPosition;
+    const rect = containerRef.current?.getBoundingClientRect();
+    return {
+      top: (rect?.top ?? 0) + 16,
+      left: containerRef.current ? (rect?.left ?? 0) + containerRef.current.offsetWidth - CHAT_FLOAT_WIDTH - 16 : 16,
+    };
+  };
+
   const handleChatOpenChange = (next: boolean) => {
-    setChatOpen(next);
-    // The header trigger only ever drives the anchored popover or the
-    // docked panel — clear any leftover float position so a stray earlier
-    // float (opened via openInternalChatWith) doesn't linger behind it.
-    setChatFloatPosition(null);
     if (!next) {
-      setChatView({ kind: "list" });
-      setChatSearch("");
+      closeInternalChat();
+      return;
     }
+    setChatOpen(true);
+    // The header trigger only ever drives the float or docked presentation
+    // — clear any leftover explicit position so a stray earlier float
+    // (opened via openInternalChatWith) doesn't linger behind it; the float
+    // block falls back to getChatFloatPosition's computed default instead.
+    setChatFloatPosition(null);
+    // Contacts/Directory/Schedule/Internal Chat are mutually exclusive — see
+    // handleNavClick's own comment on this. Only clears a slide-in, never a
+    // full-page destination (Settings/Dashboard), which chat can coexist with.
+    setOpenSlideInPage((v) => (v !== null && !FULL_PAGE_DESTINATIONS.has(v) ? null : v));
   };
 
   /** Opens Internal Chat straight into a thread with one employee — used
    *  by the New Outbound popover's Agents-group "chat" row icon, so
    *  clicking it lands in the exact same chat window/thread the header's
    *  Internal Chat icon opens. If chat isn't already open in any
-   *  presentation, it opens as a floating window near `clickPosition`
-   *  (the icon click's viewport coordinates) instead of the header-
-   *  anchored popover, so the window lands near the agent's mouse/focus
-   *  rather than across the screen at the header. If chat is already open
-   *  somewhere (popover, docked, or an earlier float), this just switches
-   *  the thread in place without moving or re-presenting it. */
+   *  presentation, it opens as a floating window near `clickPosition` (the
+   *  icon click's viewport coordinates) instead of `getChatFloatPosition`'s
+   *  generic header-relative default, so the window lands near the agent's
+   *  mouse/focus rather than across the screen at the header. If chat is
+   *  already open somewhere (float or docked), this just switches the
+   *  thread in place without moving or re-presenting it. */
   const openInternalChatWith = (employeeId: string, clickPosition?: { x: number; y: number }) => {
     if (!chatOpen && clickPosition) {
       setChatFloatPosition({
@@ -1397,6 +1711,10 @@ export function AgentNextGenPage({
     }
     setChatView({ kind: "chat", employeeId });
     setChatOpen(true);
+    // Same Contacts/Directory/Schedule/Internal Chat exclusivity as
+    // handleChatOpenChange above — this is just a second entry point into
+    // the same "chat is now open" state.
+    setOpenSlideInPage((v) => (v !== null && !FULL_PAGE_DESTINATIONS.has(v) ? null : v));
   };
 
   const toggleChatFavorite = (id: string) => {
@@ -1496,18 +1814,23 @@ export function AgentNextGenPage({
       onVariantChange={handleSlideInVariantChange}
       onWidthChange={setSlideInWidth}
       onResizeStateChange={setSlideInIsResizing}
+      headerActions={
+        <ActionIconButton
+          title="Maximize"
+          onClick={() => {
+            // Auto-dock, then maximize — same policy approved for Internal
+            // Chat's own maximize (see chatMaximized), applied here too for
+            // consistency: maximizing takes over the whole content column,
+            // so there's no reason to stay floating first.
+            if (slideInVariant !== "docked") handleSlideInVariantChange("docked");
+            setSlideInMaximized(true);
+          }}
+        >
+          <Maximize2 className="h-4 w-4" strokeWidth={1.5} />
+        </ActionIconButton>
+      }
     >
-      {lastSlideIn === "directory" ? (
-        <DirectoryPage
-          customers={DIRECTORY_CUSTOMERS}
-          agents={DIRECTORY_AGENTS}
-          skills={DIRECTORY_SKILLS}
-          teams={DIRECTORY_TEAMS}
-          onContactAction={handleDirectoryContactAction}
-        />
-      ) : (
-        <SlideInPlaceholder />
-      )}
+      {renderSlideInContent(lastSlideIn)}
     </SlideInPage>
   ) : null;
 
@@ -1542,12 +1865,13 @@ export function AgentNextGenPage({
              *  destination like a primary section of the app, not a
              *  transient slide-in, so it reads better as a rail nav item. */}
             {/* iconClassName="h-5 w-5" matches NotificationsBell's Bell icon and
-             *  InternalChatTrigger's MessagesSquare icon just below — both
+             *  InternalChatTrigger's MessageSquareText icon just below — both
              *  lyra-ui/app components with no size prop of their own, so
              *  matching them means sizing up from NavIconButton's own h-4 w-4
              *  default rather than shrinking those two down. strokeWidth 1.5
              *  already matches across all of them (NavIconButton hardcodes
              *  it), so size was the only inconsistency. */}
+            <NavIconButton item="customWorkspace" title="Custom Workspace" icon={Monitor} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
             <NavIconButton item="contacts" title="Contacts" icon={Users} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
             <NavIconButton item="directory" title="Directory" icon={BookUser} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
             <NavIconButton item="schedule" title="Schedule" icon={CalendarDays} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
@@ -1559,15 +1883,12 @@ export function AgentNextGenPage({
               renderPanel={false}
             />
             <InternalChatTrigger
-              // Floating (opened via openInternalChatWith) takes over the
-              // shared open/view state entirely — the header's own anchored
-              // popover stays closed while it's up, so the two don't render
-              // on top of each other.
-              open={chatOpen && !chatFloatPosition}
+              // Just toggles chatOpen now — the float/docked panel that
+              // actually renders is a separate mount point below (see
+              // "Internal Chat — docked"/"Internal Chat — floating" further
+              // down), same as the AI Assistant/Notifications triggers.
+              open={chatOpen}
               onOpenChange={handleChatOpenChange}
-              docked={chatDocked}
-              onDock={() => handleChatVariantChange("docked")}
-              {...chatSharedProps}
             />
             <AgentProfile
               name="John Smith"
@@ -1612,30 +1933,46 @@ export function AgentNextGenPage({
                 onClick={() => handleNavClick("dashboard")}
                 className="mb-2"
               />
-              {assignments.map((a) => (
-                <InteractionNavItem
-                  key={a.id}
-                  ref={(el) => {
-                    if (el) assignmentCardRefs.current.set(a.id, el);
-                    else assignmentCardRefs.current.delete(a.id);
-                  }}
-                  customerName={a.customerName}
-                  active={activeAssignmentId === a.id}
-                  onClick={() => handleSelectAssignment(a.id)}
-                  awaitingResponse={a.awaitingResponse}
-                  elapsed={a.elapsed}
-                  expanded={navOpen}
-                  issueSummary={a.issueSummary}
-                  channels={a.channels}
-                  currentChannelKey={resolveCurrentChannelKey(a)}
-                  onCurrentChannelChange={(key) => handleChannelSelect(a.id, key)}
-                  elevatedLabel={a.channels.length > 1 ? "Elevation" : undefined}
-                  onOutcomeAll={() => handleOutcomeAll(a.id)}
-                  avatarIcon={a.isInternalAgentCall ? <Headset className="h-4 w-4" strokeWidth={1.5} /> : undefined}
-                  onDismiss={() => handleDismissAssignment(a.id)}
-                  onDismissChannel={(channel) => handleDismissChannel(a.id, channel)}
-                />
-              ))}
+              {assignments.map((a) => {
+                const outboundContact = getOutboundContact(a.customerId);
+                return (
+                  <InteractionNavItem
+                    key={a.id}
+                    customerName={a.customerName}
+                    active={activeAssignmentId === a.id}
+                    onClick={() => handleSelectAssignment(a.id)}
+                    awaitingResponse={a.awaitingResponse}
+                    elapsed={a.elapsed}
+                    expanded={navOpen}
+                    issueSummary={a.issueSummary}
+                    channels={a.channels}
+                    currentChannelKey={resolveCurrentChannelKey(a)}
+                    onCurrentChannelChange={(key) => handleChannelSelect(a.id, key)}
+                    // "+" now lives on the card itself, top-right next to the
+                    // customer name — matches the new assignment-card design;
+                    // used to live in `InteractionHeader`'s Row 1, scoped to
+                    // just the active assignment (see `getOutboundContact`'s
+                    // own doc comment above). `undefined` contact (no
+                    // matching directory record) renders nothing here, same
+                    // as before.
+                    headerAction={
+                      outboundContact ? (
+                        <AddOutboundButton
+                          contact={outboundContact}
+                          channelOptions={OUTBOUND_CONFIG.channelOptions}
+                          phoneOptions={OUTBOUND_CONFIG.phoneOptions}
+                          skillOptions={OUTBOUND_CONFIG.skillOptions}
+                          openChannelTypes={a.channels.map((c) => c.type)}
+                          onStart={(channel, address, skillId) => handleAddOutboundChannel(a.id, channel, address, skillId)}
+                        />
+                      ) : undefined
+                    }
+                    avatarIcon={a.isInternalAgentCall ? <Headset className="h-4 w-4" strokeWidth={1.5} /> : undefined}
+                    onDismiss={() => handleDismissAssignment(a.id)}
+                    onDismissChannel={(channel) => handleDismissChannel(a.id, channel)}
+                  />
+                );
+              })}
             </>
           }
           footer={
@@ -1653,111 +1990,140 @@ export function AgentNextGenPage({
             ref used to position float panels. */}
         <div ref={containerRef} className="relative flex flex-1 min-w-0 overflow-hidden pr-3 pb-3">
 
-          {/* Main Container — flex row so pinned Panel sits left of PageHeader + content.
-              relative so unpinned Panel can overlay the full surface. */}
+          {/* Main Container — Customer Profile now docks inside the body row
+              below (right side, pushes the conversation narrower) instead of
+              sitting here as a flex sibling of the whole content column —
+              see the body row further down for the actual panel. */}
           <Container className="flex flex-1 overflow-hidden relative">
-
-            {/* Customer Snapshot — flex sibling, pushes everything (incl. PageHeader) to
-                the right. Click to open/close only — no hover-to-preview, no pin toggle.
-                Hidden during a Settings/Dashboard takeover — see isFullPageActive below. */}
-            {showPanelToggle && !isFullPageActive && (
-              <SidePanel
-                side="left"
-                open={sidePanelOpen}
-                pinned
-                headerTitle="Customer Profile"
-                headerActions={
-                  <ActionIconButton title="Close" onClick={() => setSidePanelOpen(false)}>
-                    <X className="h-4 w-4" strokeWidth={1.5} />
-                  </ActionIconButton>
-                }
-                width={sidePanelWidth}
-                onWidthChange={setSidePanelWidth}
-              >
-                <CustomerSnapshotPanel
-                  customer={activeCustomer}
-                  notes={activeCustomer ? customerNotes[activeCustomer.id] ?? [] : []}
-                  onAddNote={(text) => activeCustomer && handleAddCustomerNote(activeCustomer.id, text)}
-                  onContactAction={handleSnapshotContactAction}
-                />
-              </SidePanel>
-            )}
 
             {/* Content column: PageHeader + page body */}
             <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
-              {isFullPageActive ? (
-                <>
-                  {showPageHeader && (
-                    <InteractionHeader
-                      takeover
-                      takeoverTitle={FULL_PAGE_META[openSlideInPage as FullPageDestination].title}
-                    />
-                  )}
-                  {openSlideInPage === "dashboard" ? (
-                    <div className="relative flex flex-1 overflow-hidden">
-                      <div className="flex flex-1 flex-col min-w-0 overflow-y-auto px-6 py-6">
-                        <AgentDashboard
-                          agentFirstName={CURRENT_AGENT_NAME.split(" ")[0]}
-                          onRedial={(entry: AgentDashboardContactHistoryEntry) => {
-                            // eslint-disable-next-line no-console
-                            console.log("Redial:", entry.name);
-                          }}
-                          selectedQueueId={selectedQueueId}
-                          onSelectQueueId={setSelectedQueueId}
-                        />
+              {chatOpen && chatMaximized ? (
+                /* Internal Chat, maximized — checked ahead of
+                 *  `isFullPageActive` (and independent of it, see
+                 *  `chatMaximized`'s own doc comment) so this wins the
+                 *  content column even in the one edge case where both
+                 *  could technically be true at once: Settings/Dashboard
+                 *  stays open underneath (chat can coexist with a full-page
+                 *  destination, per handleChatOpenChange/openInternalChatWith),
+                 *  and the agent then maximizes chat on top of it. */
+                <InternalChatMaximizedPanel
+                  onMinimize={() => setChatMaximized(false)}
+                  onClose={closeInternalChat}
+                  {...chatSharedProps}
+                />
+              ) : isFullPageActive ? (
+                FULL_PAGE_DESTINATIONS.has(openSlideInPage as NavDestination) ? (
+                  <>
+                    {showPageHeader && (
+                      <InteractionHeader
+                        takeover
+                        takeoverTitle={FULL_PAGE_META[openSlideInPage as FullPageDestination].title}
+                      />
+                    )}
+                    {openSlideInPage === "dashboard" ? (
+                      <div className="relative flex flex-1 overflow-hidden">
+                        <div className="flex flex-1 flex-col min-w-0 overflow-y-auto px-6 py-6">
+                          <AgentDashboard
+                            agentFirstName={CURRENT_AGENT_NAME.split(" ")[0]}
+                            onRedial={(entry: AgentDashboardContactHistoryEntry) => {
+                              // eslint-disable-next-line no-console
+                              console.log("Redial:", entry.name);
+                            }}
+                            selectedQueueId={selectedQueueId}
+                            onSelectQueueId={setSelectedQueueId}
+                          />
+                        </div>
+                        <InteriorPanel
+                          side="right"
+                          open={Boolean(selectedQueueId)}
+                          headerTitle={
+                            selectedQueueId
+                              ? AGENT_DASHBOARD_QUEUE_ITEMS.find((item) => item.id === selectedQueueId)?.name ?? "Queue"
+                              : "Queue"
+                          }
+                          headerSubhead={
+                            selectedQueueId
+                              ? `${(AGENT_DASHBOARD_QUEUE_SUB_ITEMS[selectedQueueId] ?? []).length} Skills`
+                              : undefined
+                          }
+                          onClose={() => setSelectedQueueId(null)}
+                        >
+                          {selectedQueueId && <AgentDashboardQueueDrilldown queueId={selectedQueueId} />}
+                        </InteriorPanel>
                       </div>
-                      <InteriorPanel
-                        side="right"
-                        open={Boolean(selectedQueueId)}
-                        headerTitle={
-                          selectedQueueId
-                            ? AGENT_DASHBOARD_QUEUE_ITEMS.find((item) => item.id === selectedQueueId)?.name ?? "Queue"
-                            : "Queue"
-                        }
-                        headerSubhead={
-                          selectedQueueId
-                            ? `${(AGENT_DASHBOARD_QUEUE_SUB_ITEMS[selectedQueueId] ?? []).length} Skills`
-                            : undefined
-                        }
-                        onClose={() => setSelectedQueueId(null)}
-                      >
-                        {selectedQueueId && <AgentDashboardQueueDrilldown queueId={selectedQueueId} />}
-                      </InteriorPanel>
-                    </div>
-                  ) : (
-                    <div className="flex flex-1 overflow-hidden">
-                      <SlideInPlaceholder />
-                    </div>
-                  )}
-                </>
+                    ) : (
+                      <div className="flex flex-1 overflow-hidden">
+                        <SlideInPlaceholder />
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  /* A slide-in destination (Contacts/Directory/Schedule/
+                   *  Custom Workspace), maximized while an interaction is
+                   *  active — see `slideInMaximized`'s own doc comment.
+                   *  Same "full" variant the no-`activeAssignment` branch
+                   *  below already uses, just reachable with an interaction
+                   *  live underneath too now, plus a Minimize button to
+                   *  return to it. */
+                  <SlideInPage
+                    variant="full"
+                    open
+                    title={SLIDE_IN_META[lastSlideIn].title}
+                    icon={SLIDE_IN_META[lastSlideIn].icon}
+                    onClose={() => setOpenSlideInPage(null)}
+                    headerActions={
+                      <ActionIconButton title="Minimize" onClick={() => setSlideInMaximized(false)}>
+                        <Minimize2 className="h-4 w-4" strokeWidth={1.5} />
+                      </ActionIconButton>
+                    }
+                  >
+                    {renderSlideInContent(lastSlideIn)}
+                  </SlideInPage>
+                )
               ) : activeAssignment ? (
                 <>
                   {showPageHeader && (
                     <InteractionHeader
                       customerName={activeAssignment.customerName}
-                      activeTab={activeTab}
-                      onTabChange={setActiveTab}
-                      isVoiceCall={isActiveAssignmentVoiceCall}
                       onCloseInteraction={handleCloseInteraction}
                       panelToggle={showPanelToggle ? "left" : undefined}
                       onPanelToggle={() => setSidePanelOpen((v) => !v)}
                       aiPanelOpen={aiPanelOpen}
                       onAskAiClick={() => setAiPanelOpen((v) => !v)}
-                      channels={activeAssignment.channels}
-                      currentChannelKey={activeCurrentChannelKey}
-                      onChannelSelect={(key) => handleChannelSelect(activeAssignment.id, key)}
-                      onDismissChannel={(channel) => handleDismissChannel(activeAssignment.id, channel)}
-                      addOutboundAction={
-                        activeOutboundContact ? (
-                          <AddOutboundButton
-                            contact={activeOutboundContact}
-                            channelOptions={OUTBOUND_CONFIG.channelOptions}
-                            phoneOptions={OUTBOUND_CONFIG.phoneOptions}
-                            skillOptions={OUTBOUND_CONFIG.skillOptions}
-                            openChannelTypes={activeAssignment.channels.map((c) => c.type)}
-                            onStart={(channel, address, skillId) => handleAddOutboundChannel(activeAssignment.id, channel, address, skillId)}
-                          />
-                        ) : undefined
+                      // Now sits right next to the customer name, in this same
+                      // row — moved out of `AppHeader`'s `center` slot (see
+                      // that component's own history in app-header.tsx's doc
+                      // comment) back to living with the interaction it
+                      // controls. Trade-off worth knowing: unlike the
+                      // AppHeader placement, this disappears whenever this
+                      // header itself isn't on screen (Control Center,
+                      // Settings, Directory, etc. all replace it) — Dave
+                      // asked for it here regardless, so no `center`-slot
+                      // fallback is kept.
+                      actionsBar={
+                        <InteractionActionsBar
+                          isVoiceCall={isActiveAssignmentVoiceCall}
+                          customerName={activeAssignment.customerName}
+                          issueSummary={activeAssignment.issueSummary}
+                          caseId={activeAssignment.caseId}
+                          currentChannelType={activeChannelType}
+                          outcomeOpen={outcomeButtonOpen}
+                          onOutcomeOpenChange={setOutcomeButtonOpen}
+                          // Same "dismiss just this channel vs. the whole
+                          // card" split `InteractionNavItem`'s own row
+                          // kebabs already use (see
+                          // `handleDismissChannel`/`handleDismissAssignment`
+                          // above).
+                          onDismissCurrentChannel={
+                            activeChannel
+                              ? () => {
+                                  if (activeAssignment.channels.length > 1) handleDismissChannel(activeAssignment.id, activeChannel);
+                                  else handleDismissAssignment(activeAssignment.id);
+                                }
+                              : undefined
+                          }
+                        />
                       }
                     />
                   )}
@@ -1769,39 +2135,84 @@ export function AgentNextGenPage({
                       onEscalationStatusChange={(status) => activeAssignmentId && handleEscalationStatusChange(activeAssignmentId, status)}
                     />
                   )}
-                  {showPageHeader && (
-                    <InteractionActionsBar
-                      isVoiceCall={isActiveAssignmentVoiceCall}
-                      customerName={activeAssignment.customerName}
-                      issueSummary={activeAssignment.issueSummary}
-                      caseId={activeAssignment.caseId}
-                      currentChannelType={activeChannelType}
-                      allChannels={activeAssignment.channels.map((c) => ({ type: c.type, label: CHANNEL_TYPE_META[c.type].label }))}
-                      outcomeOpen={outcomeButtonOpen}
-                      onOutcomeOpenChange={(open) => {
-                        setOutcomeButtonOpen(open);
-                        // Only one Outcome popup visible at a time — see
-                        // `outcomeButtonOpen`'s own doc comment above.
-                        if (open) setOutcomeAllAssignmentId(null);
-                      }}
-                    />
-                  )}
-                  {/* Body row: main content. Slide-in panel, when docked,
-                   *  renders outside this Container entirely (sibling of
-                   *  containerRef, alongside Notifications/AI/Chat) rather
-                   *  than inside the interaction's own card — see that
-                   *  block below for why. */}
-                  <div className="relative flex flex-1 overflow-hidden">
-                    <CustomerInteractionPanel
-                      activeTab={activeTab}
-                      messages={activeAssignment.messages}
-                      isVoiceCall={isActiveAssignmentVoiceCall}
-                      callEvents={activeAssignment.callEvents}
-                      onSendMessage={handleSendMessage}
-                      sendOnEnter={activeChannelType !== "email"}
-                      isEmailChannel={activeChannelType === "email"}
-                      toAddress={activeChannel?.address}
-                    />
+                  {/* Body row: main content + Customer Profile. Slide-in
+                   *  panel, when docked, renders outside this Container
+                   *  entirely (sibling of containerRef, alongside
+                   *  Notifications/AI/Chat) rather than inside the
+                   *  interaction's own card — see that block below for why.
+                   *  Customer Profile is different: it's part of this
+                   *  interaction's own layout (right-docked, pushes the
+                   *  conversation narrower), so it lives in here instead. */}
+                  <div ref={bodyRowRef} className="relative flex flex-1 overflow-hidden">
+                    {customerProfileMaximized ? (
+                      /* Full takeover — same idea as the Settings/Dashboard
+                       * takeover above (isFullPageActive), just scoped to
+                       * this row: header rows above stay put, only the
+                       * conversation/panel split underneath is replaced. */
+                      <div className="flex flex-1 flex-col min-w-0 overflow-hidden bg-lyra-bg-surface-container-subtle">
+                        <div className="flex shrink-0 items-center justify-between border-b border-lyra-border-subtle px-4 py-2.5">
+                          <span className="lyra-heading-sm text-lyra-fg-default">Customer Profile</span>
+                          <div className="flex items-center gap-1">
+                            <ActionIconButton title="Restore" onClick={() => setCustomerProfileMaximized(false)}>
+                              <Minimize2 className="h-4 w-4" strokeWidth={1.5} />
+                            </ActionIconButton>
+                            <ActionIconButton title="Close" onClick={() => setSidePanelOpen(false)}>
+                              <X className="h-4 w-4" strokeWidth={1.5} />
+                            </ActionIconButton>
+                          </div>
+                        </div>
+                        <CustomerProfilePanel
+                          customer={activeCustomer}
+                          notes={activeCustomer ? customerNotes[activeCustomer.id] ?? [] : []}
+                          onAddNote={(text) => activeCustomer && handleAddCustomerNote(activeCustomer.id, text)}
+                          onContactAction={handleSnapshotContactAction}
+                          onUpdateCustomer={(fields) => activeCustomer && handleUpdateCustomerFields(activeCustomer.id, fields)}
+                          collapsed={false}
+                        />
+                      </div>
+                    ) : (
+                      <>
+                        <CustomerInteractionPanel
+                          messages={activeAssignment.messages}
+                          isVoiceCall={isActiveAssignmentVoiceCall}
+                          callEvents={activeAssignment.callEvents}
+                          script={activeAssignment.script}
+                          onSendMessage={handleSendMessage}
+                          sendOnEnter={activeChannelType !== "email"}
+                          isEmailChannel={activeChannelType === "email"}
+                          toAddress={activeChannel?.address}
+                        />
+                        {showPanelToggle && (
+                          <SidePanel
+                            side="right"
+                            open={sidePanelOpen}
+                            pinned
+                            headerTitle="Customer Profile"
+                            headerActions={
+                              <>
+                                <ActionIconButton title="Maximize" onClick={() => setCustomerProfileMaximized(true)}>
+                                  <Maximize2 className="h-4 w-4" strokeWidth={1.5} />
+                                </ActionIconButton>
+                                <ActionIconButton title="Close" onClick={() => setSidePanelOpen(false)}>
+                                  <X className="h-4 w-4" strokeWidth={1.5} />
+                                </ActionIconButton>
+                              </>
+                            }
+                            width={sidePanelWidth}
+                            onWidthChange={setSidePanelWidth}
+                          >
+                            <CustomerProfilePanel
+                              customer={activeCustomer}
+                              notes={activeCustomer ? customerNotes[activeCustomer.id] ?? [] : []}
+                              onAddNote={(text) => activeCustomer && handleAddCustomerNote(activeCustomer.id, text)}
+                              onContactAction={handleSnapshotContactAction}
+                              onUpdateCustomer={(fields) => activeCustomer && handleUpdateCustomerFields(activeCustomer.id, fields)}
+                              collapsed
+                            />
+                          </SidePanel>
+                        )}
+                      </>
+                    )}
                   </div>
                 </>
               ) : openSlideInPage !== null && slideInVariant !== "float" ? (
@@ -1816,17 +2227,7 @@ export function AgentNextGenPage({
                   icon={SLIDE_IN_META[lastSlideIn].icon}
                   onClose={() => setOpenSlideInPage(null)}
                 >
-                  {lastSlideIn === "directory" ? (
-                    <DirectoryPage
-                      customers={DIRECTORY_CUSTOMERS}
-                      agents={DIRECTORY_AGENTS}
-                      skills={DIRECTORY_SKILLS}
-                      teams={DIRECTORY_TEAMS}
-                      onContactAction={handleDirectoryContactAction}
-                    />
-                  ) : (
-                    <SlideInPlaceholder />
-                  )}
+                  {renderSlideInContent(lastSlideIn)}
                 </SlideInPage>
               ) : openSlideInPage !== null ? null : (
                 <div className="flex flex-1 items-center justify-center text-lyra-fg-secondary lyra-body-md">
@@ -1895,13 +2296,38 @@ export function AgentNextGenPage({
 
         </div>
 
+        {/* AI Panel — docked (sibling of containerRef so flex layout keeps it in-bounds).
+         *  Rendered first among the docked extras — regardless of which of
+         *  Notifications/Slide-in/Chat is also docked, AI always lands
+         *  immediately to the right of the interaction and to the left of
+         *  every other docked panel, never the other way around. */}
+        {aiVariant === "docked" && (
+          <div className="pb-3" style={{
+            width: aiState === "open" ? aiWidth : 0,
+            marginRight: aiState === "open" ? 12 : 0,
+            overflow: "hidden",
+            flexShrink: 0,
+            transition: aiIsResizing ? "none" : "width 250ms cubic-bezier(0.4, 0, 0.2, 1)",
+          }}>
+            <div
+              className="h-full animate-in fade-in-0 duration-150"
+              style={{
+                width: aiWidth,
+                display: aiState === "open" ? "block" : "none",
+              }}
+            >
+              {aiPanel}
+            </div>
+          </div>
+        )}
+
         {/* Slide-in panel — docked (sibling of containerRef, same as
          *  Notifications/AI/Chat below — NOT nested inside the interaction's
          *  own Container/card, so it always sits outside the interaction
          *  panel with a real gap between the two, rather than reading as
-         *  one merged surface. Rendered first among the docked extras so it
-         *  lands immediately to the right of the interaction, matching
-         *  where it appeared before this was moved out of the Container.
+         *  one merged surface. Rendered right after AI (see AI's own comment
+         *  above on why AI always leads) so it's still the next thing to the
+         *  right of the interaction whenever AI isn't docked.
          *  No single-dock-rule tie-in to Notifications/AI/Chat — see
          *  slideInVariant's own doc comment. */}
         {slideInVariant === "docked" && (
@@ -1945,35 +2371,16 @@ export function AgentNextGenPage({
           </div>
         )}
 
-        {/* AI Panel — docked (sibling of containerRef so flex layout keeps it in-bounds) */}
-        {aiVariant === "docked" && (
-          <div className="pb-3" style={{
-            width: aiState === "open" ? aiWidth : 0,
-            marginRight: aiState === "open" ? 12 : 0,
-            overflow: "hidden",
-            flexShrink: 0,
-            transition: aiIsResizing ? "none" : "width 250ms cubic-bezier(0.4, 0, 0.2, 1)",
-          }}>
-            <div
-              className="h-full animate-in fade-in-0 duration-150"
-              style={{
-                width: aiWidth,
-                display: aiState === "open" ? "block" : "none",
-              }}
-            >
-              {aiPanel}
-            </div>
-          </div>
-        )}
-
         {/* Internal Chat — docked (sibling of containerRef so flex layout keeps it in-bounds).
-         *  Suppressed while floating (see InternalChatTrigger's `open` prop comment above) —
-         *  a stale `chatDocked` from an earlier session shouldn't render its row underneath
-         *  the float window just because both happen to be true at once. */}
-        {chatDocked && !chatFloatPosition && (
+         *  `chatDocked`/`!chatDocked` below are the only gate now — float and
+         *  docked are strictly either/or, however chat got opened. Also
+         *  collapses to width 0 while maximized (same idea as `chatOpen`'s
+         *  own width-0 collapse) — the maximized takeover below is the only
+         *  thing visible then, this docked slot has nothing to show. */}
+        {chatDocked && (
           <div className="pb-3" style={{
-            width: chatOpen ? chatWidth : 0,
-            marginRight: chatOpen ? 12 : 0,
+            width: chatOpen && !chatMaximized ? chatWidth : 0,
+            marginRight: chatOpen && !chatMaximized ? 12 : 0,
             overflow: "hidden",
             flexShrink: 0,
             transition: chatIsResizing ? "none" : "width 250ms cubic-bezier(0.4, 0, 0.2, 1)",
@@ -1982,15 +2389,16 @@ export function AgentNextGenPage({
               className="h-full animate-in fade-in-0 duration-150"
               style={{
                 width: chatWidth,
-                display: chatOpen ? "block" : "none",
+                display: chatOpen && !chatMaximized ? "block" : "none",
               }}
             >
               <InternalChatDockedPanel
                 open={chatOpen}
-                onClose={() => setChatOpen(false)}
+                onClose={closeInternalChat}
                 onVariantChange={handleChatVariantChange}
                 onWidthChange={setChatWidth}
                 onResizeStateChange={setChatIsResizing}
+                onMaximize={handleChatMaximize}
                 defaultWidth={chatWidth}
                 {...chatSharedProps}
               />
@@ -1998,70 +2406,25 @@ export function AgentNextGenPage({
           </div>
         )}
 
-        {/* Internal Chat — floating (opened via openInternalChatWith, e.g. New
-         *  Outbound's Agents-group chat icon). Portals to document.body, so it
-         *  renders outside this flex row entirely — position is fixed viewport
-         *  coordinates set at open time. */}
-        {chatOpen && chatFloatPosition && (
+        {/* Internal Chat — floating (default undocked presentation, opened
+         *  from the header icon or from openInternalChatWith, e.g. New
+         *  Outbound's Agents-group chat icon — see getChatFloatPosition and
+         *  InternalChatFloatPanel's own class doc comment). Portals to
+         *  document.body, so it renders outside this flex row entirely —
+         *  position is fixed viewport coordinates set at open time.
+         *  `!chatMaximized` isn't strictly needed here (`handleChatMaximize`
+         *  docks before maximizing, so this branch is moot by the time
+         *  `chatMaximized` is true) but kept for symmetry/defensiveness with
+         *  the docked branch above. */}
+        {chatOpen && !chatDocked && !chatMaximized && (
           <InternalChatFloatPanel
-            position={chatFloatPosition}
-            onClose={() => {
-              setChatOpen(false);
-              setChatFloatPosition(null);
-              setChatView({ kind: "list" });
-              setChatSearch("");
-            }}
+            position={getChatFloatPosition()}
+            onClose={closeInternalChat}
+            onDock={() => handleChatVariantChange("docked")}
+            onMaximize={handleChatMaximize}
             {...chatSharedProps}
           />
         )}
-
-        {/* Outcome All — Elevation card's kebab menu (see `handleOutcomeAll`
-         *  above). Portals to document.body like the Outcome popup above;
-         *  rendered once here rather than per-card since only one can ever
-         *  be open at a time. */}
-        {(() => {
-          const outcomeAllAssignment = assignments.find((a) => a.id === outcomeAllAssignmentId);
-          // Re-measured every render while open (not cached in state) — cheap,
-          // and `OutcomeAllPanel` itself only ever reads this once per open
-          // (see its own `floatPos` guard), so re-measuring here on every
-          // render doesn't fight the agent dragging the panel afterward.
-          const outcomeAllCardEl = outcomeAllAssignmentId
-            ? assignmentCardRefs.current.get(outcomeAllAssignmentId)
-            : undefined;
-          const outcomeAllAnchorRect = outcomeAllCardEl
-            ? (() => {
-                const r = outcomeAllCardEl.getBoundingClientRect();
-                return { top: r.top, right: r.right };
-              })()
-            : null;
-          // Which channel the toggle narrows back down to if the agent
-          // switches "Outcome All" off — same "current channel" every other
-          // per-card feature (row 3, the header's ChannelTab bar) already
-          // tracks, so it stays consistent with whatever tab the agent had
-          // open when they reached for the kebab menu.
-          const outcomeAllCurrentKey = outcomeAllAssignment ? resolveCurrentChannelKey(outcomeAllAssignment) : undefined;
-          const outcomeAllCurrentChannel = outcomeAllAssignment?.channels.find((c) => channelKey(c) === outcomeAllCurrentKey);
-          return (
-            <OutcomeAllPanel
-              open={outcomeAllAssignmentId !== null}
-              onOpenChange={(open) => {
-                if (!open) setOutcomeAllAssignmentId(null);
-              }}
-              customerName={outcomeAllAssignment?.customerName ?? "this customer"}
-              channels={(outcomeAllAssignment?.channels ?? []).map((c) => ({
-                type: c.type,
-                label: CHANNEL_TYPE_META[c.type].label,
-              }))}
-              currentChannel={
-                outcomeAllCurrentChannel
-                  ? { type: outcomeAllCurrentChannel.type, label: CHANNEL_TYPE_META[outcomeAllCurrentChannel.type].label }
-                  : undefined
-              }
-              anchorRect={outcomeAllAnchorRect}
-              onApprove={handleOutcomeAllApprove}
-            />
-          );
-        })()}
 
       </div>
     </div>

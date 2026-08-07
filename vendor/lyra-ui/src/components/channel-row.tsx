@@ -5,14 +5,12 @@ import {
   Mail,
   Phone,
   TriangleAlert,
-  User,
-  ArrowUpRight,
+  ArrowRightLeft,
   CircleCheckBig,
   Send,
   FileDown,
   Languages,
   PlayCircle,
-  ListTree,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { tagVariants } from "./tag";
@@ -31,12 +29,10 @@ const WhatsAppIcon = ({ className = "h-3 w-3" }: { className?: string }) => (
   </svg>
 );
 
-/** Person + redirect-arrow composite — no single Lucide icon covers "transfer". */
+/** Lucide's own two-way-arrow glyph for "transfer" — replaces the old
+ *  person + redirect-arrow composite (no single icon covered it before). */
 const ConsultTransferIcon = () => (
-  <span className="relative inline-flex h-4 w-4 items-center justify-center" aria-hidden="true">
-    <User className="h-4 w-4" strokeWidth={1.5} />
-    <ArrowUpRight className="absolute -right-1 -top-1 h-2.5 w-2.5" strokeWidth={2.5} />
-  </span>
+  <ArrowRightLeft className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
 );
 
 /* ── Channel types ── */
@@ -175,32 +171,11 @@ export function buildVoiceMenuItems(onDismiss?: () => void): MenuEntry[] {
   ];
 }
 
-/* Deliberately shorter than `buildDigitalMenuItems`/`buildVoiceMenuItems`
- * above — an `ElevatedChannelRow` (see its own doc comment below) is a
- * summary standing in for *several* channels at once, so per-channel
- * actions that only make sense scoped to one conversation (Send/Download
- * Transcript, Translate Messages) don't belong here, and "Unassign &
- * Dismiss" is deliberately left out too — dismissing one specific channel
- * still happens on that channel's own row/tab elsewhere (e.g. the header's
- * `ChannelTab` menu, which keeps the full per-channel list), not from this
- * collapsed summary. "Consult / Transfer" stays decorative (no `onClick`)
- * for the same reason it is on the two menus above — the real action lives
- * on `InteractionActionsBar`'s own button in the consuming app. */
-export function buildElevatedMenuItems(onOutcomeAll?: () => void): MenuEntry[] {
-  return [
-    { id: "consult-transfer", label: "Consult / Transfer", icon: <ConsultTransferIcon /> },
-    { id: "outcome-all", label: "Outcome All", icon: <CircleCheckBig className="h-4 w-4 text-lyra-status-info-strong" strokeWidth={1.5} />, onClick: onOutcomeAll },
-  ];
-}
-
 /* ── Base row (shared rendering) ── */
 
 interface ChannelRowProps {
   /** Which channel this row is — drives the chip's color via `CHANNEL_ACCENT`
-   *  (identity color, not urgency; see that map's own doc comment). Optional
-   *  so `ElevatedChannelRow` below (a multi-channel summary row with no
-   *  single `ChannelType`/accent color of its own) can render through this
-   *  same base row via `chipClassName` instead. */
+   *  (identity color, not urgency; see that map's own doc comment). */
   channel?: ChannelType;
   icon: React.ReactNode;
   label: string;
@@ -220,9 +195,6 @@ interface ChannelRowProps {
    *  stop the click from also bubbling up to the card's own `onClick`
    *  (selecting the whole card), only the kebab button does that. */
   onSelect?: () => void;
-  /** Overrides the chip's bg/text/border classes instead of deriving them
-   *  from `CHANNEL_ACCENT[channel]` — used by `ElevatedChannelRow` below. */
-  chipClassName?: string;
 }
 
 const ChannelRow: React.FC<ChannelRowProps> = ({
@@ -237,7 +209,6 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
   menuItems,
   showMenu = true,
   onSelect,
-  chipClassName,
 }) => {
   const accent = channel ? CHANNEL_ACCENT[channel] : undefined;
   return (
@@ -251,7 +222,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
     )}
   >
     <div className="flex items-center gap-2">
-      <span className={cn(tagVariants({ shape: "pill" }), chipClassName ?? cn(accent?.bg, accent?.text, accent?.border))}>
+      <span className={cn(tagVariants({ shape: "pill" }), accent?.bg, accent?.text, accent?.border)}>
         <span aria-hidden="true">{icon}</span>
         {label}
       </span>
@@ -357,51 +328,6 @@ const CHANNEL_ROW_COMPONENTS: Record<ChannelType, React.FC<ChannelRowInstancePro
   whatsapp: WhatsAppChannelRow,
   voice: VoiceChannelRow,
 };
-
-/* ── ElevatedChannelRow ──
- * Replaces the full per-channel row list on an `InteractionNavItem` card
- * once it has more than one simultaneously open channel with the same
- * customer — at that point the card is no longer "about" any single
- * channel type, so a neutral pill replaces every channel's own
- * accent-colored chip instead of picking one arbitrarily or stacking every
- * row redundantly. Styled to the "Sofia Martinez-card-selected" Figma
- * reference (Stoker file, node 4348:5824): `fg-active-subtle` background
- * with the bolder `state-border-hover-neutral` border (not the usual
- * hairline `border-subtle`) and `fg-default` text — a stronger neutral than
- * an ordinary chip, since this pill is standing in for what would
- * otherwise be a channel-accent color. `ListTree` (rather than a specific
- * channel icon) reads as "more than one channel" at a glance — matches
- * that Figma node's own "list-tree" layer/icon naming. Sourced from
- * whichever channel is currently "current" for elapsed/preview, same as
- * any other row — this is a summary of that one plus its siblings, not a
- * new data shape of its own. */
-export interface ElevatedChannelRowProps {
-  label: string;
-  elapsed: string;
-  preview?: string;
-  highlighted?: boolean;
-  isFirst?: boolean;
-  /** Opens the "Outcome All" popup in the consuming app — lets the agent
-   *  set status/tags/disposition/summary once and apply that same outcome
-   *  to every channel open on this card, instead of repeating the flow per
-   *  channel. See `buildElevatedMenuItems`'s own doc comment for why this
-   *  row's kebab menu is Consult/Transfer + Outcome All only, no
-   *  Unassign & Dismiss. */
-  onOutcomeAll?: () => void;
-}
-
-const ElevatedChannelRow: React.FC<ElevatedChannelRowProps> = ({ label, elapsed, preview, highlighted, isFirst, onOutcomeAll }) => (
-  <ChannelRow
-    icon={<ListTree className="h-3 w-3" strokeWidth={1.5} />}
-    label={label}
-    elapsed={elapsed}
-    preview={preview}
-    highlighted={highlighted}
-    isFirst={isFirst}
-    chipClassName="bg-lyra-fg-active-subtle text-lyra-fg-default border-lyra-state-border-hover-neutral"
-    menuItems={buildElevatedMenuItems(onOutcomeAll)}
-  />
-);
 
 /** Per-type icon + label — the same choices each `*ChannelRow` wrapper above
  *  already bakes in, exposed here so `ChannelTab` (and any other component
@@ -549,5 +475,4 @@ export {
   CHANNEL_ROW_COMPONENTS,
   CHANNEL_TYPE_META,
   ChannelTab,
-  ElevatedChannelRow,
 };

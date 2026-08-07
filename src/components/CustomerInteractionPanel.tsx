@@ -4,9 +4,6 @@ import {
   Button,
   Popover,
   Menu,
-  TabList,
-  Tab,
-  ChannelTab,
   Tooltip,
   Chip,
   ConversationMessage,
@@ -14,17 +11,16 @@ import {
   Textarea,
   Divider,
   CHANNEL_TYPE_META,
+  KebabMenuButton,
+  buildDigitalMenuItems,
+  buildVoiceMenuItems,
+  ToggleGroup,
   type MenuEntry,
   type ConversationVariant,
   type ChipColor,
-  type InteractionChannel,
   type ChannelType,
 } from "@nicecxone/lyra-ui";
 import {
-  MessageSquare,
-  ScrollText,
-  Clock,
-  Plus,
   User,
   IdCard,
   ChevronDown,
@@ -38,7 +34,7 @@ import {
   PhoneOff,
   AlertTriangle,
   CheckCircle2,
-  ArrowUpRight,
+  ArrowRightLeft,
   ArrowRight,
   Bold,
   Italic,
@@ -253,6 +249,48 @@ export interface CallTranscriptEvent {
   kind: CallTranscriptEventKind;
   label: string;
   timestamp: string;
+}
+
+/** One grouped block of a company-authored call script — e.g. "Greeting",
+ *  "Verify identity", "Resolution", "Closing" — each with the line(s) the
+ *  agent should read (near-)verbatim. Static/read-only content, seeded
+ *  per-assignment same as `callEvents` above; a voice call with no `script`
+ *  simply never shows the Live Transcript/Script toggle (see
+ *  `CustomerInteractionPanel`'s own render below) rather than showing an
+ *  empty or disabled Script option. */
+export interface CallScriptSection {
+  heading: string;
+  lines: string[];
+}
+
+/** Read-only script view — swapped in for `VoiceTranscriptThread` when the
+ *  agent picks "Script" from the Live Transcript/Script toggle. Deliberately
+ *  static (no read-aloud tracking/checkboxes yet) — the goal for now is
+ *  just giving the agent a stable place to find the pre-written lines
+ *  without losing the live transcript underneath (switching back is one
+ *  click away). */
+function CallScriptView({ sections }: { sections: CallScriptSection[] }) {
+  return (
+    <div className="flex flex-col gap-6">
+      {sections.map((section, i) => (
+        <div key={i} className="flex flex-col gap-2">
+          <p className="lyra-body-xs-emphasis uppercase tracking-wide text-lyra-fg-secondary">
+            {section.heading}
+          </p>
+          <div className="flex flex-col gap-2">
+            {section.lines.map((line, j) => (
+              <div
+                key={j}
+                className="rounded-lyra-md border border-lyra-border-subtle bg-lyra-bg-surface-shell px-3.5 py-3"
+              >
+                <p className="lyra-body-md text-lyra-fg-default">{line}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 const CALL_TRANSCRIPT_EVENT_META: Record<CallTranscriptEventKind, { icon: LucideIcon; tone: "default" | "error" | "success" }> = {
@@ -511,6 +549,48 @@ function EmailThread({ messages, customerEmail }: { messages: Message[]; custome
   );
 }
 
+/** Which of the three transcript layouts (voice/email/chat-style) a channel's
+ *  message thread renders as — the same three-way switch the live chat tab
+ *  below (`activeTab === "chat"`) already makes, pulled out so a second,
+ *  read-only context (the Customer Profile panel's Interactions tab) can
+ *  reuse the exact same VoiceTranscriptThread/EmailThread/ConversationMessage
+ *  rendering instead of re-deciding it. No send affordance here — that's
+ *  MessageComposer's job, left to callers that actually need one. */
+export function TranscriptThread({
+  messages,
+  isVoiceCall = false,
+  isEmailChannel = false,
+  callEvents,
+  customerEmail,
+}: {
+  messages: Message[];
+  isVoiceCall?: boolean;
+  isEmailChannel?: boolean;
+  callEvents?: CallTranscriptEvent[];
+  customerEmail?: string;
+}) {
+  if (isVoiceCall) return <VoiceTranscriptThread messages={messages} events={callEvents} />;
+  if (isEmailChannel) return <EmailThread messages={messages} customerEmail={customerEmail} />;
+  return (
+    <>
+      {messages.map((m) => (
+        <ConversationMessage
+          key={m.id}
+          variant={toConversationVariant(m.variant)}
+          avatar={m.variant === "support-agent" ? AGENT_AVATAR : (
+            <MessageAvatar initials={getInitials(m.senderName)} className="bg-lyra-accent-blue-soft text-lyra-accent-blue-strong" />
+          )}
+          senderName={m.senderName}
+          timestamp={m.timestamp}
+          alert={m.alert}
+        >
+          {renderFormattedText(m.text)}
+        </ConversationMessage>
+      ))}
+    </>
+  );
+}
+
 /* ── Escalation status pill (Popover + Menu, mirrors lyra-ui's own
  *  "Menu Popover" story pattern; visual pill is lyra-ui's own Chip
  *  component, wrapped in a plain button for keyboard/focus semantics
@@ -574,7 +654,7 @@ function LeftPanelToggle({ onToggle }: { onToggle?: () => void }) {
         aria-label="Customer Profile"
         className="flex h-8 w-8 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary transition-colors hover:bg-lyra-state-hover active:bg-lyra-state-pressed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus focus-visible:ring-offset-2"
       >
-        <IdCard className="h-[22px] w-[22px]" strokeWidth={1.5} aria-hidden="true" />
+        <IdCard className="h-[25px] w-[25px]" strokeWidth={1.5} aria-hidden="true" />
       </button>
     </Tooltip>
   );
@@ -604,7 +684,7 @@ function AiSparkleIcon({ className }: { className?: string }) {
 
 /** Icons that open a right-side slide-in beside the interaction. Directory
  *  has real content; the rest render a "Design coming" placeholder. */
-export type SlideInDestination = "contacts" | "directory" | "schedule";
+export type SlideInDestination = "contacts" | "directory" | "schedule" | "customWorkspace";
 /** Icons that instead take over the whole content column (no slide-in) —
  *  see the `takeover` prop below. */
 export type FullPageDestination = "settings" | "dashboard";
@@ -612,14 +692,6 @@ export type NavDestination = SlideInDestination | FullPageDestination;
 
 export interface InteractionHeaderProps {
   customerName?: string;
-  activeTab?: "chat" | "history";
-  onTabChange?: (tab: "chat" | "history") => void;
-  /** True when the current interaction's active channel is a voice call —
-   *  swaps the second tab's label/icon from "Chat" (MessageSquare) to
-   *  "Transcript" (ScrollText), since there's no live chat to view on a
-   *  call, only the transcribed conversation. Same flag InteractionActionsBar
-   *  already takes to decide whether to show call controls. */
-  isVoiceCall?: boolean;
   /** Unassigns/dismisses the current interaction — clears the active
    *  interaction entirely so any open slide-in page (e.g. Directory) takes
    *  over the content column. */
@@ -628,14 +700,13 @@ export interface InteractionHeaderProps {
   onPanelToggle?: () => void;
   /** Settings/Dashboard take over the whole content column instead of
    *  sliding in — this hides everything specific to the customer contact
-   *  (the Customer Snapshot toggle, name, History/Chat tabs, add-tab
-   *  button, Customer profile, kebab menu), showing just `takeoverTitle`
-   *  instead. The Contacts/Directory/Schedule/Dashboard nav row that used to
-   *  live here regardless of `takeover` now lives in `AppHeader` instead
-   *  (see AgentNextGenPage.tsx) — it's global navigation, not something
-   *  specific to one interaction, so it reads better as part of the
-   *  always-present app header than duplicated into every content-column
-   *  header state. */
+   *  (the Customer Snapshot toggle, name, Customer profile, kebab menu),
+   *  showing just `takeoverTitle` instead. The Contacts/Directory/Schedule/
+   *  Dashboard nav row that used to live here regardless of `takeover` now
+   *  lives in `AppHeader` instead (see AgentNextGenPage.tsx) — it's global
+   *  navigation, not something specific to one interaction, so it reads
+   *  better as part of the always-present app header than duplicated into
+   *  every content-column header state. */
   takeover?: boolean;
   /** Page title shown when `takeover` is true (e.g. "Settings"/"Control Center")
    *  — takes the same left-aligned <h1> slot the customer name uses
@@ -649,41 +720,24 @@ export interface InteractionHeaderProps {
    *  living in the always-present `AppHeader`. */
   aiPanelOpen?: boolean;
   onAskAiClick?: () => void;
-  /** Every channel currently open on this interaction — rendered as one
-   *  `ChannelTab` each, alongside "Customer History", instead of the single
-   *  fixed Chat/Transcript tab this used to always show. Falls back to that
-   *  old single-tab behavior when omitted/empty, so a caller that hasn't
-   *  been updated to pass this yet (or has a channel-less interaction)
-   *  keeps working unchanged. */
-  channels?: InteractionChannel[];
-  /** Which of `channels` is the one currently shown in the chat/transcript
-   *  pane — keeps this tab bar in lockstep with the matching
-   *  `InteractionNavItem` card's own current-channel state (both driven by
-   *  the same parent state), same pairing lyra-ui's own `ChannelTab` doc
-   *  comment describes. Keyed the same way (`channel.id ?? channel.type`). */
-  currentChannelKey?: string;
-  onChannelSelect?: (key: string) => void;
-  /** "Unassign & Dismiss" from one channel's own tab — ends just that
-   *  channel (see `InteractionNavItem`'s own `onDismissChannel` for the
-   *  matching card-side behavior). Only reachable when more than one
-   *  channel is open; a single-channel tab's dismiss goes through
-   *  `onCloseInteraction` instead, ending the whole interaction. */
-  onDismissChannel?: (channel: InteractionChannel) => void;
-  /** Rendered in the "+" slot next to the channel tabs — e.g. this app's own
-   *  `AddOutboundButton` (NewOutboundPopover.tsx), scoped to whichever
-   *  customer this interaction belongs to. Kept as a generic slot (not a
-   *  dedicated `onAddOutbound`-style prop) so this component has no direct
-   *  dependency on NewOutboundPopover.tsx's/directory.ts's outbound-picker
-   *  types — same reasoning as lyra-ui's own `InteractionNavItem
-   *  .headerAction` slot. */
-  addOutboundAction?: React.ReactNode;
+  /** The active interaction's call/transfer/outcome controls
+   *  (`InteractionActionsBar`), rendered right after the customer name —
+   *  e.g. this app's own `InteractionActionsBar` instance (see
+   *  AgentNextGenPage.tsx). Kept as a generic slot (not a dedicated prop
+   *  per control) so this component has no direct dependency on
+   *  `CustomerInteractionPanel`'s own `InteractionActionsBar` type, same
+   *  reasoning `headerAction`/`addOutboundAction` used elsewhere in this
+   *  app. Used to live in `AppHeader`'s `center` slot instead (see that
+   *  component's own doc comment in app-header.tsx for the full history) so
+   *  it stayed reachable even when this header wasn't on screen — moved
+   *  back here, next to the customer name, per an explicit follow-up; that
+   *  always-reachable property is gone now, this only shows while this
+   *  header itself is on screen. */
+  actionsBar?: React.ReactNode;
 }
 
 export function InteractionHeader({
   customerName,
-  activeTab,
-  onTabChange,
-  isVoiceCall = false,
   onCloseInteraction,
   panelToggle,
   onPanelToggle,
@@ -691,120 +745,54 @@ export function InteractionHeader({
   takeoverTitle,
   aiPanelOpen,
   onAskAiClick,
-  channels,
-  currentChannelKey,
-  onChannelSelect,
-  onDismissChannel,
-  addOutboundAction,
+  actionsBar,
 }: InteractionHeaderProps) {
   return (
-    <>
-      {/* Row 1 — customer identity + global actions. Tabs used to live
-       *  here too (see the row-2 block below) — pulled onto their own row
-       *  since this one only ever really had room to show them squeezed. */}
-      <div className="flex items-center gap-2 border-b border-lyra-border-subtle px-6 py-4">
-        {takeover && takeoverTitle && (
-          <h1 className="lyra-heading-lg shrink-0 pr-2 text-lyra-fg-default">{takeoverTitle}</h1>
-        )}
-
-        {!takeover && (
-          <>
-            {panelToggle === "left" && (
-              <>
-                <LeftPanelToggle onToggle={onPanelToggle} />
-                <div className="h-5 w-px bg-lyra-border-subtle" />
-              </>
-            )}
-
-            <h1 className="lyra-heading-lg shrink-0 pr-2 text-lyra-fg-default">{customerName || "Customer"}</h1>
-
-            <span className="flex-1" />
-
-            {/* Moved here from AppHeader's own action row — see
-             *  `aiPanelOpen`'s doc comment above for why. A real
-             *  icon+text Button (not the icon-only/Tooltip treatment the
-             *  other header actions use) so it reads as its own inline
-             *  action rather than blending into the icon row. */}
-            <Button
-              variant="outline"
-              size="md"
-              aria-expanded={aiPanelOpen}
-              onClick={onAskAiClick}
-              className={cn(aiPanelOpen && "bg-lyra-state-hover")}
-            >
-              <AiSparkleIcon className="h-4 w-4" />
-              Ask AI
-            </Button>
-          </>
-        )}
-      </div>
-
-      {/* Row 2 — Customer History + one tab per open channel, plus "Add
-       *  Outbound" immediately after the last tab (not pinned to the row's
-       *  far right — that only happened because `TabList` previously took
-       *  `flex-1` to stay full-width). Deliberately NOT `lyra-channel-tab
-       *  -list-wrap` here either: that class only stays safe (see row 1's
-       *  own history) when this element's width comes from `flex-1`
-       *  (flex-basis 0%) rather than its own content, and content-based
-       *  sizing is exactly what "sit right next to the last tab" needs —
-       *  losing the address/label auto-collapse at narrow widths is an
-       *  acceptable trade for that. The trailing spacer soaks up whatever's
-       *  left so the row's height/border still span full width. */}
-      {!takeover && (
-        <div className="flex items-center gap-2 border-b border-lyra-border-subtle px-6 pb-2">
-          <TabList className="border-b-0">
-            <Tab active={activeTab === "history"} onClick={() => onTabChange?.("history")} icon={<Clock className="h-4 w-4" strokeWidth={1.5} />}>
-              Customer History
-            </Tab>
-            {channels && channels.length > 0 ? (
-              channels.map((ch) => {
-                const key = ch.id ?? ch.type;
-                return (
-                  <ChannelTab
-                    key={key}
-                    type={ch.type}
-                    active={activeTab === "chat" && currentChannelKey === key}
-                    onClick={() => {
-                      onTabChange?.("chat");
-                      onChannelSelect?.(key);
-                    }}
-                    onDismiss={() => {
-                      if (channels.length > 1) onDismissChannel?.(ch);
-                      else onCloseInteraction?.();
-                    }}
-                  />
-                );
-              })
-            ) : (
-              // Fallback for a caller that hasn't been updated to pass
-              // `channels` yet — the single fixed tab this always showed
-              // before.
-              <Tab
-                active={activeTab === "chat"}
-                onClick={() => onTabChange?.("chat")}
-                icon={
-                  isVoiceCall
-                    ? <ScrollText className="h-4 w-4" strokeWidth={1.5} />
-                    : <MessageSquare className="h-4 w-4" strokeWidth={1.5} />
-                }
-              >
-                {isVoiceCall ? "Transcript" : "Chat"}
-              </Tab>
-            )}
-          </TabList>
-          {addOutboundAction ?? (
-            <button
-              type="button"
-              aria-label="Add tab"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary transition-colors hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus"
-            >
-              <Plus className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
-            </button>
-          )}
-          <span className="flex-1" />
-        </div>
+    <div className="flex items-center gap-2 border-b border-lyra-border-subtle px-6 py-4">
+      {takeover && takeoverTitle && (
+        <h1 className="lyra-heading-lg shrink-0 pr-2 text-lyra-fg-default">{takeoverTitle}</h1>
       )}
-    </>
+
+      {!takeover && (
+        <>
+          <h1 className="lyra-heading-lg shrink-0 pr-2 text-lyra-fg-default">{customerName || "Customer"}</h1>
+
+          {actionsBar}
+
+          <span className="flex-1" />
+
+          {/* Customer Profile toggle — moved here (next to Ask AI) from
+           *  the row's far left, now that the panel it opens docks to the
+           *  right instead of the left (see AgentNextGenPage.tsx). Still
+           *  the same `LeftPanelToggle`/`onPanelToggle` plumbing under the
+           *  hood — just relocated, not renamed, since "Customer Profile"
+           *  (the tooltip/aria-label) never said which side it opened on
+           *  anyway. */}
+          {panelToggle === "left" && (
+            <>
+              <LeftPanelToggle onToggle={onPanelToggle} />
+              <div className="h-5 w-px bg-lyra-border-subtle" />
+            </>
+          )}
+
+          {/* Moved here from AppHeader's own action row — see
+           *  `aiPanelOpen`'s doc comment above for why. A real
+           *  icon+text Button (not the icon-only/Tooltip treatment the
+           *  other header actions use) so it reads as its own inline
+           *  action rather than blending into the icon row. */}
+          <Button
+            variant="outline"
+            size="md"
+            aria-expanded={aiPanelOpen}
+            onClick={onAskAiClick}
+            className={cn(aiPanelOpen && "bg-lyra-state-hover")}
+          >
+            <AiSparkleIcon className="h-4 w-4" />
+            Ask AI
+          </Button>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -869,31 +857,25 @@ export function InteractionInfoBar({ subject, caseId, escalationStatus, onEscala
   );
 }
 
-/** Person + redirect-arrow composite — no single Lucide icon covers
- *  "transfer". Not a lyra-ui export (it's a private helper local to
- *  channel-row.tsx there), so mirrored here rather than imported. Exported
- *  so ConsultTransferPopover.tsx (the "Transfer" button's popup content)
- *  can reuse this exact glyph for its own per-row "Transfer" actions
- *  instead of a third copy. */
+/** Lucide's own two-way-arrow glyph for "transfer" — replaces the old
+ *  person + redirect-arrow composite (no single icon covered it before).
+ *  Mirrors the same swap in channel-row.tsx's own (private) copy of this
+ *  icon. Exported so ConsultTransferPopover.tsx (the "Transfer" button's
+ *  popup content) can reuse this exact glyph for its own per-row "Transfer"
+ *  actions instead of a second copy. */
 export function ConsultTransferIcon({ strokeWidth = 1.5 }: { strokeWidth?: number }) {
-  return (
-    <span className="relative inline-flex h-4 w-4 items-center justify-center" aria-hidden="true">
-      <User className="h-4 w-4" strokeWidth={strokeWidth} />
-      <ArrowUpRight className="absolute -right-1 -top-1 h-2.5 w-2.5" strokeWidth={strokeWidth + 1} />
-    </span>
-  );
+  return <ArrowRightLeft className="h-4 w-4" strokeWidth={strokeWidth} aria-hidden="true" />;
 }
 
 /** AudioLines with a diagonal slash — Lucide has no ready "off" variant for
- *  it, so composite one the same way `ConsultTransferIcon` above composites
- *  User + ArrowUpRight: the base icon plus an overlaid line, drawn
+ *  it, so composite one: the base icon plus an overlaid line, drawn
  *  corner-to-corner the same way Lucide's own `-Off` icons (e.g. MicOff)
  *  draw their slash. */
 function MutedAudioLinesIcon({ strokeWidth = 2 }: { strokeWidth?: number }) {
   return (
-    <span className="relative inline-flex h-4 w-4 items-center justify-center" aria-hidden="true">
-      <AudioLines className="h-4 w-4" strokeWidth={strokeWidth} />
-      <svg className="absolute inset-0 h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round">
+    <span className="relative inline-flex h-5 w-5 items-center justify-center" aria-hidden="true">
+      <AudioLines className="h-5 w-5" strokeWidth={strokeWidth} />
+      <svg className="absolute inset-0 h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round">
         <line x1="2" x2="22" y1="2" y2="22" />
       </svg>
     </span>
@@ -901,11 +883,12 @@ function MutedAudioLinesIcon({ strokeWidth = 2 }: { strokeWidth?: number }) {
 }
 
 /* ── InteractionActionsBar ──
- * Sits directly under InteractionInfoBar, left-aligned: Transfer/Outcome
- * icon buttons, same treatment as the assignment card's own Transfer/Outcome
- * buttons (interaction-nav-item.tsx). No longer a floating overlay — a plain
- * in-flow row. For a voice call, the same floating card expands to include
- * call controls (hold, mute, etc).
+ * Rendered in its own row above InteractionHeader's customer-name row (via
+ * that component's `actionsBar` slot — see its own doc comment for the
+ * layout history) — Transfer/Outcome icon buttons, same treatment as the
+ * assignment card's own Transfer/Outcome buttons (interaction-nav-item.tsx).
+ * For a voice call, the same pill expands to include call controls (hold,
+ * mute, etc) too.
  * "Outcome" used to be an inert icon button (no popup) — now opens the
  * wrap-up form in OutcomePanel.tsx, hence the added `customerName` prop
  * (seeds the panel's title and AI-suggested summary). Same reasoning for
@@ -922,19 +905,20 @@ export interface InteractionActionsBarProps {
   customerName?: string;
   issueSummary?: string;
   caseId?: string;
-  /** This interaction's currently-active channel, plus every channel open
-   *  on the card — passed straight through to `OutcomeButton`'s own
-   *  `elevated` prop (only when there's more than one open channel; see
-   *  that prop's own doc comment for why) so its "Outcome All" toggle knows
-   *  both where to start and what "all" expands out to. */
+  /** This interaction's currently-active channel — drives the leading
+   *  channel-type segment's icon/label/kebab below. */
   currentChannelType?: ChannelType;
-  allChannels?: { type: ChannelType; label: string }[];
-  /** Controlled, lifted all the way up to `AgentNextGenPage` so it can
-   *  enforce "only one Outcome popup visible at a time" against
-   *  `OutcomeAllPanel` — opening this one closes that one and vice versa.
-   *  See `OutcomeButton`'s own `open`/`onOpenChange` doc comment. */
+  /** Controlled (lifted to `AgentNextGenPage`) rather than left as
+   *  `OutcomeButton`'s own internal state — see that component's own
+   *  `open`/`onOpenChange` doc comment. */
   outcomeOpen: boolean;
   onOutcomeOpenChange: (open: boolean) => void;
+  /** Wired to the leading channel-type segment's kebab "Unassign & Dismiss"
+   *  — the consumer decides (same split `InteractionNavItem`'s own
+   *  `onDismiss`/`onDismissChannel` props use) whether that should end just
+   *  `currentChannelType`'s channel or the whole interaction, based on how
+   *  many channels are open. Omit to leave that menu item inert. */
+  onDismissCurrentChannel?: () => void;
 }
 
 export function InteractionActionsBar({
@@ -943,51 +927,68 @@ export function InteractionActionsBar({
   issueSummary,
   caseId,
   currentChannelType,
-  allChannels = [],
   outcomeOpen,
   onOutcomeOpenChange,
+  onDismissCurrentChannel,
 }: InteractionActionsBarProps) {
   return (
-    <div className="px-6 py-2">
-      <div className="inline-flex items-center gap-1 rounded-lyra-lg border-[1.5px] border-lyra-border-medium bg-lyra-bg-surface-overlay p-1 shadow-md">
-        {isVoiceCall && (
-          <>
-            <ActionIconButton size="sm" title="Hold">
-              <Pause className="h-4 w-4" strokeWidth={2} />
-            </ActionIconButton>
-            <ActionIconButton size="sm" title="Mute">
-              <MicOff className="h-4 w-4" strokeWidth={2} />
-            </ActionIconButton>
-            <ActionIconButton size="sm" title="Mute Speaker">
-              <MutedAudioLinesIcon strokeWidth={2} />
-            </ActionIconButton>
-            <ActionIconButton size="sm" title="Record">
-              <Disc className="h-4 w-4" strokeWidth={2} />
-            </ActionIconButton>
-            <ActionIconButton size="sm" title="Dialpad">
-              <Grip className="h-4 w-4" strokeWidth={2} />
-            </ActionIconButton>
-            <ActionIconButton size="sm" title="Hang Up">
-              <PhoneOff className="h-4 w-4 text-lyra-status-critical-strong" strokeWidth={2} />
-            </ActionIconButton>
-            <div className="mx-0.5 h-5 w-px bg-lyra-border-subtle" />
-          </>
-        )}
-        <ConsultTransferButton customerName={customerName} issueSummary={issueSummary} caseId={caseId} />
-        <OutcomeButton
-          customerName={customerName ?? "this customer"}
-          elevated={
-            allChannels.length > 1 && currentChannelType
-              ? {
-                  currentChannel: { type: currentChannelType, label: CHANNEL_TYPE_META[currentChannelType].label },
-                  allChannels,
-                }
-              : undefined
-          }
-          open={outcomeOpen}
-          onOpenChange={onOutcomeOpenChange}
-        />
-      </div>
+    <div className="inline-flex items-center gap-1 rounded-lyra-lg border border-lyra-border-subtle bg-lyra-bg-surface-container-subtle p-1">
+      {/* Channel-type indicator — replaces the old `ChannelTab` bar that used
+       *  to live in `InteractionHeader`'s Row 1 (see that component's own
+       *  doc comment). Swaps icon/label as the agent clicks a different
+       *  channel row on the assignment card (`currentChannelType` follows
+       *  the same `currentChannelKey` state that drives the card's
+       *  highlighted row) — this is now the *only* place Row 1 shows which
+       *  channel is on screen. The kebab carries the same default per-type
+       *  menu (`buildDigitalMenuItems`/`buildVoiceMenuItems`) each channel
+       *  row on the card already uses, so "Unassign & Dismiss" etc. stay
+       *  reachable from here too, not just from the card. */}
+      {currentChannelType && (
+        <>
+          <span className="flex items-center gap-1.5 px-2 text-lyra-fg-default lyra-body-sm-emphasis">
+            <span className="shrink-0" aria-hidden="true">{CHANNEL_TYPE_META[currentChannelType].icon}</span>
+            {CHANNEL_TYPE_META[currentChannelType].label}
+          </span>
+          <KebabMenuButton
+            items={
+              currentChannelType === "voice"
+                ? buildVoiceMenuItems(onDismissCurrentChannel)
+                : buildDigitalMenuItems(onDismissCurrentChannel)
+            }
+            ariaLabel={`More options for ${CHANNEL_TYPE_META[currentChannelType].label}`}
+          />
+          <div className="mx-0.5 h-6 w-px bg-lyra-border-subtle" />
+        </>
+      )}
+      {isVoiceCall && (
+        <>
+          <ActionIconButton size="default" title="Hold">
+            <Pause className="h-5 w-5" strokeWidth={2} />
+          </ActionIconButton>
+          <ActionIconButton size="default" title="Mute">
+            <MicOff className="h-5 w-5" strokeWidth={2} />
+          </ActionIconButton>
+          <ActionIconButton size="default" title="Mute Speaker">
+            <MutedAudioLinesIcon strokeWidth={2} />
+          </ActionIconButton>
+          <ActionIconButton size="default" title="Record">
+            <Disc className="h-5 w-5" strokeWidth={2} />
+          </ActionIconButton>
+          <ActionIconButton size="default" title="Dialpad">
+            <Grip className="h-5 w-5" strokeWidth={2} />
+          </ActionIconButton>
+          <ActionIconButton size="default" title="Hang Up">
+            <PhoneOff className="h-5 w-5 text-lyra-status-critical-strong" strokeWidth={2} />
+          </ActionIconButton>
+          <div className="mx-0.5 h-6 w-px bg-lyra-border-subtle" />
+        </>
+      )}
+      <ConsultTransferButton customerName={customerName} issueSummary={issueSummary} caseId={caseId} />
+      <OutcomeButton
+        customerName={customerName ?? "this customer"}
+        open={outcomeOpen}
+        onOpenChange={onOutcomeOpenChange}
+      />
     </div>
   );
 }
@@ -1366,13 +1367,15 @@ function MessageComposer({
 }
 
 /* ── CustomerInteractionPanel ──
- * The body below InteractionHeader: action bar + message thread (or a
- * Customer History placeholder), driven entirely by props — the active
- * assignment's data lives in AgentNextGenPage so switching the selected
- * assignment swaps this panel's content. */
+ * The body below InteractionHeader: action bar + message thread, driven
+ * entirely by props — the active assignment's data lives in
+ * AgentNextGenPage so switching the selected assignment swaps this panel's
+ * content. Used to also have a "Customer History" placeholder view here
+ * (toggled by an `activeTab` prop) — removed along with InteractionHeader's
+ * own Customer History tab, since the Customer Profile panel's Interactions
+ * tab covers that now and this one never had real content behind it. */
 
 export interface CustomerInteractionPanelProps {
-  activeTab: "chat" | "history";
   messages: Message[];
   /** Same flag InteractionHeader takes — swaps the date stamp's caption
    *  from "Today" to "Today · Call Transcript" AND swaps the thread's own
@@ -1385,6 +1388,14 @@ export interface CustomerInteractionPanelProps {
   /** Hold/resume/mute/etc. moments interleaved into the voice transcript.
    *  Ignored when `isVoiceCall` is false. */
   callEvents?: CallTranscriptEvent[];
+  /** Company-authored script for this call — when present (and
+   *  `isVoiceCall`), shows a "Live Transcript"/"Script" `ToggleGroup` above
+   *  the thread so the agent can flip to the pre-written lines without
+   *  losing their place (switching back to Live Transcript is one click).
+   *  Omitted entirely (not just empty) hides the toggle — most calls have
+   *  no script, so there's nothing to choose between. See `CallScriptView`
+   *  above for the read-only rendering. */
+  script?: CallScriptSection[];
   /** Appends a new outgoing message — omitted (rather than defaulted to a
    *  no-op) hides the composer entirely, e.g. for a read-only view. Voice
    *  calls never show a composer regardless of this prop (see
@@ -1409,62 +1420,74 @@ export interface CustomerInteractionPanelProps {
 }
 
 export function CustomerInteractionPanel({
-  activeTab,
   messages,
   isVoiceCall = false,
   callEvents,
+  script,
   onSendMessage,
   sendOnEnter = true,
   isEmailChannel = false,
   toAddress,
 }: CustomerInteractionPanelProps) {
+  const hasScript = isVoiceCall && Boolean(script?.length);
+  const [voiceView, setVoiceView] = useState<"live" | "script">("live");
+  // CustomerInteractionPanel isn't remounted when the active assignment
+  // changes (no `key` at its call site — see AgentNextGenPage.tsx), so this
+  // local view choice would otherwise leak from one call into the next.
+  // `messages` is a fresh array per assignment, so it doubles as the "which
+  // call is this" signal without needing a dedicated id prop just for this.
+  useEffect(() => {
+    setVoiceView("live");
+  }, [messages]);
+
   return (
     <div className="flex flex-1 flex-col min-w-0 overflow-hidden bg-lyra-bg-surface-base">
       {/* ── Message thread ── */}
-      {activeTab === "chat" ? (
-        <>
-          <div className="flex-1 overflow-y-auto px-6 py-6">
-            <div className="mx-auto flex max-w-3xl flex-col gap-6">
+      <div className="flex-1 overflow-y-auto px-6 py-6">
+        <div className="mx-auto flex max-w-3xl flex-col gap-6">
+          {hasScript && (
+            <div className="flex justify-end">
+              <ToggleGroup
+                items={[
+                  { value: "live", label: "Live Transcript" },
+                  { value: "script", label: "Script" },
+                ]}
+                value={voiceView}
+                // ToggleGroup's own single-select mode deselects (empty
+                // string) on re-clicking the already-active item — ignored
+                // here since this is meant to read as a true segmented
+                // control, always exactly one of the two selected.
+                onValueChange={(v) => v && setVoiceView(v as "live" | "script")}
+              />
+            </div>
+          )}
+          {hasScript && voiceView === "script" ? (
+            <CallScriptView sections={script!} />
+          ) : (
+            <>
               {/* Email skips this — each row already carries its own
                *  timestamp (see EmailThread), so a "Today" divider above the
                *  whole thread would just be redundant, not something a real
                *  inbox thread shows either. */}
               {!isEmailChannel && <ConversationDateStamp label={isVoiceCall ? "Today · Call Transcript" : "Today"} />}
-              {isVoiceCall ? (
-                <VoiceTranscriptThread messages={messages} events={callEvents} />
-              ) : isEmailChannel ? (
-                <EmailThread messages={messages} customerEmail={toAddress} />
-              ) : (
-                messages.map((m) => (
-                  <ConversationMessage
-                    key={m.id}
-                    variant={toConversationVariant(m.variant)}
-                    avatar={m.variant === "support-agent" ? AGENT_AVATAR : (
-                      <MessageAvatar initials={getInitials(m.senderName)} className="bg-lyra-accent-blue-soft text-lyra-accent-blue-strong" />
-                    )}
-                    senderName={m.senderName}
-                    timestamp={m.timestamp}
-                    alert={m.alert}
-                  >
-                    {renderFormattedText(m.text)}
-                  </ConversationMessage>
-                ))
-              )}
-            </div>
-          </div>
-          {!isVoiceCall && onSendMessage && (
-            <MessageComposer
-              onSend={onSendMessage}
-              sendOnEnter={sendOnEnter}
-              isEmailChannel={isEmailChannel}
-              defaultTo={toAddress}
-            />
+              <TranscriptThread
+                messages={messages}
+                isVoiceCall={isVoiceCall}
+                isEmailChannel={isEmailChannel}
+                callEvents={callEvents}
+                customerEmail={toAddress}
+              />
+            </>
           )}
-        </>
-      ) : (
-        <div className="flex flex-1 items-center justify-center text-lyra-fg-secondary lyra-body-md">
-          Customer history isn't wired up yet.
         </div>
+      </div>
+      {!isVoiceCall && onSendMessage && (
+        <MessageComposer
+          onSend={onSendMessage}
+          sendOnEnter={sendOnEnter}
+          isEmailChannel={isEmailChannel}
+          defaultTo={toAddress}
+        />
       )}
     </div>
   );

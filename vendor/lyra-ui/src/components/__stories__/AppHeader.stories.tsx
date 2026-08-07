@@ -261,6 +261,67 @@ export const AgentNextGen: Story = {
   },
 };
 
+/* ── With Center Content ──
+ * `center` is a generic slot between `appName` and `actions` — added for a
+ * consuming app's own contextual toolbar (e.g. active-call controls) that
+ * needs to stay visible in the always-present header rather than living
+ * inside page content that can scroll/navigate away. It renders left-
+ * aligned right after `appName` by default; a consumer that needs it lined
+ * up with something below the header at a fixed offset (e.g. a left nav
+ * rail's content column, as `agent-next-gen-v1` does) positions its own
+ * content `absolute` from the header's own `relative` root (see `left`
+ * below) rather than using `marginLeft` — `marginLeft` would add space
+ * *after* wherever `center` naturally sits (right after `appName`'s own
+ * rendered width), so it compounds with `appName`'s width instead of
+ * measuring from the header's actual left edge. This story fakes a 256px
+ * nav rail via a plain colored block to demonstrate the alignment, the same
+ * idea `agent-next-gen-v1`'s real `LeftNav` width drives in practice. */
+
+export const WithCenterContent: Story = {
+  name: "With Center Content",
+  render: () => (
+    <>
+      <AppHeader
+        appName={<AppNameWithMenu name="Agent Workspace Premium" alt="Desk" />}
+        center={
+          // 256 (the fake nav rail below) minus 8 (AppHeader's own `pl-2`
+          // left inset) — a real consumer does this same subtraction
+          // against whatever left-inset its own header wrapper has.
+          <div style={{ position: "absolute", left: 256 - 8, top: "50%", transform: "translateY(-50%)" }} className="inline-flex items-center gap-1 rounded-lyra-lg border border-lyra-border-subtle bg-lyra-bg-surface-container-subtle p-1">
+            <ActionIconButton size="sm" title="Hold">
+              <CircleHelp className="h-4 w-4" strokeWidth={2} />
+            </ActionIconButton>
+            <ActionIconButton size="sm" title="Mute">
+              <Bell className="h-4 w-4" strokeWidth={2} />
+            </ActionIconButton>
+            <div className="mx-0.5 h-5 w-px bg-lyra-border-subtle" />
+            <ActionIconButton size="sm" title="Transfer">
+              <Search className="h-4 w-4" strokeWidth={2} />
+            </ActionIconButton>
+          </div>
+        }
+        actions={
+          <>
+            <ActionIconButton size="xl" title="Notifications" badge={4}>
+              <Bell className="h-5 w-5" strokeWidth={1.5} />
+            </ActionIconButton>
+            <ProfileMenu
+              initials="JS"
+              avatarColor="#5d6a79"
+              groups={defaultProfileMenuGroups}
+              className="ml-1"
+            />
+          </>
+        }
+      />
+      <div className="flex">
+        <div style={{ width: 256 }} className="h-24 shrink-0 bg-lyra-bg-surface-shell" aria-hidden="true" />
+        <div className="flex-1 border-l-2 border-dashed border-lyra-border-active" aria-hidden="true" />
+      </div>
+    </>
+  ),
+};
+
 /* ── AppName Only ── */
 
 export const AppNameOnly: Story = {

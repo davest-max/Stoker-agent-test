@@ -75,6 +75,8 @@ export {
   CHANNEL_TYPE_META,
   CHANNEL_ACCENT,
   ChannelTab,
+  buildDigitalMenuItems,
+  buildVoiceMenuItems,
 } from "./components/channel-row";
 export type { ChannelRowInstanceProps, ChannelTabProps } from "./components/channel-row";
 export { ActionIconButton, ActionAvatarButton, actionIconButtonVariants } from "./components/actions";

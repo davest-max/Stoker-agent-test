@@ -44,6 +44,17 @@ export interface SlideInPageProps {
   onWidthChange?: (width: number) => void;
   onResizeStateChange?: (isResizing: boolean) => void;
   onInteract?: () => void;
+  /**
+   * Extra header action button(s) — e.g. a "Maximize"/"Minimize" toggle
+   * that switches this same destination between `variant="panel"` and
+   * `variant="full"` at the consumer's own discretion (this component has
+   * no opinion on maximize/minimize itself, just a slot for the button).
+   * Panel variant: threaded to `DraggablePanel`'s own `headerActions` (sits
+   * before its dock/float toggle). Full variant: threaded to
+   * `ContainerHeader`'s `actions` directly (there's no dock toggle to sit
+   * before there).
+   */
+  headerActions?: React.ReactNode;
   children: React.ReactNode;
 }
 
@@ -70,6 +81,7 @@ export const SlideInPage = forwardRef<HTMLDivElement, SlideInPageProps>(function
     onWidthChange,
     onResizeStateChange,
     onInteract,
+    headerActions,
     children,
   },
   ref
@@ -89,6 +101,7 @@ export const SlideInPage = forwardRef<HTMLDivElement, SlideInPageProps>(function
         onWidthChange={onWidthChange}
         onResizeStateChange={onResizeStateChange}
         onInteract={onInteract}
+        headerActions={headerActions}
         className="h-full"
       >
         {children}
@@ -100,7 +113,7 @@ export const SlideInPage = forwardRef<HTMLDivElement, SlideInPageProps>(function
 
   return (
     <div className="flex flex-1 flex-col min-w-0 overflow-hidden bg-lyra-bg-surface-base">
-      <ContainerHeader title={title} icon={icon} onClose={onClose} />
+      <ContainerHeader title={title} icon={icon} actions={headerActions} onClose={onClose} />
       <div className="flex flex-1 overflow-hidden">{children}</div>
     </div>
   );

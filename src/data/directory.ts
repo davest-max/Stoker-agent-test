@@ -1,4 +1,5 @@
 import { CHANNEL_ACCENT, type ChannelType, type CreateNewOutboundContact, type CreateNewOutboundGroup } from "@nicecxone/lyra-ui";
+import type { Message, CallTranscriptEvent } from "@/components/CustomerInteractionPanel";
 
 // `CHANNEL_ACCENT` used to be stood in here as a placeholder — it's now a
 // real `@nicecxone/lyra-ui` export (added alongside the channel-colored
@@ -20,29 +21,96 @@ export interface CustomerNote {
   text: string;
 }
 
+/** One past, closed interaction — same shape `lastInteraction` below already
+ *  uses for its single most-recent entry, just plural. Backs both the
+ *  Customer Profile panel's "History" tab (a plain chronological list) and
+ *  its "Interactions" tab (the same records, grouped by channel instead —
+ *  see CustomerSnapshotPanel.tsx's own doc comment on why these two tabs
+ *  intentionally share one data source rather than needing two). */
+export interface CustomerInteractionHistoryEntry {
+  date: string;
+  channel: ChannelType;
+  summary: string;
+  caseId?: string;
+  handledBy?: string;
+  outcome?: string;
+  /** The actual conversation behind `summary` — lets the Customer Profile
+   *  panel's Interactions tab expand a past interaction into its real
+   *  chat/email/voice transcript instead of just the one-line recap, using
+   *  the exact same `TranscriptThread` renderer the live interaction panel
+   *  does (see CustomerInteractionPanel.tsx). Optional: an entry with no
+   *  `transcript` still shows in History/Interactions, just without
+   *  anything to expand into. `callEvents` only ever applies to a `channel:
+   *  "voice"` entry, same as `AssignmentChannel.callEvents` in
+   *  AgentNextGenPage.tsx. */
+  transcript?: {
+    messages: Message[];
+    callEvents?: CallTranscriptEvent[];
+  };
+}
+
+/** A support ticket on this customer's record — a new concept this app
+ *  hasn't modeled before (unlike history/notes, there's no existing ticket
+ *  system anywhere else to reuse), so this is placeholder seed data rather
+ *  than derived from something already tracked. */
+export interface CustomerTicket {
+  id: string;
+  subject: string;
+  status: "Open" | "Pending" | "Resolved";
+  caseId: string;
+  date: string;
+}
+
 export interface DirectoryCustomer extends CreateNewOutboundContact {
-  /** Year the customer relationship started — shown as "Customer since {year}". */
+  /** Year the customer relationship started — one line item among the
+   *  Overview tab's CRM-style field list below (company/address/language/
+   *  timezone/accountOwner/accountStatus), not its own separate caption
+   *  the way it used to render. */
   customerSince?: string;
   tier?: "VIP" | "Standard";
   /** Total interactions on record — a quick sense of how often they reach out. */
   totalInteractions?: number;
-  /** The channel they contact support on most often. */
-  preferredChannel?: ChannelType;
-  /** Short (1-2 sentence) freeform blurb — general behavior/preferences an
-   *  agent should know at a glance. */
-  about?: string;
+  /** Full mailing address on file — one of the "typical CRM contact card"
+   *  fields (Salesforce Contact/Account, etc.) the Overview tab now
+   *  surfaces. A single string (street, city, state, zip) rather than a
+   *  structured address object — nothing else in this app needs to parse
+   *  or edit the pieces individually. */
+  address?: string;
+  /** Company/account name — populated for a contact that reads as
+   *  business-related (e.g. has a work email domain); left blank for a
+   *  purely personal account, same as a real CRM contact card shows
+   *  nothing here rather than a placeholder. */
+  company?: string;
+  /** Preferred language — standard CRM contact field, shown alongside
+   *  `timezone` below. */
+  language?: string;
+  /** Display string (e.g. "America/Chicago (CST)") — shown as-is next to
+   *  `language`, never parsed. */
+  timezone?: string;
+  /** Internal rep this account is assigned to — distinct from `handledBy`
+   *  on a `CustomerInteractionHistoryEntry` (whoever worked one specific
+   *  past interaction); this is the account-level owner, the same
+   *  "assigned agent" concept a Salesforce Account/Contact carries. */
+  accountOwner?: string;
+  /** Simple CRM-style account status pill. */
+  accountStatus?: "Active" | "Inactive";
   /** Most recent interaction BEFORE whichever one is currently open — a
-   *  callback for context, not a recap of the live conversation. */
-  lastInteraction?: {
-    date: string;
-    channel: ChannelType;
-    summary: string;
-    caseId?: string;
-    handledBy?: string;
-    outcome?: string;
-  };
+   *  callback for context, not a recap of the live conversation. Shown on
+   *  the Customer Profile panel's "Overview" tab specifically — the
+   *  History/Interactions tabs use `history` below instead, which is the
+   *  fuller list this is itself drawn from (typically `history[0]`). */
+  lastInteraction?: CustomerInteractionHistoryEntry;
+  /** Full past-interaction list — "History"/"Interactions" tabs. Optional:
+   *  a customer with only `lastInteraction` and no `history` array just
+   *  shows that one entry and nothing more (e.g. a newer customer). */
+  history?: CustomerInteractionHistoryEntry[];
+  /** "Tickets" tab — see `CustomerTicket`'s own doc comment. */
+  tickets?: CustomerTicket[];
   /** Seed notes — copied into AgentNextGenPage's own live state on mount so
-   *  adding a note doesn't mutate this module-level constant. */
+   *  adding a note doesn't mutate this module-level constant. Newest-first
+   *  (see `handleAddCustomerNote`'s prepend) — the Overview tab surfaces
+   *  `notes[0]` under "Latest Note" as the closest thing this app has to an
+   *  AI-generated customer summary, rather than a separate field. */
   notes?: CustomerNote[];
 }
 
@@ -87,8 +155,12 @@ export const DIRECTORY_CUSTOMERS: DirectoryCustomer[] = [
     customerSince: "2022",
     tier: "VIP",
     totalInteractions: 14,
-    preferredChannel: "chat",
-    about: "Long-time customer who reaches out several times a year, almost always from her phone. Appreciates clear, step-by-step troubleshooting and quick follow-up.",
+    address: "482 Willow Creek Dr, Austin, TX 78704",
+    company: "Northstar Co.",
+    language: "English",
+    timezone: "America/Chicago (CST)",
+    accountOwner: "Amara Okafor",
+    accountStatus: "Active",
     lastInteraction: {
       date: "3 weeks ago",
       channel: "email",
@@ -97,6 +169,64 @@ export const DIRECTORY_CUSTOMERS: DirectoryCustomer[] = [
       handledBy: "Amara Okafor",
       outcome: "Resolved",
     },
+    history: [
+      {
+        date: "3 weeks ago",
+        channel: "email",
+        summary: "Asked about upgrading her plan to the Pro tier for additional storage. Walked her through the upgrade flow and confirmed the new billing amount.",
+        caseId: "CASE-47821",
+        handledBy: "Amara Okafor",
+        outcome: "Resolved",
+        transcript: {
+          messages: [
+            { id: "m1", variant: "customer", senderName: "Sofia Martinez", text: "Hi, I'd like to upgrade to the Pro tier for more storage. Can you tell me the cost difference?", timestamp: "3 weeks ago, 9:12 AM" },
+            { id: "m2", variant: "support-agent", senderName: "Amara Okafor", text: "Hi Sofia, happy to help! Pro adds 500GB and runs $12/mo more than your current plan. Want me to apply the upgrade now?", timestamp: "3 weeks ago, 9:47 AM" },
+            { id: "m3", variant: "customer", senderName: "Sofia Martinez", text: "Yes please, that works for me.", timestamp: "3 weeks ago, 10:02 AM" },
+            { id: "m4", variant: "support-agent", senderName: "Amara Okafor", text: "All set — you're on Pro now, and the new amount will show on your next billing cycle. Let me know if anything looks off!", timestamp: "3 weeks ago, 10:05 AM" },
+          ],
+        },
+      },
+      {
+        date: "6 weeks ago",
+        channel: "chat",
+        summary: "Couldn't find where to download an old invoice for expensing. Pointed her to Billing → History.",
+        caseId: "CASE-46988",
+        handledBy: "John Smith",
+        outcome: "Resolved",
+        transcript: {
+          messages: [
+            { id: "m1", variant: "customer", senderName: "Sofia Martinez", text: "Hey, I'm trying to download an old invoice for an expense report but I can't find it anywhere.", timestamp: "6 weeks ago, 2:14 PM" },
+            { id: "m2", variant: "support-agent", senderName: "John Smith", text: "No problem — head to Billing → History and you'll see a download icon next to every past invoice.", timestamp: "6 weeks ago, 2:16 PM" },
+            { id: "m3", variant: "customer", senderName: "Sofia Martinez", text: "Found it, thank you!", timestamp: "6 weeks ago, 2:17 PM" },
+          ],
+        },
+      },
+      {
+        date: "2 months ago",
+        channel: "voice",
+        summary: "Called in a panic after a large expense report failed to submit before a deadline — walked through a manual workaround while the app issue was filed.",
+        caseId: "CASE-46512",
+        handledBy: "Diego Fernandez",
+        outcome: "Resolved",
+        transcript: {
+          messages: [
+            { id: "m1", variant: "customer", senderName: "Sofia Martinez", text: "Hi, I'm so sorry to call in a panic but my expense report won't submit and it's due in twenty minutes!", timestamp: "2 months ago, 4:02 PM" },
+            { id: "m2", variant: "support-agent", senderName: "Diego Fernandez", text: "Take a breath, we'll get this sorted. What error do you see when you hit submit?", timestamp: "2 months ago, 4:03 PM" },
+            { id: "m3", variant: "customer", senderName: "Sofia Martinez", text: "It just says \"Something went wrong\" with no other details.", timestamp: "2 months ago, 4:07 PM" },
+            { id: "m4", variant: "support-agent", senderName: "Diego Fernandez", text: "That's a known issue we're tracking. Let's export the report as a PDF and email it to your manager directly so you don't miss the deadline.", timestamp: "2 months ago, 4:08 PM" },
+            { id: "m5", variant: "customer", senderName: "Sofia Martinez", text: "Okay, doing that now… it worked, thank you so much.", timestamp: "2 months ago, 4:11 PM" },
+          ],
+          callEvents: [
+            { id: "e1", afterMessageId: "m2", kind: "hold", label: "Call held", timestamp: "2 months ago, 4:04 PM" },
+            { id: "e2", afterMessageId: "m2", kind: "resume", label: "Call resumed", timestamp: "2 months ago, 4:06 PM" },
+          ],
+        },
+      },
+    ],
+    tickets: [
+      { id: "t1", subject: "Receipt photo upload crashes app", status: "Open", caseId: "CASE-48213", date: "Today" },
+      { id: "t2", subject: "Large images fail to attach on 4.2.1", status: "Pending", caseId: "CASE-46512", date: "2 months ago" },
+    ],
     notes: [
       {
         id: "n1",
@@ -122,8 +252,11 @@ export const DIRECTORY_CUSTOMERS: DirectoryCustomer[] = [
     customerSince: "2023",
     tier: "Standard",
     totalInteractions: 5,
-    preferredChannel: "voice",
-    about: "Prefers to call rather than email or chat, especially for anything billing-related. Generally patient but appreciates a clear timeline for resolution.",
+    address: "119 Harbor View Rd, Tampa, FL 33602",
+    language: "English",
+    timezone: "America/New_York (EST)",
+    accountOwner: "John Smith",
+    accountStatus: "Active",
     lastInteraction: {
       date: "1 month ago",
       channel: "voice",
@@ -132,6 +265,43 @@ export const DIRECTORY_CUSTOMERS: DirectoryCustomer[] = [
       handledBy: "John Smith",
       outcome: "Resolved",
     },
+    history: [
+      {
+        date: "1 month ago",
+        channel: "voice",
+        summary: "Called about a failed payment on his subscription renewal. Diagnosed an expired card on file, updated it, and reprocessed the charge successfully.",
+        caseId: "CASE-46390",
+        handledBy: "John Smith",
+        outcome: "Resolved",
+        transcript: {
+          messages: [
+            { id: "m1", variant: "customer", senderName: "Ray Torres", text: "Hi, my subscription renewal payment failed and I'm not sure why — my card should still be good.", timestamp: "1 month ago, 11:20 AM" },
+            { id: "m2", variant: "support-agent", senderName: "John Smith", text: "Let's take a look — I'm seeing the card on file expired last month. Do you have an updated card handy?", timestamp: "1 month ago, 11:21 AM" },
+            { id: "m3", variant: "customer", senderName: "Ray Torres", text: "Yeah, one sec… okay, it's a Visa ending in 4471, expires 03/27.", timestamp: "1 month ago, 11:23 AM" },
+            { id: "m4", variant: "support-agent", senderName: "John Smith", text: "Got it, updated. I've reprocessed the renewal charge and it went through successfully.", timestamp: "1 month ago, 11:25 AM" },
+            { id: "m5", variant: "customer", senderName: "Ray Torres", text: "Perfect, thank you for the quick fix.", timestamp: "1 month ago, 11:25 AM" },
+          ],
+        },
+      },
+      {
+        date: "3 months ago",
+        channel: "sms",
+        summary: "Texted asking why his renewal date moved up a week. Explained the mid-cycle plan change was the cause.",
+        caseId: "CASE-45021",
+        handledBy: "Amara Okafor",
+        outcome: "Resolved",
+        transcript: {
+          messages: [
+            { id: "m1", variant: "customer", senderName: "Ray Torres", text: "Hey, why did my renewal date move up a week? Wasn't expecting that.", timestamp: "3 months ago, 1:05 PM" },
+            { id: "m2", variant: "support-agent", senderName: "Amara Okafor", text: "Good catch — that shifted because of the plan change you made mid-cycle. Your next renewal lands back on the original date after this one.", timestamp: "3 months ago, 1:19 PM" },
+            { id: "m3", variant: "customer", senderName: "Ray Torres", text: "Ah, that makes sense. Thanks for clearing it up.", timestamp: "3 months ago, 1:20 PM" },
+          ],
+        },
+      },
+    ],
+    tickets: [
+      { id: "t1", subject: "Duplicate subscription charge", status: "Open", caseId: "CASE-48097", date: "Today" },
+    ],
     notes: [
       {
         id: "n1",
@@ -157,8 +327,12 @@ export const DIRECTORY_CUSTOMERS: DirectoryCustomer[] = [
     customerSince: "2021",
     tier: "Standard",
     totalInteractions: 3,
-    preferredChannel: "voice",
-    about: "Infrequent contact — mostly account-management questions rather than issues. Straightforward interactions, usually resolved in one call.",
+    address: "27 Cedar Grove Ln, Seattle, WA 98109",
+    company: "Vantiq",
+    language: "English",
+    timezone: "America/Los_Angeles (PST)",
+    accountOwner: "Diego Fernandez",
+    accountStatus: "Active",
     lastInteraction: {
       date: "2 months ago",
       channel: "voice",
@@ -167,6 +341,27 @@ export const DIRECTORY_CUSTOMERS: DirectoryCustomer[] = [
       handledBy: "Diego Fernandez",
       outcome: "Resolved",
     },
+    history: [
+      {
+        date: "2 months ago",
+        channel: "voice",
+        summary: "Asked how to add a second user to her account. Walked her through the multi-user settings and confirmed the invite was sent.",
+        caseId: "CASE-44215",
+        handledBy: "Diego Fernandez",
+        outcome: "Resolved",
+        transcript: {
+          messages: [
+            { id: "m1", variant: "customer", senderName: "Priya Nair", text: "Hi, I want to add a second user to my account so my coworker can access it too. How do I do that?", timestamp: "2 months ago, 3:30 PM" },
+            { id: "m2", variant: "support-agent", senderName: "Diego Fernandez", text: "Sure thing — go to Settings → Users → Invite and enter their email. I can also send it for you right now if you'd like.", timestamp: "2 months ago, 3:31 PM" },
+            { id: "m3", variant: "customer", senderName: "Priya Nair", text: "Yes please, go ahead.", timestamp: "2 months ago, 3:32 PM" },
+            { id: "m4", variant: "support-agent", senderName: "Diego Fernandez", text: "Done — invite sent. They'll just need to accept it to get access.", timestamp: "2 months ago, 3:34 PM" },
+          ],
+        },
+      },
+    ],
+    tickets: [
+      { id: "t1", subject: "Duplicate order confirmation text", status: "Resolved", caseId: "CASE-48462", date: "Today" },
+    ],
     notes: [],
   },
   {
@@ -181,8 +376,11 @@ export const DIRECTORY_CUSTOMERS: DirectoryCustomer[] = [
     customerSince: "2024",
     tier: "Standard",
     totalInteractions: 2,
-    preferredChannel: "whatsapp",
-    about: "New customer, still getting familiar with the product. Reaches out over WhatsApp almost exclusively.",
+    address: "804 Elm Terrace, Denver, CO 80203",
+    language: "English",
+    timezone: "America/Denver (MST)",
+    accountOwner: "John Smith",
+    accountStatus: "Active",
     lastInteraction: {
       date: "2 weeks ago",
       channel: "whatsapp",
@@ -191,6 +389,25 @@ export const DIRECTORY_CUSTOMERS: DirectoryCustomer[] = [
       handledBy: "John Smith",
       outcome: "Resolved",
     },
+    history: [
+      {
+        date: "2 weeks ago",
+        channel: "whatsapp",
+        summary: "Reported a late shipment that hadn't arrived. Filed a lost-package claim with the carrier and sent a replacement at no cost.",
+        caseId: "CASE-48044",
+        handledBy: "John Smith",
+        outcome: "Resolved",
+        transcript: {
+          messages: [
+            { id: "m1", variant: "customer", senderName: "Marcus Webb", text: "Hi, my package still hasn't arrived and it's over a week past the delivery date. Can you check on it?", timestamp: "2 weeks ago, 10:02 AM" },
+            { id: "m2", variant: "support-agent", senderName: "John Smith", text: "Sorry about that, Marcus — the carrier shows it lost in transit. I've filed a claim and I'm sending you a free replacement.", timestamp: "2 weeks ago, 10:15 AM" },
+            { id: "m3", variant: "customer", senderName: "Marcus Webb", text: "Oh wow, thank you, I appreciate that.", timestamp: "2 weeks ago, 10:16 AM" },
+            { id: "m4", variant: "support-agent", senderName: "John Smith", text: "Of course — you'll get a shipping confirmation for the replacement within the day.", timestamp: "2 weeks ago, 10:17 AM" },
+          ],
+        },
+      },
+    ],
+    tickets: [],
     notes: [],
   },
 ];
