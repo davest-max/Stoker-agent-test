@@ -9,12 +9,16 @@ import {
   Label,
   Tooltip,
   CHANNEL_ACCENT,
+  PhoneInput,
+  PHONE_COUNTRIES,
+  isPhoneNumberComplete,
   type ChannelType,
   type CreateNewOutboundContact,
   type CreateNewOutboundGroup,
   type CreateNewChannelOption,
+  type PhoneValue,
 } from "@nicecxone/lyra-ui";
-import { Plus, ChevronLeft, X, User, Headset, Route, UsersRound, Building2 } from "lucide-react";
+import { Plus, ChevronLeft, X, User, Headset, Route, UsersRound, Building2, Grid3x3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ContactActionButtons } from "@/components/DirectoryPage";
 import { contactMatchesQuery } from "@/data/directory";
@@ -23,9 +27,10 @@ import { contactMatchesQuery } from "@/data/directory";
  * Local replacement for lyra-ui's `CreateNew` (outbound flow), built to the
  * "New Outbound" Figma reference (Stoker file, node 4326:1090 — see
  * PROJECT_SUMMARY-adjacent notes in this repo's CLAUDE.md for why this
- * isn't just a `CreateNew` config): a group dropdown that includes a
- * synthetic "All" option (categorized results across every real group), a
- * unified "channel select" screen shared by both the matched-contact flow
+ * isn't just a `CreateNew` config): a multi-select category dropdown (zero
+ * selected reads as "search every category", categorized results grouped by
+ * origin whenever more than one group is in scope), a unified "channel
+ * select" screen shared by both the matched-contact flow
  * and the unmatched phone/email flow, and individual per-channel icon
  * buttons (not a channel dropdown) with selected/unselected states.
  * `lyra-ui/create-new.tsx` itself is untouched — see this repo's CLAUDE.md
@@ -82,7 +87,11 @@ type Screen =
   | { kind: "browse" }
   | { kind: "detail"; contact: CreateNewOutboundContact | null; query: string; initialChannel?: ChannelType };
 
-const ALL_GROUP_ID = "__all__";
+/** Digits typed before the dial pad bothers checking for a directory match
+ *  — below this, almost every number would substring-match something and
+ *  the suggestion would just be noise. Not real validation, just a
+ *  reasonable "enough to be meaningful" threshold. */
+const DIAL_PAD_MATCH_MIN_DIGITS = 6;
 
 /* ── Helpers ── */
 
@@ -589,7 +598,17 @@ export function AddOutboundButton({
 
 export function NewOutboundPopover({ title = "New Outbound", expanded = false, outbound }: NewOutboundPopoverProps) {
   const [open, setOpen] = useState(false);
-  const [groupId, setGroupId] = useState<string>(ALL_GROUP_ID);
+  // Multi-select category filter — empty means "no explicit filter", which
+  // reads as "search every category" (the old ALL_GROUP_ID sentinel is gone;
+  // zero selections now means the same thing without needing a fake value in
+  // the list). Not reset on close, same "leave it as the agent left it"
+  // convention as `search` below.
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
+  // Dial Pad is a mode switch (swaps the whole body for a phone field), not a
+  // filterable category, so it's its own flag rather than a synthetic value
+  // hiding inside the category selection — see its own doc comment further
+  // down at the `content` branch that reads this.
+  const [dialPadActive, setDialPadActive] = useState(false);
   const [search, setSearch] = useState("");
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
   const [screen, setScreen] = useState<Screen>({ kind: "browse" });
@@ -597,44 +616,111 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
   // most-recent-first — surfaced as a "Recent" shortcut section in the
   // "Select outbound skill" dropdown.
   const [recentSkillIds, setRecentSkillIds] = useState<string[]>([]);
+  // Dial Pad group's own field — same PhoneValue shape PhoneInput already
+  // uses everywhere else, kept lifted here (not local to a sub-component)
+  // so it isn't lost if this popover re-renders. Not reset when the popover
+  // closes/reopens — same "leave it as the agent left it" behavior the
+  // browse screen's own `search` field doesn't get reset for either, except
+  // `resetAndClose` below explicitly clears both.
+  const [dialpadPhone, setDialpadPhone] = useState<PhoneValue>({
+    countryCode: PHONE_COUNTRIES[0].code,
+    number: "",
+  });
 
   const recordRecentSkill = (skillId: string) => {
     if (!skillId) return;
     setRecentSkillIds((prev) => [skillId, ...prev.filter((id) => id !== skillId)].slice(0, 3));
   };
 
-  const activeGroup = groupId === ALL_GROUP_ID ? null : outbound.groups.find((g) => g.id === groupId) ?? null;
+  // The single group to treat specially when exactly one category is
+  // explicitly checked — preserves the old single-select behavior exactly
+  // (flat contact list, no section header, that group's own
+  // `searchPlaceholder`/`emptyMessage`) for what's still the common case.
+  const singleSelectedGroup =
+    selectedCategoryIds.length === 1 ? outbound.groups.find((g) => g.id === selectedCategoryIds[0]) ?? null : null;
 
   const allContacts = useMemo(
     () => outbound.groups.filter((g) => (g.kind ?? "contacts") === "contacts").flatMap((g) => g.contacts ?? []),
     [outbound.groups]
   );
 
+  // Dial Pad — same `isPhoneNumberComplete` per-country digit-count check
+  // PhoneInput uses internally for its own validation error, reused here to
+  // gate the "Dial Number" button (matches lyra-ui's own CreateNew dialpad
+  // group). `dialpadMatch` is the one new thing beyond that: once enough
+  // digits are in, check the raw number against every contact's phone
+  // numbers the same way the main search box already does (see
+  // `contactMatchesQuery`'s own "matches by phone number too" note) — a hit
+  // surfaces as a tappable suggestion below the field (see `content` below).
+  const dialpadCountry = PHONE_COUNTRIES.find((c) => c.code === dialpadPhone.countryCode) ?? PHONE_COUNTRIES[0];
+  const isDialpadNumberValid = isPhoneNumberComplete(dialpadPhone.number, dialpadCountry);
+  const dialpadMatch =
+    dialpadPhone.number.length >= DIAL_PAD_MATCH_MIN_DIGITS
+      ? allContacts.find((c) => contactMatchesQuery(c, dialpadPhone.number))
+      : undefined;
+
+  const handleQuickDial = () => {
+    if (!isDialpadNumberValid) return;
+    const fullNumber = `${dialpadCountry.dial}${dialpadPhone.number}`;
+    // Same match `dialpadMatch`'s own suggestion row would route to
+    // deliberately — pressing "Dial Number" directly while a match is
+    // showing shouldn't quietly downgrade to an anonymous call just
+    // because the agent didn't tap the suggestion. Still dials the exact
+    // digits typed (not the contact's own on-file number, in case they
+    // differ in some edge case); the only thing the match changes is which
+    // callback fires, so the resulting interaction is attributed to that
+    // real customer/agent instead of showing up as a bare phone number.
+    if (dialpadMatch) {
+      outbound.onStartCall({ contact: dialpadMatch, channel: "voice", phone: fullNumber, skillId: "" });
+    } else {
+      outbound.onStartUnmatchedOutbound?.({ channel: "voice", value: fullNumber, skillId: "" });
+    }
+    resetAndClose();
+  };
+
   const query = search.trim().toLowerCase();
 
-  /** Categorized sections for the synthetic "All" option — one per real
-   *  contact group that has at least one match, in `groups` order.
-   *  Favorites is excluded — it duplicates contacts already reachable via
-   *  their origin group. */
-  const allSections = useMemo(() => {
-    if (groupId !== ALL_GROUP_ID || !query) return [];
-    return outbound.groups
-      .filter((g) => (g.kind ?? "contacts") === "contacts")
-      .map((g) => ({ group: g, contacts: (g.contacts ?? []).filter((c) => contactMatchesQuery(c, search)) }))
-      .filter((section) => section.contacts.length > 0);
-  }, [groupId, query, search, outbound.groups]);
+  // Which groups are in scope: whatever's explicitly checked, or every real
+  // contacts-kind group (Favorites included) when nothing's checked yet —
+  // same "All" behavior the old ALL_GROUP_ID sentinel gave, just implicit.
+  const scopedGroups =
+    selectedCategoryIds.length > 0
+      ? outbound.groups.filter((g) => selectedCategoryIds.includes(g.id))
+      : outbound.groups.filter((g) => (g.kind ?? "contacts") === "contacts");
 
-  const singleGroupContacts = useMemo(() => {
-    if (!activeGroup) return [];
-    const base = activeGroup.kind === "favorites" ? allContacts.filter((c) => favoriteIds.has(c.id)) : activeGroup.contacts ?? [];
-    // Matches by phone number too (see contactMatchesQuery) — the search
-    // box's own placeholder already promises "Enter phone, email or search
-    // term", so this closes a real gap rather than adding new UI.
-    return query ? base.filter((c) => contactMatchesQuery(c, search)) : base;
-  }, [activeGroup, query, search, allContacts, favoriteIds]);
+  // Nothing selected AND nothing typed is the one state that still needs an
+  // explicit prompt — dumping the entire directory unfiltered isn't a useful
+  // default view. Any explicit category selection shows its full contents
+  // right away (no query required), matching the old single-group behavior.
+  const showStartTypingPrompt = selectedCategoryIds.length === 0 && !query;
 
-  const noMatches =
-    groupId === ALL_GROUP_ID ? query.length > 0 && allSections.length === 0 : query.length > 0 && singleGroupContacts.length === 0;
+  /** Categorized sections across whatever's in scope — one per group with at
+   *  least one match, in `groups` order. Skipped entirely while
+   *  `showStartTypingPrompt` is true (nothing to compute yet). Plain
+   *  computation, not memoized — `scopedGroups` is a fresh array every
+   *  render anyway, and this list is small enough that it doesn't matter. */
+  const sections = showStartTypingPrompt
+    ? []
+    : scopedGroups
+        .map((g) => ({
+          group: g,
+          // Matches by phone number too (see contactMatchesQuery) — the
+          // search box's own placeholder already promises "Enter phone,
+          // email or search term", so this closes a real gap rather than
+          // adding new UI. Favorites derives its list from
+          // `allContacts`/`favoriteIds` rather than its own (empty)
+          // `contacts` array.
+          contacts: (g.kind === "favorites" ? allContacts.filter((c) => favoriteIds.has(c.id)) : g.contacts ?? []).filter((c) =>
+            contactMatchesQuery(c, search)
+          ),
+        }))
+        .filter((section) => section.contacts.length > 0);
+
+  // Only a real header cue when results span more than one group — a single
+  // explicitly-selected category still reads as a flat list, same as before.
+  const showSectionLabels = selectedCategoryIds.length !== 1;
+
+  const noMatches = query.length > 0 && sections.length === 0;
 
   /* Moving from the search box to the unified detail screen is always an
    * explicit agent action — never automatic on keystroke — so a phone
@@ -657,6 +743,11 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
     setOpen(false);
     setScreen({ kind: "browse" });
     setSearch("");
+    setDialPadActive(false);
+    // Clears the dialed digits but keeps the last-picked country — same
+    // "clear the transient text, keep the preference" split `search`
+    // above gets, just for the Dial Pad group's own field.
+    setDialpadPhone((prev) => ({ ...prev, number: "" }));
   };
 
   const toggleFavorite = (contactId: string) =>
@@ -752,44 +843,90 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
         </Button>
       </div>
     );
-  } else if (groupId === ALL_GROUP_ID) {
-    content = query ? (
-      <div className="flex flex-col pb-2">
-        {allSections.map(({ group, contacts }, i) => (
-          <div key={group.id}>
-            <p
-              className={cn(
-                "px-4 pt-3 pb-1 lyra-body-xs text-lyra-fg-secondary uppercase tracking-wide",
-                i > 0 && "border-t border-lyra-border-subtle mt-1"
-              )}
-            >
-              {group.label}
-            </p>
-            {contacts.map(renderContactRow)}
+  } else if (dialPadActive) {
+    content = (
+      <div
+        className="flex flex-col gap-3 p-4"
+        onKeyDown={(e) => {
+          // PhoneInput has no onKeyDown/onSubmit prop of its own — caught
+          // here via ordinary DOM bubbling from its underlying <input>,
+          // same as lyra-ui's own CreateNew dialpad group does it.
+          if (e.key === "Enter") {
+            e.preventDefault();
+            handleQuickDial();
+          }
+        }}
+      >
+        {/* No `placeholder` override — PhoneInput's own per-country example
+         *  ("(555) 555-5555" for the US) is more useful than fixed generic
+         *  text, and updates automatically as the country changes.
+         *  `dropdownClassName="z-[10003]"`: the country dropdown is a
+         *  Popover nested inside this popover's own stack — same tier
+         *  `AddOutboundButton`'s popover above uses for the same reason. */}
+        <PhoneInput value={dialpadPhone} onChange={setDialpadPhone} dropdownClassName="z-[10003]" />
+        {dialpadMatch && (
+          <div>
+            <p className="pb-1 lyra-body-xs text-lyra-fg-secondary uppercase tracking-wide">Possible match</p>
+            <ListItem
+              className="rounded-lyra-sm border border-lyra-border-subtle"
+              leading={<ContactAvatar contact={dialpadMatch} />}
+              title={dialpadMatch.name}
+              subtitle={dialpadMatch.subtitle}
+              onClick={() => setScreen({ kind: "detail", contact: dialpadMatch, query: "", initialChannel: "voice" })}
+            />
           </div>
-        ))}
+        )}
+        <Button variant="default" className="w-full" disabled={!isDialpadNumberValid} onClick={handleQuickDial}>
+          Dial Number
+        </Button>
       </div>
-    ) : (
+    );
+  } else if (showStartTypingPrompt) {
+    content = (
       <p className="px-4 py-8 text-center lyra-body-sm text-lyra-fg-secondary">
         Start typing to search across every category.
       </p>
     );
-  } else if (singleGroupContacts.length === 0) {
+  } else if (sections.length === 0) {
+    // Reached only when a category is explicitly selected (otherwise
+    // `showStartTypingPrompt`/`noMatches` above would already have caught
+    // it) and it's genuinely empty — e.g. Favorites with nothing favorited
+    // yet. A single selection keeps that group's own `emptyMessage`; 2+
+    // empty selections fall back to a generic message since there's no
+    // single group left to attribute it to.
     content = (
       <p className="px-4 py-8 text-center lyra-body-sm text-lyra-fg-secondary">
-        {activeGroup?.emptyMessage ?? "Nothing here yet."}
+        {singleSelectedGroup?.emptyMessage ?? "Nothing here yet."}
       </p>
     );
   } else {
-    content = <div className="flex flex-col pb-2">{singleGroupContacts.map(renderContactRow)}</div>;
+    content = (
+      <div className="flex flex-col pb-2">
+        {sections.map(({ group, contacts }, i) => (
+          <div key={group.id}>
+            {showSectionLabels && (
+              <p
+                className={cn(
+                  "px-4 pt-3 pb-1 lyra-body-xs text-lyra-fg-secondary uppercase tracking-wide",
+                  i > 0 && "border-t border-lyra-border-subtle mt-1"
+                )}
+              >
+                {group.label}
+              </p>
+            )}
+            {contacts.map(renderContactRow)}
+          </div>
+        ))}
+      </div>
+    );
   }
 
-  const groupOptions = [
-    { value: ALL_GROUP_ID, label: "All" },
-    ...outbound.groups.map((g) => ({ value: g.id, label: g.label })),
-  ];
+  const categoryOptions = outbound.groups.map((g) => ({ value: g.id, label: g.label }));
 
-  const showSearchInput = screen.kind === "browse";
+  // Search doesn't apply while the Dial Pad is active (nothing to search —
+  // it's a single phone field, not a contact list), same as lyra-ui's own
+  // CreateNew hides its search field for a "dialpad"-kind group.
+  const showSearchInput = screen.kind === "browse" && !dialPadActive;
 
   /* ── Header — back/title/close row on every screen; group dropdown +
    *  search only on the browse screen. ── */
@@ -797,10 +934,14 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
     <div className="border-b border-lyra-border-subtle">
       <div className="flex items-center justify-between px-4 py-4">
         <div className="flex min-w-0 items-center gap-2">
-          {screen.kind === "detail" && (
+          {/* Detail screen backs out to browse; Dial Pad (still technically
+           *  the browse screen, just with `dialPadActive` on — see that
+           *  state's own doc comment) backs out to whatever category
+           *  selection/search was already in place, not a reset. */}
+          {(screen.kind === "detail" || dialPadActive) && (
             <button
               type="button"
-              onClick={() => setScreen({ kind: "browse" })}
+              onClick={() => (screen.kind === "detail" ? setScreen({ kind: "browse" }) : setDialPadActive(false))}
               aria-label="Back"
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary transition-colors hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus"
             >
@@ -814,7 +955,7 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
             </>
           ) : (
             <p className="lyra-heading-sm text-lyra-fg-default truncate">
-              {screen.kind === "detail" ? "Outbound Call" : title}
+              {screen.kind === "detail" ? "Outbound Call" : dialPadActive ? "Dial Pad" : title}
             </p>
           )}
         </div>
@@ -827,40 +968,53 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
           <X className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
         </button>
       </div>
-      {screen.kind === "browse" && (
+      {screen.kind === "browse" && !dialPadActive && (
         <div className="flex flex-col gap-3 px-4 pb-4">
           {/* Phone/email/search-term entry leads — it's the primary action
            *  (type a number/address, or a name to filter the group below),
            *  so it sits above the group picker rather than under it. */}
           {showSearchInput && (
-            <Input
-              type="text"
-              placeholder={activeGroup?.searchPlaceholder ?? "Enter phone, email or search term"}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={handleSearchKeyDown}
-              endIcon={
-                search ? (
-                  <button
-                    type="button"
-                    aria-label="Clear search"
-                    onClick={() => setSearch("")}
-                    className="pointer-events-auto flex h-5 w-5 items-center justify-center rounded-lyra-xs text-lyra-fg-secondary hover:text-lyra-fg-default hover:bg-lyra-state-hover transition-colors"
-                  >
-                    <X className="h-3.5 w-3.5" strokeWidth={1.5} />
-                  </button>
-                ) : undefined
-              }
-            />
+            <>
+              <Input
+                type="text"
+                placeholder="Enter"
+                helperText={`${singleSelectedGroup?.searchPlaceholder ?? "Enter phone, email or search term"}.`}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
+                endIcon={
+                  search ? (
+                    <button
+                      type="button"
+                      aria-label="Clear search"
+                      onClick={() => setSearch("")}
+                      className="pointer-events-auto flex h-5 w-5 items-center justify-center rounded-lyra-xs text-lyra-fg-secondary hover:text-lyra-fg-default hover:bg-lyra-state-hover transition-colors"
+                    >
+                      <X className="h-3.5 w-3.5" strokeWidth={1.5} />
+                    </button>
+                  ) : undefined
+                }
+              />
+              {/* Quick-access shortcut into the Dial Pad screen — one click
+               *  instead of a Select interaction, for what's meant to be a
+               *  fast "just dial a number" path. */}
+              <button
+                type="button"
+                onClick={() => setDialPadActive(true)}
+                className="flex items-center gap-1.5 self-start lyra-body-sm text-lyra-fg-link underline underline-offset-2 hover:text-lyra-fg-link"
+              >
+                <Grid3x3 className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
+                Dial Pad
+              </button>
+            </>
           )}
           <Select
+            multiple
             label="Search"
-            value={groupId}
-            onValueChange={(v) => {
-              setGroupId(v);
-              setSearch("");
-            }}
-            options={groupOptions}
+            values={selectedCategoryIds}
+            onValuesChange={setSelectedCategoryIds}
+            options={categoryOptions}
+            placeholder="All categories"
             portalDropdown
           />
         </div>

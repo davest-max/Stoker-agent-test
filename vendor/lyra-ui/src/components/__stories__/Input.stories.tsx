@@ -57,6 +57,15 @@ export const Error: Story = {
   },
 };
 
+export const HelperText: Story = {
+  name: "Helper Text",
+  args: {
+    label: "Input Label",
+    placeholder: "Enter",
+    helperText: "Enter phone, email or search term",
+  },
+};
+
 export const AllStates: Story = {
   name: "All States",
   render: () => (
@@ -65,6 +74,7 @@ export const AllStates: Story = {
       <Input label="Input Label" defaultValue="Text" />
       <Input label="Input Label" disabled placeholder="Text" />
       <Input label="Input Label" defaultValue="Text" error="Required" />
+      <Input label="Input Label" placeholder="Enter" helperText="Helper text guides the agent" />
     </div>
   ),
 };

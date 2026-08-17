@@ -14,6 +14,13 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   readonly?: boolean;
   /** Error message — triggers error styling when provided */
   error?: string;
+  /** Persistent help text shown below the input (same spot `error` renders
+   *  in, styled quieter) — for guidance that should stay visible the whole
+   *  time the field is empty/filled, as opposed to `labelHelpText`'s
+   *  tooltip-on-demand info icon. Hidden while `error` is set (error takes
+   *  the slot instead) rather than stacking both messages. Matches
+   *  `AIInput`'s own `helperText` prop of the same name/purpose. */
+  helperText?: string;
   /** Icon rendered at the start (left) of the input */
   startIcon?: React.ReactNode;
   /** Icon rendered at the end (right) of the input */
@@ -29,6 +36,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
       required,
       readonly,
       error,
+      helperText,
       disabled,
       id,
       startIcon,
@@ -80,7 +88,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                 "bg-lyra-bg-disabled border-transparent text-lyra-fg-disabled cursor-not-allowed"
             )}
             aria-invalid={error ? true : undefined}
-            aria-describedby={error ? `${inputId}-error` : undefined}
+            aria-describedby={error ? `${inputId}-error` : helperText ? `${inputId}-helper` : undefined}
             {...props}
           />
           {endIcon && (
@@ -90,7 +98,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
           )}
         </div>
 
-        {error && (
+        {error ? (
           <div
             id={`${inputId}-error`}
             role="alert"
@@ -101,6 +109,12 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
               {error}
             </span>
           </div>
+        ) : (
+          helperText && (
+            <p id={`${inputId}-helper`} className="lyra-body-sm text-lyra-fg-secondary mt-1.5">
+              {helperText}
+            </p>
+          )
         )}
       </div>
     );
