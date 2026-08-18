@@ -1,4 +1,5 @@
 import * as React from "react";
+import { Phone } from "lucide-react";
 import { cn } from "../lib/utils";
 import { CHANNEL_ROW_COMPONENTS, CHANNEL_ACCENT, type InteractionChannel, type ChannelType } from "./channel-row";
 import { Popover } from "./popover";
@@ -49,6 +50,18 @@ export interface InteractionNavItemProps {
    * red badge dot appears. Default (false) is primary with no badge.
    */
   awaitingResponse?: boolean;
+  /** True when this interaction has a live voice call in progress somewhere
+   *  in the app — even while a *different* card is the active/selected one.
+   *  Shows a small purple phone badge on the compact tile's avatar (bottom-
+   *  right corner, distinct position and color from `awaitingResponse`'s red
+   *  dot so the two meanings never blend together) so the agent can tell
+   *  which tile a persistent voice-call control bar elsewhere on screen
+   *  belongs to. Unlike `awaitingResponse`, this isn't itself an urgency
+   *  signal, just an identity tie-in — default (false) shows no badge.
+   *  Compact (icon-rail) mode only for now; the expanded card's own channel
+   *  list already spells out "Voice" per open channel, so the ambiguity this
+   *  solves mainly exists in the collapsed rail. */
+  liveCall?: boolean;
   /** Whether this is the currently-open/selected interaction. */
   active?: boolean;
   /**
@@ -139,6 +152,7 @@ const InteractionNavItem = React.forwardRef<HTMLDivElement, InteractionNavItemPr
       elapsed,
       avatarIcon,
       awaitingResponse = false,
+      liveCall = false,
       active = false,
       expanded = false,
       onClick,
@@ -277,7 +291,7 @@ const InteractionNavItem = React.forwardRef<HTMLDivElement, InteractionNavItemPr
       }
     };
 
-    const ariaLabel = `${displayName}${awaitingResponse ? ", awaiting response" : ""}${channelCount > 1 ? `, ${channelCount} open channels` : ""}, ${elapsed}`;
+    const ariaLabel = `${displayName}${awaitingResponse ? ", awaiting response" : ""}${channelCount > 1 ? `, ${channelCount} open channels` : ""}${liveCall ? ", live call" : ""}, ${elapsed}`;
 
     // Header row + channel list — the expanded card's actual content,
     // factored out so it can be rendered both by the real expanded return
@@ -490,6 +504,14 @@ const InteractionNavItem = React.forwardRef<HTMLDivElement, InteractionNavItemPr
                   className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-lyra-status-critical-strong ring-2 ring-lyra-bg-surface-shell"
                   aria-hidden="true"
                 />
+              )}
+              {liveCall && (
+                <span
+                  className="absolute -right-1 -bottom-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-lyra-accent-purple-strong ring-2 ring-lyra-bg-surface-shell"
+                  aria-hidden="true"
+                >
+                  <Phone className="h-2 w-2 text-lyra-fg-on-primary" strokeWidth={2.5} />
+                </span>
               )}
             </span>
             <span className="lyra-body-xs text-lyra-fg-secondary" aria-hidden="true">{elapsed}</span>

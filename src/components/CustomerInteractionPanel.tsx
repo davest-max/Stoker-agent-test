@@ -27,9 +27,6 @@ import {
   Pause,
   MicOff,
   Mic,
-  AudioLines,
-  Disc,
-  Grip,
   Phone,
   PhoneOff,
   AlertTriangle,
@@ -835,17 +832,61 @@ export function NavIconButton({
 }
 
 /* ── InteractionInfoBar ──
- * Sits directly under InteractionHeader: subject, case ID, and the
- * escalation status pill (moved here from the header row). */
+ * Sits directly under InteractionHeader: subject, case ID, the escalation
+ * status pill, and — per an explicit follow-up request — the channel kebab,
+ * Transfer, and Outcome icon buttons, all landing right next to the status
+ * pill instead of up in the customer-name row (see InteractionActionsBar's
+ * own doc comment for where those three used to live, and for the voice
+ * call-control buttons that used to sit alongside them there too — those
+ * moved to the new persistent voice-call bar instead, not here, since they
+ * need to survive switching to a different interaction entirely). Applies
+ * uniformly to every channel type, not just voice, since status/kebab/
+ * transfer/outcome are relevant to a digital interaction the exact same way. */
 
 export interface InteractionInfoBarProps {
   subject: string;
   caseId: string;
   escalationStatus: EscalationStatus;
   onEscalationStatusChange: (status: EscalationStatus) => void;
+  /** This interaction's currently-active channel — drives the kebab menu's
+   *  voice-vs-digital item set (moved here from InteractionActionsBar). */
+  currentChannelType?: ChannelType;
+  onDismissCurrentChannel?: () => void;
+  /** Optional, matching InteractionHeader's own `customerName?` — not every
+   *  assignment has one on record. OutcomeButton/ConsultTransferButton each
+   *  fall back to generic phrasing when omitted. */
+  customerName?: string;
+  issueSummary?: string;
+  /** Controlled (lifted to `AgentNextGenPage`) rather than left as
+   *  `OutcomeButton`'s own internal state — see that component's own
+   *  `open`/`onOpenChange` doc comment. */
+  outcomeOpen: boolean;
+  onOutcomeOpenChange: (open: boolean) => void;
+  /** Fired when the agent clicks "Approve & Save" in the Outcome form —
+   *  same dismiss action `onDismissCurrentChannel` triggers from the
+   *  kebab's "Unassign & Dismiss" (removes just this channel, or the whole
+   *  card if it's the only one open). Completing the Outcome and dismissing
+   *  are two different entry points into the exact same "this interaction
+   *  is done" action, so both share this one closure rather than
+   *  duplicating the channel-count branching twice. `OutcomeButton`'s own
+   *  `onApprove` reports the filled-out `OutcomeResult` too, but nothing
+   *  here needs it — dismissing doesn't care what the agent picked. */
+  onApproveOutcome?: () => void;
 }
 
-export function InteractionInfoBar({ subject, caseId, escalationStatus, onEscalationStatusChange }: InteractionInfoBarProps) {
+export function InteractionInfoBar({
+  subject,
+  caseId,
+  escalationStatus,
+  onEscalationStatusChange,
+  currentChannelType,
+  onDismissCurrentChannel,
+  customerName,
+  issueSummary,
+  outcomeOpen,
+  onOutcomeOpenChange,
+  onApproveOutcome,
+}: InteractionInfoBarProps) {
   return (
     <div className="flex items-center gap-3 border-b border-lyra-border-subtle px-6 py-2.5 lyra-body-sm">
       <span className="text-lyra-fg-default">{subject}</span>
@@ -853,6 +894,26 @@ export function InteractionInfoBar({ subject, caseId, escalationStatus, onEscala
       <span className="text-lyra-fg-default">{caseId}</span>
       <div className="h-4 w-px bg-lyra-border-subtle" />
       <EscalationStatusPill status={escalationStatus} onStatusChange={onEscalationStatusChange} />
+      <div className="h-4 w-px bg-lyra-border-subtle" />
+      <div className="flex items-center gap-1">
+        <ConsultTransferButton customerName={customerName} issueSummary={issueSummary} />
+        <OutcomeButton
+          customerName={customerName ?? "this customer"}
+          open={outcomeOpen}
+          onOpenChange={onOutcomeOpenChange}
+          onApprove={onApproveOutcome}
+        />
+        {currentChannelType && (
+          <KebabMenuButton
+            items={
+              currentChannelType === "voice"
+                ? buildVoiceMenuItems(onDismissCurrentChannel)
+                : buildDigitalMenuItems(onDismissCurrentChannel)
+            }
+            ariaLabel={`More options for ${CHANNEL_TYPE_META[currentChannelType].label}`}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -867,129 +928,45 @@ export function ConsultTransferIcon({ strokeWidth = 1.5 }: { strokeWidth?: numbe
   return <ArrowRightLeft className="h-4 w-4" strokeWidth={strokeWidth} aria-hidden="true" />;
 }
 
-/** AudioLines with a diagonal slash — Lucide has no ready "off" variant for
- *  it, so composite one: the base icon plus an overlaid line, drawn
- *  corner-to-corner the same way Lucide's own `-Off` icons (e.g. MicOff)
- *  draw their slash. */
-function MutedAudioLinesIcon({ strokeWidth = 2 }: { strokeWidth?: number }) {
-  return (
-    <span className="relative inline-flex h-5 w-5 items-center justify-center" aria-hidden="true">
-      <AudioLines className="h-5 w-5" strokeWidth={strokeWidth} />
-      <svg className="absolute inset-0 h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round">
-        <line x1="2" x2="22" y1="2" y2="22" />
-      </svg>
-    </span>
-  );
-}
-
 /* ── InteractionActionsBar ──
- * Rendered in its own row above InteractionHeader's customer-name row (via
- * that component's `actionsBar` slot — see its own doc comment for the
- * layout history) — Transfer/Outcome icon buttons, same treatment as the
- * assignment card's own Transfer/Outcome buttons (interaction-nav-item.tsx).
- * For a voice call, the same pill expands to include call controls (hold,
- * mute, etc) too.
- * "Outcome" used to be an inert icon button (no popup) — now opens the
- * wrap-up form in OutcomePanel.tsx, hence the added `customerName` prop
- * (seeds the panel's title and AI-suggested summary). Same reasoning for
- * `issueSummary`, added for ConsultTransferButton's own AI-suggested
- * handoff summary — `issueSummary` specifically (not `subject`, the short
- * header text) since the handoff note needs the fuller description of
- * what's actually going on. No `caseId` here — a case reference number
- * isn't useful context for an agent deciding whether to pick up an
- * interaction, so the handoff note dropped it. */
+ * Rendered in InteractionHeader's customer-name row (via that component's
+ * `actionsBar` slot) — now just the channel-type indicator (icon + label)
+ * for whichever channel is current. Used to also carry the channel kebab,
+ * voice call controls (hold/mute/etc.), and the Transfer/Outcome buttons —
+ * per an explicit follow-up, those all moved: kebab/Transfer/Outcome down to
+ * `InteractionInfoBar` next to the escalation-status pill (see that
+ * component's own doc comment), and the voice-specific controls out to a new
+ * persistent voice-call bar elsewhere in the app (rendered regardless of
+ * which interaction is currently on screen, so a live call's controls don't
+ * disappear the moment the agent looks at a different interaction — this
+ * per-interaction row can't do that, since it unmounts/re-renders with
+ * whatever `activeAssignment` currently is). What's left here is genuinely
+ * just "which channel is this" — no longer interactive on its own. */
 
 export interface InteractionActionsBarProps {
-  isVoiceCall?: boolean;
-  /** Optional, matching InteractionHeader's own `customerName?` — not every
-   *  assignment has one on record. OutcomeButton/ConsultTransferButton each
-   *  fall back to generic phrasing when omitted. */
-  customerName?: string;
-  issueSummary?: string;
-  /** This interaction's currently-active channel — drives the leading
-   *  channel-type segment's icon/label/kebab below. */
+  /** This interaction's currently-active channel — drives the icon/label. */
   currentChannelType?: ChannelType;
-  /** Controlled (lifted to `AgentNextGenPage`) rather than left as
-   *  `OutcomeButton`'s own internal state — see that component's own
-   *  `open`/`onOpenChange` doc comment. */
-  outcomeOpen: boolean;
-  onOutcomeOpenChange: (open: boolean) => void;
-  /** Wired to the leading channel-type segment's kebab "Unassign & Dismiss"
-   *  — the consumer decides (same split `InteractionNavItem`'s own
-   *  `onDismiss`/`onDismissChannel` props use) whether that should end just
-   *  `currentChannelType`'s channel or the whole interaction, based on how
-   *  many channels are open. Omit to leave that menu item inert. */
-  onDismissCurrentChannel?: () => void;
+  /** True once the agent has hung up this voice call from the persistent
+   *  voice bar (`AgentNextGenPage`'s own `endedVoiceCallAssignmentIds`) —
+   *  the interaction itself stays open (hanging up no longer dismisses it,
+   *  see that state's own doc comment), so this is the one visible sign,
+   *  right next to the channel name, that the call itself is over. Ignored
+   *  for non-voice channels. */
+  callEnded?: boolean;
 }
 
-export function InteractionActionsBar({
-  isVoiceCall = false,
-  customerName,
-  issueSummary,
-  currentChannelType,
-  outcomeOpen,
-  onOutcomeOpenChange,
-  onDismissCurrentChannel,
-}: InteractionActionsBarProps) {
+export function InteractionActionsBar({ currentChannelType, callEnded }: InteractionActionsBarProps) {
+  if (!currentChannelType) return null;
   return (
-    <div className="inline-flex items-center gap-1 rounded-lyra-lg border border-lyra-border-subtle bg-lyra-bg-surface-container-subtle p-1">
-      {/* Channel-type indicator — replaces the old `ChannelTab` bar that used
-       *  to live in `InteractionHeader`'s Row 1 (see that component's own
-       *  doc comment). Swaps icon/label as the agent clicks a different
-       *  channel row on the assignment card (`currentChannelType` follows
-       *  the same `currentChannelKey` state that drives the card's
-       *  highlighted row) — this is now the *only* place Row 1 shows which
-       *  channel is on screen. The kebab carries the same default per-type
-       *  menu (`buildDigitalMenuItems`/`buildVoiceMenuItems`) each channel
-       *  row on the card already uses, so "Unassign & Dismiss" etc. stay
-       *  reachable from here too, not just from the card. */}
-      {currentChannelType && (
-        <>
-          <span className="flex items-center gap-1.5 px-2 text-lyra-fg-default lyra-body-sm-emphasis">
-            <span className="shrink-0" aria-hidden="true">{CHANNEL_TYPE_META[currentChannelType].icon}</span>
-            {CHANNEL_TYPE_META[currentChannelType].label}
-          </span>
-          <KebabMenuButton
-            items={
-              currentChannelType === "voice"
-                ? buildVoiceMenuItems(onDismissCurrentChannel)
-                : buildDigitalMenuItems(onDismissCurrentChannel)
-            }
-            ariaLabel={`More options for ${CHANNEL_TYPE_META[currentChannelType].label}`}
-          />
-          <div className="mx-0.5 h-6 w-px bg-lyra-border-subtle" />
-        </>
+    <span className="inline-flex items-center gap-1.5 px-1 text-lyra-fg-default lyra-body-sm-emphasis">
+      <span className="shrink-0" aria-hidden="true">{CHANNEL_TYPE_META[currentChannelType].icon}</span>
+      {CHANNEL_TYPE_META[currentChannelType].label}
+      {callEnded && (
+        <Chip color="slate" variant="subtle">
+          Call ended
+        </Chip>
       )}
-      {isVoiceCall && (
-        <>
-          <ActionIconButton size="default" title="Hold">
-            <Pause className="h-5 w-5" strokeWidth={2} />
-          </ActionIconButton>
-          <ActionIconButton size="default" title="Mute">
-            <MicOff className="h-5 w-5" strokeWidth={2} />
-          </ActionIconButton>
-          <ActionIconButton size="default" title="Mute Speaker">
-            <MutedAudioLinesIcon strokeWidth={2} />
-          </ActionIconButton>
-          <ActionIconButton size="default" title="Record">
-            <Disc className="h-5 w-5" strokeWidth={2} />
-          </ActionIconButton>
-          <ActionIconButton size="default" title="Dialpad">
-            <Grip className="h-5 w-5" strokeWidth={2} />
-          </ActionIconButton>
-          <ActionIconButton size="default" title="Hang Up">
-            <PhoneOff className="h-5 w-5 text-lyra-status-critical-strong" strokeWidth={2} />
-          </ActionIconButton>
-          <div className="mx-0.5 h-6 w-px bg-lyra-border-subtle" />
-        </>
-      )}
-      <ConsultTransferButton customerName={customerName} issueSummary={issueSummary} />
-      <OutcomeButton
-        customerName={customerName ?? "this customer"}
-        open={outcomeOpen}
-        onOpenChange={onOutcomeOpenChange}
-      />
-    </div>
+    </span>
   );
 }
 

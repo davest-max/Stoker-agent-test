@@ -21,6 +21,7 @@ const meta: Meta<typeof InteractionNavItem> = {
     expanded: { control: "boolean" },
     active: { control: "boolean" },
     awaitingResponse: { control: "boolean" },
+    liveCall: { control: "boolean" },
   },
 };
 
@@ -61,6 +62,19 @@ export const CompactNoCustomer: Story = {
     elapsed: "02:05",
     expanded: false,
     channels: [{ type: "voice", elapsed: "02:05", current: true }],
+  },
+};
+
+export const CompactLiveCall: Story = {
+  name: "Compact — Live Call (viewing a different interaction)",
+  args: {
+    customerName: "Jordan Lee",
+    active: false,
+    awaitingResponse: false,
+    liveCall: true,
+    elapsed: "04:12",
+    expanded: false,
+    channels: [{ type: "voice", elapsed: "04:12", current: true }],
   },
 };
 

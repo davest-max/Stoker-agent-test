@@ -44,6 +44,7 @@ import {
 import { SlideInPage, SlideInPlaceholder } from "@/components/SlideInPage";
 import { NewOutboundPopover, AddOutboundButton, type NewOutboundConfig } from "@/components/NewOutboundPopover";
 import { InternalChatTrigger, InternalChatDockedPanel, InternalChatFloatPanel, InternalChatMaximizedPanel, type ChatView } from "@/components/InternalChatPopover";
+import { LiveVoiceCallBar } from "@/components/LiveVoiceCallBar";
 import { INITIAL_FAVORITE_EMPLOYEE_IDS, INITIAL_CHAT_THREADS, type InternalChatMessage } from "@/data/internalChat";
 import { DirectoryPage } from "@/components/DirectoryPage";
 import { CustomerProfilePanel } from "@/components/CustomerSnapshotPanel";
@@ -479,6 +480,16 @@ function resolveCurrentChannelKey(a: Assignment): string | undefined {
   return fallback ? channelKey(fallback) : undefined;
 }
 
+/** Same "which channel is current" resolution `activeChannelType` uses for
+ *  `activeAssignment` (see that derivation further down), just generalized
+ *  to any assignment — needed for `handleSelectAssignment`'s hold-swap logic
+ *  below, which has to check the *newly clicked* tile's channel type before
+ *  it becomes the active one. */
+function assignmentChannelType(a: Assignment): ChannelType | undefined {
+  const key = resolveCurrentChannelKey(a);
+  return a.channels.find((c) => channelKey(c) === key)?.type;
+}
+
 /** Demo seed data — kept around for manual testing (e.g. temporarily
  *  swapping the `useState<Assignment[]>([])` call below back to
  *  `useState<Assignment[]>(INITIAL_ASSIGNMENTS)`), but not loaded by
@@ -657,6 +668,41 @@ export function AgentNextGenPage({
   // internal state) so a future consumer of this same interaction could
   // coordinate against it if needed; currently just passed straight through.
   const [outcomeButtonOpen, setOutcomeButtonOpen] = useState(false);
+  // The one live voice call, independent of `activeAssignmentId` — an agent
+  // can only ever have one live call at a time (explicit product decision),
+  // so this is a single slot, not a list. Drives the persistent
+  // `LiveVoiceCallBar` (rendered unconditionally below, not gated on
+  // `activeAssignment`) and the matching tile's `liveCall` badge in the
+  // rail. Starting a *new* voice call while one is already live simply
+  // supersedes it here — there's no blocking dialog stopping that today,
+  // just the one-slot state naturally showing whichever call started last.
+  const [liveVoiceCall, setLiveVoiceCall] = useState<{ assignmentId: string; startedAt: number } | null>(null);
+  // Assignments whose voice call is on hold because the agent switched to a
+  // *different* voice call instead of hanging up this one first (see
+  // `handleSelectAssignment`'s own hold-swap logic below) — separate from
+  // the persistent bar's own manual Hold toggle (that one only ever affects
+  // whichever call is currently live/shown; this tracks calls that aren't
+  // shown at all right now). Surfaced as an "On hold" preview override on
+  // that tile's voice channel row (see the `assignments.map` below) — a
+  // held call keeps its `liveCall` badge off (it's not the live one anymore)
+  // but shouldn't just look identical to a channel that was never live.
+  const [heldVoiceCallAssignmentIds, setHeldVoiceCallAssignmentIds] = useState<Set<string>>(new Set());
+  // Assignments whose voice call has been hung up from the persistent bar —
+  // per an explicit follow-up, Hang Up no longer removes the channel/card at
+  // all (that used to be the only way a call "ended"). The interaction stays
+  // exactly where it is, fully viewable, until the agent either approves the
+  // Outcome or picks "Unassign & Dismiss" — both already funnel through
+  // `handleDismissChannel`/`handleDismissAssignment`, which clean this set up
+  // too once that actually happens (see those functions below). Surfaced as
+  // a "Call ended" label next to the channel name (InteractionActionsBar)
+  // and the same tile preview override `heldVoiceCallAssignmentIds` uses.
+  const [endedVoiceCallAssignmentIds, setEndedVoiceCallAssignmentIds] = useState<Set<string>>(new Set());
+  // The bar's own dragged position — lifted here (not local to
+  // LiveVoiceCallBar) since that component remounts via `key={assignmentId}`
+  // on every hold-swap; keeping this here means dragging the bar once keeps
+  // it there across whichever call currently owns it. `null` = default
+  // bottom-left anchor (see LiveVoiceCallBar's own doc comment).
+  const [voiceBarPosition, setVoiceBarPosition] = useState<{ top: number; left: number } | null>(null);
   const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   const [notifications, setNotifications] = useState(INITIAL_NOTIFICATIONS);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>("available");
@@ -1087,6 +1133,19 @@ export function AgentNextGenPage({
   const activeChannel = activeAssignment?.channels.find((c) => channelKey(c) === activeCurrentChannelKey);
   const activeChannelType = activeChannel?.type;
   const isActiveAssignmentVoiceCall = activeChannelType === "voice";
+  // Shared by the kebab's "Unassign & Dismiss" (`onDismissCurrentChannel`)
+  // and the Outcome form's "Approve & Save" (`onApproveOutcome`) — two
+  // different buttons that both end the interaction the exact same way, so
+  // both point at this one closure rather than duplicating the "dismiss
+  // just this channel vs. the whole card" branch twice. `undefined` when
+  // there's no current channel to dismiss (mirrors the old inline check).
+  const handleDismissActiveChannel =
+    activeAssignment && activeChannel
+      ? () => {
+          if (activeAssignment.channels.length > 1) handleDismissChannel(activeAssignment.id, activeChannel);
+          else handleDismissAssignment(activeAssignment.id);
+        }
+      : undefined;
   // Row 3 (`InteractionInfoBar`) follows whichever channel is current, not a
   // fixed assignment-level value — see `AssignmentChannel`'s own doc
   // comment for why (e.g. an elevated card's Email channel can be a
@@ -1235,6 +1294,44 @@ export function AgentNextGenPage({
     // slide-ins (Directory, etc.) are left alone since they can coexist
     // beside an interaction.
     setOpenSlideInPage((v) => (v !== null && FULL_PAGE_DESTINATIONS.has(v) ? null : v));
+
+    // Hold-swap — voice calls only. Clicking over to a *different* voice
+    // call while one is already live puts the old one on hold and hands the
+    // persistent bar to the newly selected call (real-desk-phone "picking up
+    // a different line" behavior); clicking a digital-channel tile (email,
+    // webchat, etc.) never touches `liveVoiceCall` at all — that's the whole
+    // point of the persistent bar surviving in the background. Excludes a
+    // call that's already ended (`endedVoiceCallAssignmentIds`) or a
+    // resolved case (e.g. the seeded historical "Jordan Lee" voice call,
+    // which is a finished, resolved call transcript, not something you can
+    // actually pick back up) — clicking either of those tiles still opens
+    // the interaction, it just doesn't try to make it the live call.
+    const targetAssignment = assignments.find((a) => a.id === id);
+    if (
+      targetAssignment &&
+      assignmentChannelType(targetAssignment) === "voice" &&
+      targetAssignment.escalationStatus !== "resolved" &&
+      !endedVoiceCallAssignmentIds.has(id)
+    ) {
+      setLiveVoiceCall((prev) => {
+        if (prev && prev.assignmentId === id) return prev; // already the live call
+        if (prev && prev.assignmentId !== id) {
+          // The call being backgrounded goes on hold — tracked separately
+          // from the bar's own local state since that state resets the
+          // moment this call stops being the live one.
+          setHeldVoiceCallAssignmentIds((held) => new Set(held).add(prev.assignmentId));
+        }
+        return { assignmentId: id, startedAt: Date.now() };
+      });
+      // Picking this call back up takes it off hold, whether it got there
+      // via the swap above or the agent had held it some other way.
+      setHeldVoiceCallAssignmentIds((held) => {
+        if (!held.has(id)) return held;
+        const next = new Set(held);
+        next.delete(id);
+        return next;
+      });
+    }
   };
 
   // Unassign & Dismiss (header kebab menu) — clears the active interaction
@@ -1260,6 +1357,22 @@ export function AgentNextGenPage({
   const handleDismissAssignment = (id: string) => {
     setAssignments((prev) => prev.filter((a) => a.id !== id));
     setActiveAssignmentId((prev) => (prev === id ? undefined : prev));
+    // Dismissing the whole card the live call's own assignment lives on ends
+    // the call too — keeps `liveVoiceCall`/the persistent bar/the tile badge
+    // from pointing at an assignment that no longer exists.
+    setLiveVoiceCall((prev) => (prev?.assignmentId === id ? null : prev));
+    setHeldVoiceCallAssignmentIds((held) => {
+      if (!held.has(id)) return held;
+      const next = new Set(held);
+      next.delete(id);
+      return next;
+    });
+    setEndedVoiceCallAssignmentIds((ended) => {
+      if (!ended.has(id)) return ended;
+      const next = new Set(ended);
+      next.delete(id);
+      return next;
+    });
   };
 
   const handleDismissChannel = (assignmentId: string, channel: InteractionChannel) => {
@@ -1270,6 +1383,34 @@ export function AgentNextGenPage({
           : a
       )
     );
+    // Same reasoning as handleDismissAssignment above, just scoped to "was
+    // the dismissed channel specifically the live voice one" rather than
+    // the whole card.
+    setLiveVoiceCall((prev) => (prev?.assignmentId === assignmentId && channel.type === "voice" ? null : prev));
+    if (channel.type === "voice") {
+      setEndedVoiceCallAssignmentIds((ended) => {
+        if (!ended.has(assignmentId)) return ended;
+        const next = new Set(ended);
+        next.delete(assignmentId);
+        return next;
+      });
+    }
+  };
+
+  /** The persistent voice bar's own Hang Up — per an explicit follow-up,
+   *  this no longer removes the channel/card at all (that used to be the
+   *  only way a call "ended"). The interaction stays exactly where it is —
+   *  still selectable, transcript intact — just marked ended
+   *  (`endedVoiceCallAssignmentIds`, surfaced as a "Call ended" label next
+   *  to the channel name and the tile's own preview override) and no longer
+   *  the live call. Actually removing the card/channel only happens later,
+   *  from `onApproveOutcome`/`onDismissCurrentChannel` (Outcome approval or
+   *  "Unassign & Dismiss") — both of which already clean this set back up
+   *  via `handleDismissChannel`/`handleDismissAssignment` above. */
+  const handleHangUpLiveCall = () => {
+    if (!liveVoiceCall) return;
+    setEndedVoiceCallAssignmentIds((prev) => new Set(prev).add(liveVoiceCall.assignmentId));
+    setLiveVoiceCall(null);
   };
 
   // Shared by `InteractionNavItem`'s own `onCurrentChannelChange` (clicking
@@ -1328,6 +1469,7 @@ export function AgentNextGenPage({
           : a
       )
     );
+    if (channel === "voice") setLiveVoiceCall({ assignmentId, startedAt: Date.now() });
     const assignment = assignments.find((a) => a.id === assignmentId);
     scheduleOutboundDemoTranscript(assignmentId, channel, assignment?.customerName ?? "the customer", skillLabel);
   };
@@ -1382,6 +1524,10 @@ export function AgentNextGenPage({
       };
       setAssignments((prev) => [newAssignment, ...prev]);
       setActiveAssignmentId(id);
+      // Internal agent-to-agent call — this branch only ever fires for
+      // `channel === "voice"` (see the early return above), so this always
+      // becomes the live call.
+      setLiveVoiceCall({ assignmentId: id, startedAt: Date.now() });
         // Starting this call always surfaces the interaction panel — if
       // Control Center/Settings currently has the whole content column
       // (see `isFullPageActive`), close it so `activeAssignment` takes over
@@ -1410,6 +1556,7 @@ export function AgentNextGenPage({
       };
       setAssignments((prev) => [newAssignment, ...prev]);
       setActiveAssignmentId(id);
+      if (channel === "voice") setLiveVoiceCall({ assignmentId: id, startedAt: Date.now() });
         // Same full-page dismiss as the internal-agent-call branch above.
       setOpenSlideInPage((v) => (v !== null && FULL_PAGE_DESTINATIONS.has(v) ? null : v));
       scheduleOutboundDemoTranscript(id, channel, contact.name, skillLabel);
@@ -1456,6 +1603,7 @@ export function AgentNextGenPage({
     };
     setAssignments((prev) => [newAssignment, ...prev]);
     setActiveAssignmentId(id);
+    if (channel === "voice") setLiveVoiceCall({ assignmentId: id, startedAt: Date.now() });
     // Same full-page dismiss as handleStartOutboundCall's branches above.
     setOpenSlideInPage((v) => (v !== null && FULL_PAGE_DESTINATIONS.has(v) ? null : v));
     scheduleOutboundDemoTranscript(id, channel, value, skillLabel);
@@ -1955,6 +2103,24 @@ export function AgentNextGenPage({
               />
               {assignments.map((a) => {
                 const outboundContact = getOutboundContact(a.customerId);
+                const isHeldVoiceCall = heldVoiceCallAssignmentIds.has(a.id);
+                const isEndedVoiceCall = endedVoiceCallAssignmentIds.has(a.id);
+                // Held/ended calls get a preview override on their voice
+                // channel row — otherwise a backgrounded or hung-up call
+                // reads identically to one that's still fully live, which is
+                // exactly the ambiguity this state exists to avoid. Not
+                // wired into `Assignment.channels` data itself (that's real
+                // per-channel data, this is transient UI state), so it's
+                // computed fresh here rather than stored on the channel.
+                // Mutually exclusive in practice (an ended call is never
+                // also held), but ended wins if that ever changes — there's
+                // no picking the call back up once it's actually over.
+                const displayChannels =
+                  isHeldVoiceCall || isEndedVoiceCall
+                    ? a.channels.map((c) =>
+                        c.type === "voice" ? { ...c, preview: isEndedVoiceCall ? "Call ended" : "On hold" } : c
+                      )
+                    : a.channels;
                 return (
                   <InteractionNavItem
                     key={a.id}
@@ -1962,10 +2128,11 @@ export function AgentNextGenPage({
                     active={activeAssignmentId === a.id}
                     onClick={() => handleSelectAssignment(a.id)}
                     awaitingResponse={a.awaitingResponse}
+                    liveCall={liveVoiceCall?.assignmentId === a.id}
                     elapsed={a.elapsed}
                     expanded={navOpen}
                     issueSummary={a.issueSummary}
-                    channels={a.channels}
+                    channels={displayChannels}
                     currentChannelKey={resolveCurrentChannelKey(a)}
                     onCurrentChannelChange={(key) => handleChannelSelect(a.id, key)}
                     // "+" now lives on the card itself, top-right next to the
@@ -2123,25 +2290,8 @@ export function AgentNextGenPage({
                       // fallback is kept.
                       actionsBar={
                         <InteractionActionsBar
-                          isVoiceCall={isActiveAssignmentVoiceCall}
-                          customerName={activeAssignment.customerName}
-                          issueSummary={activeAssignment.issueSummary}
                           currentChannelType={activeChannelType}
-                          outcomeOpen={outcomeButtonOpen}
-                          onOutcomeOpenChange={setOutcomeButtonOpen}
-                          // Same "dismiss just this channel vs. the whole
-                          // card" split `InteractionNavItem`'s own row
-                          // kebabs already use (see
-                          // `handleDismissChannel`/`handleDismissAssignment`
-                          // above).
-                          onDismissCurrentChannel={
-                            activeChannel
-                              ? () => {
-                                  if (activeAssignment.channels.length > 1) handleDismissChannel(activeAssignment.id, activeChannel);
-                                  else handleDismissAssignment(activeAssignment.id);
-                                }
-                              : undefined
-                          }
+                          callEnded={endedVoiceCallAssignmentIds.has(activeAssignment.id)}
                         />
                       }
                     />
@@ -2152,6 +2302,18 @@ export function AgentNextGenPage({
                       caseId={activeCaseId}
                       escalationStatus={activeEscalationStatus ?? activeAssignment.escalationStatus}
                       onEscalationStatusChange={(status) => activeAssignmentId && handleEscalationStatusChange(activeAssignmentId, status)}
+                      currentChannelType={activeChannelType}
+                      customerName={activeAssignment.customerName}
+                      issueSummary={activeAssignment.issueSummary}
+                      outcomeOpen={outcomeButtonOpen}
+                      onOutcomeOpenChange={setOutcomeButtonOpen}
+                      // Same "dismiss just this channel vs. the whole card"
+                      // closure for both — approving the Outcome form and
+                      // "Unassign & Dismiss" end the interaction the exact
+                      // same way, just from two different buttons. See
+                      // `handleDismissActiveChannel`'s own doc comment.
+                      onDismissCurrentChannel={handleDismissActiveChannel}
+                      onApproveOutcome={handleDismissActiveChannel}
                     />
                   )}
                   {/* Body row: main content + Customer Profile. Slide-in
@@ -2446,6 +2608,46 @@ export function AgentNextGenPage({
         )}
 
       </div>
+
+      {/* Persistent voice-call bar — deliberately outside the
+       *  `activeAssignment`-gated content column above, so it has no
+       *  dependency on which interaction is currently on screen (see its own
+       *  doc comment in LiveVoiceCallBar.tsx). `key` resets its local mute/
+       *  hold/timer state whenever a *different* call becomes the live one. */}
+      {liveVoiceCall && (() => {
+        const callAssignment = assignments.find((a) => a.id === liveVoiceCall.assignmentId);
+        // Every other switchable voice call — same eligibility
+        // `handleSelectAssignment`'s own hold-swap check uses (a real,
+        // ongoing voice call, not an ended or resolved one) — lets the bar
+        // offer a picker instead of requiring the agent to go find the
+        // right tile in the rail.
+        const otherVoiceCalls = assignments
+          .filter(
+            (a) =>
+              a.id !== liveVoiceCall.assignmentId &&
+              assignmentChannelType(a) === "voice" &&
+              a.escalationStatus !== "resolved" &&
+              !endedVoiceCallAssignmentIds.has(a.id)
+          )
+          .map((a) => ({ assignmentId: a.id, customerName: a.customerName, isInternalAgentCall: a.isInternalAgentCall }));
+        return (
+          <LiveVoiceCallBar
+            key={liveVoiceCall.assignmentId}
+            customerName={callAssignment?.customerName}
+            isInternalAgentCall={callAssignment?.isInternalAgentCall}
+            startedAt={liveVoiceCall.startedAt}
+            onHangUp={handleHangUpLiveCall}
+            position={voiceBarPosition}
+            onPositionChange={setVoiceBarPosition}
+            otherVoiceCalls={otherVoiceCalls}
+            // Reuses the exact same handler a tile click uses — the whole
+            // point being that switching from the bar is indistinguishable
+            // from switching by clicking the tile (same hold-swap, same
+            // `activeAssignmentId` update, same tile highlight).
+            onSwitchCall={handleSelectAssignment}
+          />
+        );
+      })()}
     </div>
   );
 }
