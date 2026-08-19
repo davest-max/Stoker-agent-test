@@ -118,6 +118,13 @@ export interface InteractionChannel {
   elapsed: string;
   /** Message preview for this channel. */
   preview?: string;
+  /** Renders `preview` in critical (red) instead of secondary gray — e.g.
+   *  an "On hold" override on a voice channel, so the hold state reads as
+   *  urgent the same way `awaitingResponse` already makes the elapsed-time
+   *  chip red. Independent of `awaitingResponse` (different meaning: this
+   *  is about the call/channel's own state, not whether the customer is
+   *  waiting on a reply) — a channel could in principle need both. */
+  previewCritical?: boolean;
   /**
    * Whether this is the channel currently open/being viewed for this
    * interaction. Only highlighted (blue background) when the parent
@@ -181,6 +188,8 @@ interface ChannelRowProps {
   label: string;
   elapsed: string;
   preview?: string;
+  /** See `InteractionChannel.previewCritical` above. */
+  previewCritical?: boolean;
   /** Blue-highlighted row background — set by the parent when this row is
    *  both `current` and the card is `active`. */
   highlighted?: boolean;
@@ -203,6 +212,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
   label,
   elapsed,
   preview,
+  previewCritical,
   highlighted,
   isFirst,
   awaitingResponse,
@@ -238,7 +248,11 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
       <span className="flex-1" />
       {showMenu && <KebabMenuButton items={menuItems} ariaLabel={`More options for ${label}`} />}
     </div>
-    {preview && <p className="lyra-body-sm text-lyra-fg-secondary truncate">{preview}</p>}
+    {preview && (
+      <p className={cn("lyra-body-sm truncate", previewCritical ? "text-lyra-status-critical-strong" : "text-lyra-fg-secondary")}>
+        {preview}
+      </p>
+    )}
   </div>
   );
 };
@@ -251,6 +265,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({
 export interface ChannelRowInstanceProps {
   elapsed: string;
   preview?: string;
+  previewCritical?: boolean;
   highlighted?: boolean;
   isFirst?: boolean;
   awaitingResponse?: boolean;

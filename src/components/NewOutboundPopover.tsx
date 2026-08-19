@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Popover,
+  Menu,
   Select,
   Input,
   Button,
@@ -17,10 +18,11 @@ import {
   type CreateNewOutboundGroup,
   type CreateNewChannelOption,
   type PhoneValue,
+  type MenuEntry,
 } from "@nicecxone/lyra-ui";
-import { Plus, ChevronLeft, X, User, Headset, Route, UsersRound, Building2, Grid3x3 } from "lucide-react";
+import { Plus, ChevronLeft, ChevronRight, X, User, Headset, Route, UsersRound, Building2, Grid3x3 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ContactActionButtons } from "@/components/DirectoryPage";
+import { CONTACT_CHANNEL_ORDER, CONTACT_CHANNEL_ICON, CONTACT_CHANNEL_LABEL } from "@/components/DirectoryPage";
 import { contactMatchesQuery } from "@/data/directory";
 
 /* ── NewOutboundPopover ──
@@ -196,50 +198,122 @@ function ContactRow({
   favorited: boolean;
   onToggleFavorite: () => void;
   onClick: () => void;
-  /** Row-level shortcut — clicking one of the hover-revealed channel icons
-   *  below skips the "pick a channel" step on the detail screen entirely,
-   *  landing there with that channel (and its address) already selected.
-   *  Reuses DirectoryPage's own `ContactActionButtons` (same per-channel
-   *  icon set, colored via CHANNEL_ACCENT) rather than a second copy —
-   *  works unchanged across every contact kind shown here (customer/
-   *  agent/skill/team/external), since `channels` is on the shared
-   *  `CreateNewOutboundContact` shape all of them synthesize into.
-   *  `event` carries the click position — needed for the Agents "chat"
-   *  icon, which opens Internal Chat floating near wherever the agent
-   *  clicked rather than at a fixed anchor. */
-  onSelectChannel: (channel: ChannelType, event: React.MouseEvent<HTMLButtonElement>) => void;
+  /** Row-level shortcut — picking a channel from the row's own flyout menu
+   *  (see the chevron trigger below) skips the "pick a channel" step on the
+   *  detail screen entirely, landing there with that channel (and its
+   *  address) already selected. Works unchanged across every contact kind
+   *  shown here (customer/agent/skill/team/external), since `channels` is
+   *  on the shared `CreateNewOutboundContact` shape all of them synthesize
+   *  into. `position` stands in for a click coordinate (a `Menu` item's
+   *  `onClick` carries no event) — needed for the Agents "chat" entry,
+   *  which opens Internal Chat floating near this row's own trigger rather
+   *  than at a fixed anchor. */
+  onSelectChannel: (channel: ChannelType, position: { x: number; y: number }) => void;
 }) {
+  // Was previously six-ish icon buttons revealed inline in the row's own
+  // trailing slot on hover — at this row's width that regularly clipped
+  // longer contact names before the icons even finished animating in (see
+  // the reference PNG this was rebuilt from). Now just a chevron trigger;
+  // the channel choices themselves live in a `Popover`+`Menu` flyout to the
+  // row's right (composition over reimplementation — CLAUDE.md/
+  // CONTRIBUTING.md §1), opened on hover of either the row or the trigger
+  // itself, same reveal trigger as before, just relocated outside the row's
+  // own layout so it can no longer compete with the name/subtitle for
+  // width.
+  const [channelMenuOpen, setChannelMenuOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const visibleChannels = CONTACT_CHANNEL_ORDER.filter((type) => contact.channels.includes(type));
+
+  const channelMenuItems: MenuEntry[] = visibleChannels.map((type) => {
+    const Icon = CONTACT_CHANNEL_ICON[type];
+    return {
+      id: type,
+      label: CONTACT_CHANNEL_LABEL[type],
+      icon: <Icon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />,
+      onClick: () => {
+        setChannelMenuOpen(false);
+        const rect = triggerRef.current?.getBoundingClientRect();
+        onSelectChannel(type, rect ? { x: rect.left, y: rect.top } : { x: 0, y: 0 });
+      },
+    };
+  });
+
   return (
     <ListItem
       className="group/row"
       onClick={onClick}
+      onMouseEnter={() => setChannelMenuOpen(true)}
+      onMouseLeave={() => setChannelMenuOpen(false)}
       leading={<ContactAvatar contact={contact} />}
       title={contact.name}
       subtitle={contact.subtitle}
       trailing={
         <div className="flex items-center gap-1">
-          <div className="opacity-0 transition-opacity group-hover/row:opacity-100">
-            <ContactActionButtons channels={contact.channels} onAction={onSelectChannel} />
-          </div>
           <div onClick={(e) => e.stopPropagation()}>
             <FavoriteButton favorited={favorited} onClick={onToggleFavorite} label={contact.name} placement="left" />
           </div>
+          {visibleChannels.length > 0 && (
+            <div onClick={(e) => e.stopPropagation()}>
+              <Popover
+                open={channelMenuOpen}
+                onOpenChange={setChannelMenuOpen}
+                placement="right"
+                align="start"
+                sideOffset={4}
+                showArrow={false}
+                className="w-auto"
+                content={
+                  // Own hover handlers — the flyout is portaled outside this
+                  // row's DOM subtree, so without these, moving the cursor
+                  // off the row and onto the menu (crossing the small gap
+                  // between them) would read as "left the row" and close it
+                  // before the click ever lands.
+                  <div onMouseEnter={() => setChannelMenuOpen(true)} onMouseLeave={() => setChannelMenuOpen(false)}>
+                    <Menu aria-label={`Channels for ${contact.name}`} items={channelMenuItems} />
+                  </div>
+                }
+              >
+                <button
+                  ref={triggerRef}
+                  type="button"
+                  aria-label={`Channels for ${contact.name}`}
+                  aria-haspopup="menu"
+                  aria-expanded={channelMenuOpen}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary transition-colors hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus"
+                >
+                  <ChevronRight className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
+                </button>
+              </Popover>
+            </div>
+          )}
         </div>
       }
     />
   );
 }
 
-/* ── Channel icon button — always tinted in its own accent color (per
- *  CHANNEL_ACCENT); selected adds an active-style ring, unselected drops to
- *  ~70% opacity (see chat with the user: closest match to the Figma
- *  reference, which renders every channel button in full accent color at
- *  once with no separate "off" mock to copy). Disabled (channel not
- *  offered for this contact/value) drops further and blocks interaction.
- *  The `label` prop used to only reach the button as `aria-label`/`title` —
- *  color alone (before an agent hovers or reads a tooltip) wasn't enough to
- *  tell channels apart at a glance, so it's now also rendered as a small
- *  caption underneath, per an explicit follow-up request. ── */
+/* ── Channel icon button — unselected stays in its own soft accent tint
+ *  (per CHANNEL_ACCENT) at ~70% opacity. Selected used to only add a ring on
+ *  top of that same soft tint — user testing found agents weren't reliably
+ *  noticing which channel was picked, so selected now flips to a solid,
+ *  "strong" fill in that channel's own accent color with a white icon (same
+ *  solid-fill treatment as LiveVoiceCallBar's Hold/Record selected states —
+ *  see that file), plus the ring on top as reinforcement, not the whole
+ *  signal. Disabled (channel not offered for this contact/value) drops
+ *  further and blocks interaction. The `label` prop is also rendered as a
+ *  small caption underneath — color alone still isn't enough to tell
+ *  channels apart at a glance, per an earlier follow-up request. ── */
+
+// No "strong" background token exists on `CHANNEL_ACCENT` itself (only
+// text/border) — this is the one place that needs solid fills, so it's its
+// own small map rather than adding a rarely-used field to that shared type.
+const CHANNEL_SELECTED_BG: Record<ChannelType, string> = {
+  voice: "bg-lyra-accent-purple-strong",
+  sms: "bg-lyra-accent-lime-strong",
+  whatsapp: "bg-lyra-accent-green-strong",
+  email: "bg-lyra-accent-pink-strong",
+  chat: "bg-lyra-accent-teal-strong",
+};
 
 function ChannelIconButton({
   channel,
@@ -268,12 +342,9 @@ function ChannelIconButton({
         title={label}
         className={cn(
           "flex h-9 w-9 shrink-0 items-center justify-center rounded-lyra-md border transition-all",
-          accent.bg,
-          accent.border,
-          accent.text,
           selected
-            ? "opacity-100 ring-2 ring-lyra-border-active ring-offset-1"
-            : "opacity-70 hover:opacity-100",
+            ? cn(CHANNEL_SELECTED_BG[channel], "border-transparent text-lyra-fg-on-primary opacity-100 ring-2 ring-lyra-border-active ring-offset-2")
+            : cn(accent.bg, accent.border, accent.text, "opacity-70 hover:opacity-100"),
           disabled && "opacity-30 pointer-events-none"
         )}
       >
@@ -596,21 +667,33 @@ export function AddOutboundButton({
 
 /* ── Root ── */
 
+// Seeded so the popover never opens to an empty, unconvincing "Favorites"
+// screen during a demo — a handful of agents an outbound skill and a
+// customer, favorited from the start. Real favoriting is still fully
+// agent-driven from here on (see `toggleFavorite` below); this is just the
+// starting state, not a pinned/can't-remove list. IDs match `directory.ts`
+// seed data (`DIRECTORY_AGENTS`/`DIRECTORY_SKILLS`/`DIRECTORY_CUSTOMERS`).
+const DEFAULT_FAVORITE_IDS = ["john-smith", "amara", "diego", "lena", "tomas", "vip-support", "sofia"];
+
 export function NewOutboundPopover({ title = "New Outbound", expanded = false, outbound }: NewOutboundPopoverProps) {
   const [open, setOpen] = useState(false);
-  // Multi-select category filter — empty means "no explicit filter", which
-  // reads as "search every category" (the old ALL_GROUP_ID sentinel is gone;
-  // zero selections now means the same thing without needing a fake value in
-  // the list). Not reset on close, same "leave it as the agent left it"
-  // convention as `search` below.
-  const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
+  // Multi-select category filter — purely explicit now: a category is
+  // searched only while it's checked, full stop (no more "0 selected reads
+  // as search everything" sentinel behavior). A "Select All" row in the
+  // dropdown itself (see `showSelectAll` below) covers the "search
+  // everything" case instead of an implicit empty-selection meaning.
+  // Defaults to Favorites alone so the popover always opens on a populated,
+  // relevant view instead of an empty "select a category" prompt. Not reset
+  // on close after that, same "leave it as the agent left it" convention as
+  // `search` below.
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>(["favorites"]);
   // Dial Pad is a mode switch (swaps the whole body for a phone field), not a
   // filterable category, so it's its own flag rather than a synthetic value
   // hiding inside the category selection — see its own doc comment further
   // down at the `content` branch that reads this.
   const [dialPadActive, setDialPadActive] = useState(false);
   const [search, setSearch] = useState("");
-  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set(DEFAULT_FAVORITE_IDS));
   const [screen, setScreen] = useState<Screen>({ kind: "browse" });
   // Last 3 outbound skills the agent has started an interaction with,
   // most-recent-first — surfaced as a "Recent" shortcut section in the
@@ -680,18 +763,18 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
 
   const query = search.trim().toLowerCase();
 
-  // Which groups are in scope: whatever's explicitly checked, or every real
-  // contacts-kind group (Favorites included) when nothing's checked yet —
-  // same "All" behavior the old ALL_GROUP_ID sentinel gave, just implicit.
-  const scopedGroups =
-    selectedCategoryIds.length > 0
-      ? outbound.groups.filter((g) => selectedCategoryIds.includes(g.id))
-      : outbound.groups.filter((g) => (g.kind ?? "contacts") === "contacts");
+  // Which groups are in scope: only whatever's explicitly checked — no more
+  // implicit "nothing checked means search everything" fallback. Check
+  // "Select All" in the dropdown to search every category at once instead.
+  const scopedGroups = outbound.groups.filter((g) => selectedCategoryIds.includes(g.id));
 
   // Nothing selected AND nothing typed is the one state that still needs an
-  // explicit prompt — dumping the entire directory unfiltered isn't a useful
-  // default view. Any explicit category selection shows its full contents
-  // right away (no query required), matching the old single-group behavior.
+  // explicit prompt. A typed query still falls through to the unmatched-flow
+  // ("No match found" + Continue) even with zero categories checked, same as
+  // a query that matches nothing within whatever categories are checked —
+  // see `noMatches` below. Any explicit category selection shows its full
+  // contents right away (no query required), matching the old single-group
+  // behavior.
   const showStartTypingPrompt = selectedCategoryIds.length === 0 && !query;
 
   /** Categorized sections across whatever's in scope — one per group with at
@@ -765,9 +848,9 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
       favorited={favoriteIds.has(contact.id)}
       onToggleFavorite={() => toggleFavorite(contact.id)}
       onClick={() => setScreen({ kind: "detail", contact, query: "" })}
-      onSelectChannel={(channel, event) => {
+      onSelectChannel={(channel, position) => {
         if (channel === "chat" && contact.kind === "agent" && outbound.onOpenInternalChat) {
-          outbound.onOpenInternalChat(contact.id, { x: event.clientX, y: event.clientY });
+          outbound.onOpenInternalChat(contact.id, position);
           resetAndClose();
           return;
         }
@@ -884,7 +967,7 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
   } else if (showStartTypingPrompt) {
     content = (
       <p className="px-4 py-8 text-center lyra-body-sm text-lyra-fg-secondary">
-        Start typing to search across every category.
+        Select a category above, or type a phone number or email.
       </p>
     );
   } else if (sections.length === 0) {
@@ -1010,11 +1093,12 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
           )}
           <Select
             multiple
+            showSelectAll
             label="Search"
             values={selectedCategoryIds}
             onValuesChange={setSelectedCategoryIds}
             options={categoryOptions}
-            placeholder="All categories"
+            placeholder="Select a category to search"
             portalDropdown
           />
         </div>

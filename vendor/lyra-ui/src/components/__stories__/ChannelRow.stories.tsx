@@ -95,6 +95,15 @@ export const Highlighted: Story = {
   ),
 };
 
+export const OnHold: Story = {
+  name: "Voice — On Hold (red preview text)",
+  render: () => (
+    <Frame>
+      <VoiceChannelRow elapsed="01:12" preview="On hold · 00:14" previewCritical isFirst />
+    </Frame>
+  ),
+};
+
 export const NoKebabMenu: Story = {
   name: "Email — No Kebab Menu (removable=false)",
   render: () => (

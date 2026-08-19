@@ -32,6 +32,15 @@ export interface InteractionNavItemProps {
   /** Elapsed time label as 4-digit MM:SS (e.g. "00:02" = 2 seconds since the
    *  customer's last response) — shown under the compact avatar tile. */
   elapsed: string;
+  /** Renders the compact tile's `elapsed` text in critical (red) instead of
+   *  secondary gray — e.g. a held voice call, where the consumer also swaps
+   *  `elapsed` itself to a hold-duration count instead of the normal total
+   *  time (this component has no opinion on which number `elapsed` is; it
+   *  just controls color). Compact (icon-rail) mode only, same scope as
+   *  `liveCall` above — the expanded card's own channel rows have their own
+   *  independent critical treatment (see `InteractionChannel
+   *  .previewCritical` in channel-row.tsx). */
+  elapsedCritical?: boolean;
   /** Marks this card as something other than a plain customer interaction —
    *  e.g. a headset glyph for an internal agent-to-agent voice call, where
    *  there's no customer identity to show initials for and showing them
@@ -150,6 +159,7 @@ const InteractionNavItem = React.forwardRef<HTMLDivElement, InteractionNavItemPr
       customerName,
       channels = [],
       elapsed,
+      elapsedCritical = false,
       avatarIcon,
       awaitingResponse = false,
       liveCall = false,
@@ -321,6 +331,7 @@ const InteractionNavItem = React.forwardRef<HTMLDivElement, InteractionNavItemPr
                   key={`${channelKey(ch)}-${i}`}
                   elapsed={ch.elapsed}
                   preview={ch.preview}
+                  previewCritical={ch.previewCritical}
                   highlighted={highlighted}
                   isFirst={i === 0}
                   awaitingResponse={ch.awaitingResponse}
@@ -514,7 +525,12 @@ const InteractionNavItem = React.forwardRef<HTMLDivElement, InteractionNavItemPr
                 </span>
               )}
             </span>
-            <span className="lyra-body-xs text-lyra-fg-secondary" aria-hidden="true">{elapsed}</span>
+            <span
+              className={cn("lyra-body-xs", elapsedCritical ? "text-lyra-status-critical-strong" : "text-lyra-fg-secondary")}
+              aria-hidden="true"
+            >
+              {elapsed}
+            </span>
           </div>
         </Popover>
       );

@@ -16,9 +16,11 @@ import { contactMatchesQuery, type DirectoryCustomer, type DirectoryAgent, type 
  *  supports, colored via `CHANNEL_ACCENT` (the same lyra-ui map the
  *  channel chips/tiles elsewhere in the app use). ── */
 
-const CONTACT_CHANNEL_ORDER: ChannelType[] = ["voice", "email", "chat", "whatsapp"];
+// Exported — NewOutboundPopover's own channel flyout menu reuses this exact
+// order/icon/label mapping instead of a second copy (see its ContactRow).
+export const CONTACT_CHANNEL_ORDER: ChannelType[] = ["voice", "email", "chat", "whatsapp"];
 
-const CONTACT_CHANNEL_ICON: Record<ChannelType, typeof Phone> = {
+export const CONTACT_CHANNEL_ICON: Record<ChannelType, typeof Phone> = {
   voice: Phone,
   email: Mail,
   chat: MessageSquare,
@@ -26,7 +28,7 @@ const CONTACT_CHANNEL_ICON: Record<ChannelType, typeof Phone> = {
   whatsapp: MessageCircle,
 };
 
-const CONTACT_CHANNEL_LABEL: Record<ChannelType, string> = {
+export const CONTACT_CHANNEL_LABEL: Record<ChannelType, string> = {
   voice: "Call",
   email: "Email",
   chat: "Chat",

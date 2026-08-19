@@ -22,6 +22,7 @@ const meta: Meta<typeof InteractionNavItem> = {
     active: { control: "boolean" },
     awaitingResponse: { control: "boolean" },
     liveCall: { control: "boolean" },
+    elapsedCritical: { control: "boolean" },
   },
 };
 
@@ -75,6 +76,23 @@ export const CompactLiveCall: Story = {
     elapsed: "04:12",
     expanded: false,
     channels: [{ type: "voice", elapsed: "04:12", current: true }],
+  },
+};
+
+export const CompactOnHold: Story = {
+  name: "Compact — Voice Call On Hold",
+  args: {
+    customerName: "Ray Torres",
+    active: false,
+    awaitingResponse: false,
+    liveCall: true,
+    // The consumer swaps `elapsed` to a hold-duration count (not the call's
+    // total time) and flips `elapsedCritical` — this component just renders
+    // whatever string/color combination it's given.
+    elapsed: "00:14",
+    elapsedCritical: true,
+    expanded: false,
+    channels: [{ type: "voice", elapsed: "00:14", current: true }],
   },
 };
 
@@ -268,6 +286,25 @@ export const ExpandedVoice: Story = {
       elapsed: "01:12",
       current: true,
       preview: randomSkill(),
+    }],
+  },
+  parameters: { layout: "padded" },
+};
+
+export const ExpandedOnHold: Story = {
+  name: "Expanded — Voice Call On Hold",
+  args: {
+    customerName: "Marcus Webb",
+    active: false,
+    awaitingResponse: false,
+    elapsed: "01:12",
+    expanded: true,
+    channels: [{
+      type: "voice",
+      elapsed: "01:12",
+      current: true,
+      preview: "On hold · 00:14",
+      previewCritical: true,
     }],
   },
   parameters: { layout: "padded" },

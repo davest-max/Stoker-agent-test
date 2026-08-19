@@ -490,6 +490,18 @@ function assignmentChannelType(a: Assignment): ChannelType | undefined {
   return a.channels.find((c) => channelKey(c) === key)?.type;
 }
 
+/** Same `MM:SS` shape `LiveVoiceCallBar`'s own `formatElapsed` uses —
+ *  duplicated locally rather than imported since this file doesn't
+ *  otherwise depend on that component's internals, same reasoning as that
+ *  file's own `getInitials` doc comment. Used for the "On hold · MM:SS"
+ *  tile preview text below. */
+function formatHoldDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, totalSeconds);
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
 /** Demo seed data — kept around for manual testing (e.g. temporarily
  *  swapping the `useState<Assignment[]>([])` call below back to
  *  `useState<Assignment[]>(INITIAL_ASSIGNMENTS)`), but not loaded by
@@ -676,17 +688,41 @@ export function AgentNextGenPage({
   // rail. Starting a *new* voice call while one is already live simply
   // supersedes it here — there's no blocking dialog stopping that today,
   // just the one-slot state naturally showing whichever call started last.
-  const [liveVoiceCall, setLiveVoiceCall] = useState<{ assignmentId: string; startedAt: number } | null>(null);
-  // Assignments whose voice call is on hold because the agent switched to a
-  // *different* voice call instead of hanging up this one first (see
-  // `handleSelectAssignment`'s own hold-swap logic below) — separate from
-  // the persistent bar's own manual Hold toggle (that one only ever affects
-  // whichever call is currently live/shown; this tracks calls that aren't
-  // shown at all right now). Surfaced as an "On hold" preview override on
-  // that tile's voice channel row (see the `assignments.map` below) — a
-  // held call keeps its `liveCall` badge off (it's not the live one anymore)
-  // but shouldn't just look identical to a channel that was never live.
+  const [liveVoiceCall, setLiveVoiceCall] = useState<{ assignmentId: string } | null>(null);
+  // Real "when did this specific call first go live" timestamps, keyed by
+  // assignment id — set once (see `goLiveWithVoiceCall` below) and never
+  // overwritten again. `liveVoiceCall` itself no longer carries its own
+  // `startedAt`: it used to, but that meant every hold-swap re-stamped
+  // `Date.now()` even when *resuming* a call that had been going the whole
+  // time in the background — its duration would visibly reset to 0:00 on
+  // every switch back, which doesn't match a real phone call's timer. Now
+  // the timer is continuous for the life of the call; only *hold* state
+  // (below) actually changes on a swap.
+  const [voiceCallStartedAt, setVoiceCallStartedAt] = useState<Record<string, number>>({});
+  // Assignments whose voice call is currently on hold — covers both "the
+  // agent switched to a *different* voice call instead of hanging up this
+  // one first" (see `handleSelectAssignment`'s hold-swap logic below) AND
+  // the persistent bar's own manual Hold button for whichever call is
+  // currently live. Those two used to be tracked separately (this set for
+  // backgrounded calls, `LiveVoiceCallBar`'s own local `isOnHold` state for
+  // the live one) — per an explicit follow-up, they're unified into this one
+  // set so hold is a real, persistent fact about the call rather than
+  // something that quietly resets to "off" every time that call becomes the
+  // live one again. An agent must now explicitly hit Resume in the bar to
+  // pick a held call back up, same as an old-fashioned desk phone. Surfaced
+  // as an "On hold" preview override on that tile's voice channel row (see
+  // the `assignments.map` below) whether or not that tile is also the
+  // active/live one right now.
   const [heldVoiceCallAssignmentIds, setHeldVoiceCallAssignmentIds] = useState<Set<string>>(new Set());
+  // When each currently-held call actually went on hold — set once per hold
+  // (see `toggleVoiceCallHold` and the auto-hold-on-swap below) and cleared
+  // on resume, so it always reflects one continuous hold stretch rather than
+  // resetting every time the same call gets swapped away again while it's
+  // still on hold. Drives the "On hold · MM:SS" timer shown on both the
+  // persistent bar (when this is the live call) and the tile's own preview
+  // (when it isn't) — see `formatHoldDuration` below and the `assignments
+  // .map` block further down.
+  const [voiceCallHeldSince, setVoiceCallHeldSince] = useState<Record<string, number>>({});
   // Assignments whose voice call has been hung up from the persistent bar —
   // per an explicit follow-up, Hang Up no longer removes the channel/card at
   // all (that used to be the only way a call "ended"). The interaction stays
@@ -1285,6 +1321,39 @@ export function AgentNextGenPage({
     );
   };
 
+  // Single place that actually promotes an assignment to the live voice
+  // call — records its true "first went live" timestamp exactly once (see
+  // `voiceCallStartedAt`'s own doc comment above) rather than letting every
+  // caller stamp its own `Date.now()`, which is what let a resumed call's
+  // timer silently reset. Every `setLiveVoiceCall(...)` in this file should
+  // go through this instead of constructing the object directly.
+  const goLiveWithVoiceCall = (assignmentId: string) => {
+    setVoiceCallStartedAt((prev) => (prev[assignmentId] !== undefined ? prev : { ...prev, [assignmentId]: Date.now() }));
+    setLiveVoiceCall({ assignmentId });
+  };
+
+  // Manual Hold/Resume toggle — the single source of truth for both the
+  // persistent bar's own Hold button (whichever call is currently live) and
+  // a backgrounded call's tile preview (see `heldVoiceCallAssignmentIds`'s
+  // own doc comment above for why these are now the same set).
+  const toggleVoiceCallHold = (assignmentId: string) => {
+    const isCurrentlyHeld = heldVoiceCallAssignmentIds.has(assignmentId);
+    setHeldVoiceCallAssignmentIds((held) => {
+      const next = new Set(held);
+      if (isCurrentlyHeld) next.delete(assignmentId);
+      else next.add(assignmentId);
+      return next;
+    });
+    setVoiceCallHeldSince((prev) => {
+      if (isCurrentlyHeld) {
+        if (!(assignmentId in prev)) return prev;
+        const { [assignmentId]: _removed, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [assignmentId]: Date.now() };
+    });
+  };
+
   // Switching interactions always lands back on the Chat tab — seeing a
   // different customer's history tab still open after switching would be odd.
   const handleSelectAssignment = (id: string) => {
@@ -1313,24 +1382,31 @@ export function AgentNextGenPage({
       targetAssignment.escalationStatus !== "resolved" &&
       !endedVoiceCallAssignmentIds.has(id)
     ) {
-      setLiveVoiceCall((prev) => {
-        if (prev && prev.assignmentId === id) return prev; // already the live call
-        if (prev && prev.assignmentId !== id) {
-          // The call being backgrounded goes on hold — tracked separately
-          // from the bar's own local state since that state resets the
-          // moment this call stops being the live one.
-          setHeldVoiceCallAssignmentIds((held) => new Set(held).add(prev.assignmentId));
-        }
-        return { assignmentId: id, startedAt: Date.now() };
-      });
-      // Picking this call back up takes it off hold, whether it got there
-      // via the swap above or the agent had held it some other way.
-      setHeldVoiceCallAssignmentIds((held) => {
-        if (!held.has(id)) return held;
-        const next = new Set(held);
-        next.delete(id);
-        return next;
-      });
+      if (liveVoiceCall && liveVoiceCall.assignmentId !== id) {
+        // The call being backgrounded goes on hold automatically — same
+        // "picking up a different line" behavior as a real desk phone.
+        setHeldVoiceCallAssignmentIds((held) => new Set(held).add(liveVoiceCall.assignmentId));
+        // `?? Date.now()` — only stamp this the first time. If this same
+        // call was already on hold (e.g. the agent came back to it without
+        // hitting Resume, then swapped to a third call), its hold stretch
+        // has been continuous this whole time; re-stamping here would reset
+        // the "On hold · MM:SS" timer for no reason.
+        setVoiceCallHeldSince((prev) => ({
+          ...prev,
+          [liveVoiceCall.assignmentId]: prev[liveVoiceCall.assignmentId] ?? Date.now(),
+        }));
+      }
+      if (!liveVoiceCall || liveVoiceCall.assignmentId !== id) {
+        goLiveWithVoiceCall(id);
+      }
+      // Deliberately NOT clearing `id` from `heldVoiceCallAssignmentIds`
+      // here — per an explicit follow-up, returning to a call that was put
+      // on hold (by this swap or the agent's own manual Hold) should still
+      // show it as on hold. The agent has to hit Resume in the bar itself
+      // to actually pick the audio back up; just re-selecting the tile/
+      // switcher entry isn't enough. A call that was never on hold to begin
+      // with is unaffected either way (`toggleVoiceCallHold` only flips its
+      // own id).
     }
   };
 
@@ -1373,6 +1449,16 @@ export function AgentNextGenPage({
       next.delete(id);
       return next;
     });
+    setVoiceCallStartedAt((prev) => {
+      if (!(id in prev)) return prev;
+      const { [id]: _removed, ...rest } = prev;
+      return rest;
+    });
+    setVoiceCallHeldSince((prev) => {
+      if (!(id in prev)) return prev;
+      const { [id]: _removed, ...rest } = prev;
+      return rest;
+    });
   };
 
   const handleDismissChannel = (assignmentId: string, channel: InteractionChannel) => {
@@ -1394,6 +1480,16 @@ export function AgentNextGenPage({
         next.delete(assignmentId);
         return next;
       });
+      setVoiceCallStartedAt((prev) => {
+        if (!(assignmentId in prev)) return prev;
+        const { [assignmentId]: _removed, ...rest } = prev;
+        return rest;
+      });
+      setVoiceCallHeldSince((prev) => {
+        if (!(assignmentId in prev)) return prev;
+        const { [assignmentId]: _removed, ...rest } = prev;
+        return rest;
+      });
     }
   };
 
@@ -1410,6 +1506,22 @@ export function AgentNextGenPage({
   const handleHangUpLiveCall = () => {
     if (!liveVoiceCall) return;
     setEndedVoiceCallAssignmentIds((prev) => new Set(prev).add(liveVoiceCall.assignmentId));
+    // A call can now be simultaneously "live" and "on hold" (the agent
+    // returned to it without hitting Resume yet — see
+    // `heldVoiceCallAssignmentIds`'s own doc comment) — hanging up from
+    // here should clear that rather than leaving a stale hold behind on a
+    // call that's now just plain ended.
+    setHeldVoiceCallAssignmentIds((held) => {
+      if (!held.has(liveVoiceCall.assignmentId)) return held;
+      const next = new Set(held);
+      next.delete(liveVoiceCall.assignmentId);
+      return next;
+    });
+    setVoiceCallHeldSince((prev) => {
+      if (!(liveVoiceCall.assignmentId in prev)) return prev;
+      const { [liveVoiceCall.assignmentId]: _removed, ...rest } = prev;
+      return rest;
+    });
     setLiveVoiceCall(null);
   };
 
@@ -1469,7 +1581,7 @@ export function AgentNextGenPage({
           : a
       )
     );
-    if (channel === "voice") setLiveVoiceCall({ assignmentId, startedAt: Date.now() });
+    if (channel === "voice") goLiveWithVoiceCall(assignmentId);
     const assignment = assignments.find((a) => a.id === assignmentId);
     scheduleOutboundDemoTranscript(assignmentId, channel, assignment?.customerName ?? "the customer", skillLabel);
   };
@@ -1527,7 +1639,7 @@ export function AgentNextGenPage({
       // Internal agent-to-agent call — this branch only ever fires for
       // `channel === "voice"` (see the early return above), so this always
       // becomes the live call.
-      setLiveVoiceCall({ assignmentId: id, startedAt: Date.now() });
+      goLiveWithVoiceCall(id);
         // Starting this call always surfaces the interaction panel — if
       // Control Center/Settings currently has the whole content column
       // (see `isFullPageActive`), close it so `activeAssignment` takes over
@@ -1556,7 +1668,7 @@ export function AgentNextGenPage({
       };
       setAssignments((prev) => [newAssignment, ...prev]);
       setActiveAssignmentId(id);
-      if (channel === "voice") setLiveVoiceCall({ assignmentId: id, startedAt: Date.now() });
+      if (channel === "voice") goLiveWithVoiceCall(id);
         // Same full-page dismiss as the internal-agent-call branch above.
       setOpenSlideInPage((v) => (v !== null && FULL_PAGE_DESTINATIONS.has(v) ? null : v));
       scheduleOutboundDemoTranscript(id, channel, contact.name, skillLabel);
@@ -1603,7 +1715,7 @@ export function AgentNextGenPage({
     };
     setAssignments((prev) => [newAssignment, ...prev]);
     setActiveAssignmentId(id);
-    if (channel === "voice") setLiveVoiceCall({ assignmentId: id, startedAt: Date.now() });
+    if (channel === "voice") goLiveWithVoiceCall(id);
     // Same full-page dismiss as handleStartOutboundCall's branches above.
     setOpenSlideInPage((v) => (v !== null && FULL_PAGE_DESTINATIONS.has(v) ? null : v));
     scheduleOutboundDemoTranscript(id, channel, value, skillLabel);
@@ -2105,6 +2217,14 @@ export function AgentNextGenPage({
                 const outboundContact = getOutboundContact(a.customerId);
                 const isHeldVoiceCall = heldVoiceCallAssignmentIds.has(a.id);
                 const isEndedVoiceCall = endedVoiceCallAssignmentIds.has(a.id);
+                // Live-ticking "On hold · MM:SS" rather than a static "On
+                // hold" — this whole component already re-renders every
+                // second (see the unrelated agent-status `elapsedSeconds`
+                // tick above), so recomputing this from `Date.now()` on each
+                // render is enough to make it tick without a second timer.
+                const heldSince = voiceCallHeldSince[a.id];
+                const holdDuration = heldSince ? formatHoldDuration(Math.floor((Date.now() - heldSince) / 1000)) : undefined;
+                const holdPreview = holdDuration ? `On hold · ${holdDuration}` : "On hold";
                 // Held/ended calls get a preview override on their voice
                 // channel row — otherwise a backgrounded or hung-up call
                 // reads identically to one that's still fully live, which is
@@ -2115,10 +2235,16 @@ export function AgentNextGenPage({
                 // Mutually exclusive in practice (an ended call is never
                 // also held), but ended wins if that ever changes — there's
                 // no picking the call back up once it's actually over.
+                // `previewCritical` on the held branch is what actually
+                // turns that text red (see channel-row.tsx) — per an
+                // explicit follow-up, hold state should read as red
+                // wherever it shows up, not just on the persistent bar.
                 const displayChannels =
                   isHeldVoiceCall || isEndedVoiceCall
                     ? a.channels.map((c) =>
-                        c.type === "voice" ? { ...c, preview: isEndedVoiceCall ? "Call ended" : "On hold" } : c
+                        c.type === "voice"
+                          ? { ...c, preview: isEndedVoiceCall ? "Call ended" : holdPreview, previewCritical: isHeldVoiceCall }
+                          : c
                       )
                     : a.channels;
                 return (
@@ -2129,7 +2255,14 @@ export function AgentNextGenPage({
                     onClick={() => handleSelectAssignment(a.id)}
                     awaitingResponse={a.awaitingResponse}
                     liveCall={liveVoiceCall?.assignmentId === a.id}
-                    elapsed={a.elapsed}
+                    // Collapsed rail: show the hold-duration count instead
+                    // of the interaction's normal elapsed time while held,
+                    // in red — per an explicit follow-up, the hold timer
+                    // takes over here rather than sitting alongside the
+                    // total time (there's only room for one number in the
+                    // compact tile, unlike the bar/expanded row above it).
+                    elapsed={isHeldVoiceCall && holdDuration ? holdDuration : a.elapsed}
+                    elapsedCritical={isHeldVoiceCall}
                     expanded={navOpen}
                     issueSummary={a.issueSummary}
                     channels={displayChannels}
@@ -2612,15 +2745,22 @@ export function AgentNextGenPage({
       {/* Persistent voice-call bar — deliberately outside the
        *  `activeAssignment`-gated content column above, so it has no
        *  dependency on which interaction is currently on screen (see its own
-       *  doc comment in LiveVoiceCallBar.tsx). `key` resets its local mute/
-       *  hold/timer state whenever a *different* call becomes the live one. */}
+       *  doc comment in LiveVoiceCallBar.tsx). `key` still resets the bar's
+       *  own local mute/mute-speaker/record state whenever a *different*
+       *  call becomes the live one — Hold and the call timer are no longer
+       *  among those (see `heldVoiceCallAssignmentIds`/`voiceCallStartedAt`
+       *  above), so they survive the remount via the controlled
+       *  `isOnHold`/`startedAt` props below instead of resetting. */}
       {liveVoiceCall && (() => {
         const callAssignment = assignments.find((a) => a.id === liveVoiceCall.assignmentId);
         // Every other switchable voice call — same eligibility
         // `handleSelectAssignment`'s own hold-swap check uses (a real,
         // ongoing voice call, not an ended or resolved one) — lets the bar
         // offer a picker instead of requiring the agent to go find the
-        // right tile in the rail.
+        // right tile in the rail. `startedAt` falls back to `Date.now()` for
+        // the (currently theoretical) case of a voice assignment that's
+        // never actually been made live yet — keeps the switcher's timer
+        // from showing `NaN` rather than implying real elapsed time.
         const otherVoiceCalls = assignments
           .filter(
             (a) =>
@@ -2629,13 +2769,30 @@ export function AgentNextGenPage({
               a.escalationStatus !== "resolved" &&
               !endedVoiceCallAssignmentIds.has(a.id)
           )
-          .map((a) => ({ assignmentId: a.id, customerName: a.customerName, isInternalAgentCall: a.isInternalAgentCall }));
+          .map((a) => ({
+            assignmentId: a.id,
+            customerName: a.customerName,
+            isInternalAgentCall: a.isInternalAgentCall,
+            startedAt: voiceCallStartedAt[a.id] ?? Date.now(),
+            // Almost every entry here is on hold in practice — anything
+            // that isn't the live call got there via the same auto-hold
+            // swap (see `handleSelectAssignment`) — but this is still
+            // read directly off the real state rather than assumed, so the
+            // switcher never disagrees with the tile/bar about which calls
+            // are actually held. Per an explicit follow-up, hold state
+            // should read as red everywhere it appears, this picker
+            // included.
+            heldSince: heldVoiceCallAssignmentIds.has(a.id) ? voiceCallHeldSince[a.id] : undefined,
+          }));
         return (
           <LiveVoiceCallBar
             key={liveVoiceCall.assignmentId}
             customerName={callAssignment?.customerName}
             isInternalAgentCall={callAssignment?.isInternalAgentCall}
-            startedAt={liveVoiceCall.startedAt}
+            startedAt={voiceCallStartedAt[liveVoiceCall.assignmentId] ?? Date.now()}
+            isOnHold={heldVoiceCallAssignmentIds.has(liveVoiceCall.assignmentId)}
+            heldSince={voiceCallHeldSince[liveVoiceCall.assignmentId]}
+            onToggleHold={() => toggleVoiceCallHold(liveVoiceCall.assignmentId)}
             onHangUp={handleHangUpLiveCall}
             position={voiceBarPosition}
             onPositionChange={setVoiceBarPosition}

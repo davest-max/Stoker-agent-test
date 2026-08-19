@@ -32,6 +32,12 @@ interface MenuItemDef {
   rightElement?: React.ReactNode;
   /** Optional secondary/description text below the label */
   description?: string;
+  /** Renders `description` in critical (red) instead of secondary gray —
+   *  e.g. a "On hold MM:SS" status line. Independent of `destructive`
+   *  (that reddens the whole row to signal a dangerous *action*; this only
+   *  colors the description to signal an informational *state* — the item
+   *  itself is still a normal, safe thing to click). */
+  descriptionCritical?: boolean;
   /** Highlight as the currently selected/active item */
   selected?: boolean;
   /** Keep the item in its hover background state. Items with a submenu/
@@ -316,7 +322,9 @@ const MenuItemRow: React.FC<MenuItemRowProps> = ({ item, itemRole = "menuitem" }
         <span className="flex-1 min-w-0">
           <span className="block truncate">{item.label}</span>
           {item.description && (
-            <span className="block lyra-body-sm text-lyra-fg-secondary truncate">{item.description}</span>
+            <span className={cn("block lyra-body-sm truncate", item.descriptionCritical ? "text-lyra-status-critical-strong" : "text-lyra-fg-secondary")}>
+              {item.description}
+            </span>
           )}
         </span>
 

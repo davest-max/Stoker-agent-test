@@ -277,6 +277,13 @@ export const WithDescriptions: Story = {
         "separator",
         { id: "3", label: "Import from file", icon: <FileText className="h-4 w-4" strokeWidth={1.5} />, description: "Upload a CSV or JSON file" },
         { id: "4", label: "Connect service", icon: <Share2 className="h-4 w-4" strokeWidth={1.5} />, description: "Link an external data source" },
+        {
+          id: "5",
+          label: "Ray Torres",
+          icon: <Box className="h-4 w-4" strokeWidth={1.5} />,
+          description: "On hold 00:14",
+          descriptionCritical: true,
+        },
       ]}
       className="w-64"
     />

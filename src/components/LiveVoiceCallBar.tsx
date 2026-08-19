@@ -68,15 +68,45 @@ export interface LiveVoiceCallBarProps {
    *  avatar for a headset glyph, matching `InteractionNavItem`'s own
    *  `avatarIcon` treatment for the same case. */
   isInternalAgentCall?: boolean;
-  /** `Date.now()` at the moment this call became the live call — drives the
-   *  bar's own live-ticking duration display. */
+  /** The call's real, original "went live" timestamp — lifted to
+   *  `AgentNextGenPage`'s own `voiceCallStartedAt` map and set once per
+   *  assignment, not reset on every hold-swap, so the timer keeps counting
+   *  continuously across being backgrounded and resumed (a real phone call's
+   *  duration doesn't reset just because you switched lines and came back). */
   startedAt: number;
+  /** Whether this call is currently on hold — lifted to `AgentNextGenPage`
+   *  (see its own `heldVoiceCallAssignmentIds`) instead of local state, so
+   *  it's a persistent fact about the call rather than something that resets
+   *  to "off" every time this component remounts for a different live call.
+   *  An agent must explicitly hit Resume to clear it — see `onToggleHold`. */
+  isOnHold: boolean;
+  /** When the current hold stretch began — `undefined` while not on hold.
+   *  Lifted to `AgentNextGenPage`'s own `voiceCallHeldSince` for the same
+   *  reason `isOnHold` is: it has to survive this component remounting.
+   *  Drives the second "On hold MM:SS" line shown alongside the normal call
+   *  timer while `isOnHold` is true — per an explicit follow-up, this shows
+   *  in addition to the total call time, not instead of it. */
+  heldSince?: number;
+  onToggleHold: () => void;
   onHangUp: () => void;
   /** Every other switchable voice call (never includes the one this bar is
    *  currently showing) — populates the "switch call" picker below the
    *  name/timer. Empty when there's nothing else to switch to, which just
-   *  hides the picker entirely rather than showing a dead affordance. */
-  otherVoiceCalls: { assignmentId: string; customerName?: string; isInternalAgentCall?: boolean }[];
+   *  hides the picker entirely rather than showing a dead affordance.
+   *  `startedAt` is each call's own real start time (same continuous-timer
+   *  reasoning as this bar's own `startedAt` above) — lets the picker show a
+   *  live-ticking duration per row instead of just a name. `heldSince` is
+   *  set when that other call is currently on hold (almost always true in
+   *  practice — see the call site's own doc comment) — shows a red "On
+   *  hold MM:SS" row instead of the plain elapsed time, per an explicit
+   *  follow-up that hold state should read as red everywhere. */
+  otherVoiceCalls: {
+    assignmentId: string;
+    customerName?: string;
+    isInternalAgentCall?: boolean;
+    startedAt: number;
+    heldSince?: number;
+  }[];
   /** Picking a call from the switcher — reuses `AgentNextGenPage`'s own
    *  `handleSelectAssignment` verbatim (same function a tile click calls),
    *  so switching from here is indistinguishable from switching by finding
@@ -116,9 +146,13 @@ export interface LiveVoiceCallBarProps {
  *  explicit product decision — a second call simply supersedes this one
  *  rather than stacking), so there's no queueing/stacking UI to build here.
  *  Render this with `key={assignmentId}` at the call site — that's what
- *  resets `isMuted`/`isOnHold`/the timer cleanly whenever a *different* call
- *  becomes the live one, without this component needing to watch for that
- *  itself. Draggable anywhere on screen (grab anywhere on the bar except its
+ *  resets `isMuted`/`isSpeakerMuted`/`isRecording` cleanly whenever a
+ *  *different* call becomes the live one, without this component needing to
+ *  watch for that itself. Hold and the call timer are deliberately NOT among
+ *  those — they're controlled props now (`isOnHold`/`startedAt`), sourced
+ *  from state lifted to `AgentNextGenPage`, so they survive being
+ *  backgrounded and resumed instead of quietly resetting. Draggable anywhere
+ *  on screen (grab anywhere on the bar except its
  *  own buttons) — see `position`/`onPositionChange` above for why that's
  *  lifted to the parent instead of local state. The name/timer block
  *  doubles as a "switch call" picker whenever `otherVoiceCalls` isn't
@@ -128,6 +162,9 @@ export function LiveVoiceCallBar({
   customerName,
   isInternalAgentCall,
   startedAt,
+  isOnHold,
+  heldSince,
+  onToggleHold,
   onHangUp,
   otherVoiceCalls,
   onSwitchCall,
@@ -135,7 +172,6 @@ export function LiveVoiceCallBar({
   onPositionChange,
 }: LiveVoiceCallBarProps) {
   const [isMuted, setIsMuted] = useState(false);
-  const [isOnHold, setIsOnHold] = useState(false);
   const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(() => Math.floor((Date.now() - startedAt) / 1000));
@@ -183,6 +219,33 @@ export function LiveVoiceCallBar({
 
   const accent = CHANNEL_ACCENT.voice;
   const displayName = isInternalAgentCall ? customerName ?? "Colleague" : customerName || "Customer";
+  // Ticks off the same 1s interval as `elapsedSeconds` above (no separate
+  // timer needed) — `undefined` while not on hold.
+  const heldSeconds = isOnHold && heldSince ? Math.floor((Date.now() - heldSince) / 1000) : undefined;
+
+  const avatar = (
+    <span
+      className={cn("flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full lyra-body-md-emphasis", accent.bg, accent.text)}
+      aria-hidden="true"
+    >
+      {isInternalAgentCall ? <Headset className="h-[19px] w-[19px]" strokeWidth={1.5} /> : getInitials(customerName)}
+    </span>
+  );
+
+  // Shared name/timer text stack — used both inside the switcher's trigger
+  // button and, when there's nothing to switch to, on its own. Shows a
+  // second "On hold MM:SS" line under the normal call timer while held —
+  // per an explicit follow-up, in addition to the total time, not swapped
+  // in for it.
+  const nameAndTimer = (
+    <span className="min-w-0 flex-1">
+      <p className="truncate lyra-body-md-emphasis text-lyra-fg-default">{displayName}</p>
+      <p className="lyra-body-sm text-lyra-fg-secondary">{formatElapsed(elapsedSeconds)}</p>
+      {heldSeconds !== undefined && (
+        <p className="lyra-body-sm-emphasis text-lyra-status-critical-strong">On hold {formatElapsed(heldSeconds)}</p>
+      )}
+    </span>
+  );
 
   return (
     <div
@@ -206,32 +269,58 @@ export function LiveVoiceCallBar({
       role="region"
       aria-label={`Live call with ${displayName}, ${formatElapsed(elapsedSeconds)} elapsed`}
     >
-      <span
-        className={cn("flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full lyra-body-md-emphasis", accent.bg, accent.text)}
-        aria-hidden="true"
-      >
-        {isInternalAgentCall ? <Headset className="h-[19px] w-[19px]" strokeWidth={1.5} /> : getInitials(customerName)}
-      </span>
       {otherVoiceCalls.length > 0 ? (
         <Popover
           open={switcherOpen}
           onOpenChange={setSwitcherOpen}
           placement="top"
           align="start"
+          // No `alignOffset` on this wrapper (see popover.tsx), so instead
+          // of anchoring to just the name/timer button — which sits to the
+          // right of the avatar, offsetting the flyout's left edge from the
+          // bar's own outer edge — the avatar is now INSIDE the trigger
+          // button below. `align="start"` then lines the flyout up with the
+          // whole bar's outer left edge, per an explicit follow-up, with no
+          // lyra-ui changes needed.
           content={
             <Menu
               aria-label="Switch voice call"
-              className="min-w-[200px]"
-              items={otherVoiceCalls.map(
-                (call): MenuEntry => ({
+              className="min-w-[220px]"
+              items={otherVoiceCalls.map((call): MenuEntry => {
+                const otherName = call.isInternalAgentCall ? call.customerName ?? "Colleague" : call.customerName || "Customer";
+                const isOtherHeld = call.heldSince !== undefined;
+                // Held (almost always true — see this prop's own doc
+                // comment) shows "On hold MM:SS" in red instead of the
+                // plain total elapsed, matching the bar's/tile's own
+                // treatment of the exact same state.
+                const otherDescription = isOtherHeld
+                  ? `On hold ${formatElapsed(Math.floor((Date.now() - call.heldSince!) / 1000))}`
+                  : formatElapsed(Math.floor((Date.now() - call.startedAt) / 1000));
+                return {
                   id: call.assignmentId,
-                  label: call.isInternalAgentCall ? `${call.customerName ?? "Colleague"} (internal)` : call.customerName || "Customer",
+                  // Same avatar + name-over-timer shape as the bar's own
+                  // leading content (see the avatar `span` and name/timer
+                  // block above) — reused here via `icon`/`description`
+                  // rather than a plain text label, so a row in the picker
+                  // reads as "the same call" whether it's in the bar or the
+                  // dropdown, not two different representations of it.
+                  icon: (
+                    <span
+                      className={cn("flex h-5 w-5 items-center justify-center rounded-full lyra-body-xs-emphasis", accent.bg, accent.text)}
+                      aria-hidden="true"
+                    >
+                      {call.isInternalAgentCall ? <Headset className="h-3 w-3" strokeWidth={1.5} /> : getInitials(call.customerName)}
+                    </span>
+                  ),
+                  label: call.isInternalAgentCall ? `${otherName} (internal)` : otherName,
+                  description: otherDescription,
+                  descriptionCritical: isOtherHeld,
                   onClick: () => {
                     onSwitchCall(call.assignmentId);
                     setSwitcherOpen(false);
                   },
-                })
-              )}
+                };
+              })}
             />
           }
         >
@@ -239,12 +328,10 @@ export function LiveVoiceCallBar({
             type="button"
             aria-haspopup="menu"
             aria-expanded={switcherOpen}
-            className="flex min-w-0 max-w-[168px] items-center gap-1 rounded-lyra-sm text-left hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus"
+            className="flex min-w-0 max-w-[220px] items-center gap-2 rounded-lyra-sm text-left hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus"
           >
-            <span className="min-w-0 flex-1">
-              <p className="truncate lyra-body-md-emphasis text-lyra-fg-default">{displayName}</p>
-              <p className="lyra-body-sm text-lyra-fg-secondary">{formatElapsed(elapsedSeconds)}</p>
-            </span>
+            {avatar}
+            {nameAndTimer}
             <ChevronDown
               className={cn("h-4 w-4 shrink-0 text-lyra-fg-secondary transition-transform", switcherOpen && "rotate-180")}
               strokeWidth={2}
@@ -253,17 +340,17 @@ export function LiveVoiceCallBar({
           </button>
         </Popover>
       ) : (
-        <div className="min-w-0 max-w-[168px]">
-          <p className="truncate lyra-body-md-emphasis text-lyra-fg-default">{displayName}</p>
-          <p className="lyra-body-sm text-lyra-fg-secondary">{formatElapsed(elapsedSeconds)}</p>
-        </div>
+        <>
+          {avatar}
+          {nameAndTimer}
+        </>
       )}
       <div className="mx-0.5 h-7 w-px bg-lyra-border-subtle" />
       <ActionIconButton
         size="xl"
         title={isOnHold ? "Resume" : "Hold"}
         aria-pressed={isOnHold}
-        onClick={() => setIsOnHold((v) => !v)}
+        onClick={onToggleHold}
         className={cn(isOnHold && SELECTED_RED)}
       >
         <Pause className={cn("h-6 w-6", isOnHold && "text-lyra-fg-on-primary")} strokeWidth={2} />
