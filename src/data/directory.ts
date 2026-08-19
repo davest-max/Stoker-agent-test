@@ -242,6 +242,57 @@ export const DIRECTORY_CUSTOMERS: DirectoryCustomer[] = [
     ],
   },
   {
+    id: "jordan",
+    name: "Jordan Lee",
+    initials: "JL",
+    subtitle: "CST-10145",
+    kind: "customer",
+    avatarClassName: "bg-lyra-accent-lime-soft text-lyra-accent-lime-strong",
+    // A second customer with every channel type the New Outbound flyout can
+    // show (voice/email/chat/whatsapp — same reasoning as Sofia's own
+    // `channels` above) — per an explicit follow-up, favorited right below
+    // her so Favorites demonstrates this on more than just one contact.
+    channels: ["voice", "sms", "email", "chat", "whatsapp"],
+    phoneNumbers: [{ value: "+15557734410", label: "Mobile · (555) 773-4410" }],
+    emailAddresses: [{ value: "jordan.lee@brightloop.io", label: "Work · jordan.lee@brightloop.io" }],
+    customerSince: "2023",
+    tier: "Standard",
+    totalInteractions: 4,
+    address: "58 Prospect Ave, Portland, OR 97205",
+    company: "Brightloop",
+    language: "English",
+    timezone: "America/Los_Angeles (PST)",
+    accountOwner: "Tomas Rivera",
+    accountStatus: "Active",
+    lastInteraction: {
+      date: "1 week ago",
+      channel: "chat",
+      summary: "Asked how to switch her team's billing contact to a new admin. Walked her through the account settings change and confirmed the new contact received the invoice.",
+      caseId: "CASE-48630",
+      handledBy: "Amara Okafor",
+      outcome: "Resolved",
+    },
+    history: [
+      {
+        date: "1 week ago",
+        channel: "chat",
+        summary: "Asked how to switch her team's billing contact to a new admin. Walked her through the account settings change and confirmed the new contact received the invoice.",
+        caseId: "CASE-48630",
+        handledBy: "Amara Okafor",
+        outcome: "Resolved",
+        transcript: {
+          messages: [
+            { id: "m1", variant: "customer", senderName: "Jordan Lee", text: "Hi, our billing admin left the company — how do I switch invoices over to a new contact?", timestamp: "1 week ago, 1:04 PM" },
+            { id: "m2", variant: "support-agent", senderName: "Amara Okafor", text: "No problem — head to Settings → Billing → Contacts and add the new admin's email, then you can remove the old one.", timestamp: "1 week ago, 1:06 PM" },
+            { id: "m3", variant: "customer", senderName: "Jordan Lee", text: "Done, thanks!", timestamp: "1 week ago, 1:09 PM" },
+          ],
+        },
+      },
+    ],
+    tickets: [],
+    notes: [],
+  },
+  {
     id: "ray",
     name: "Ray Torres",
     initials: "RT",

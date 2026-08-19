@@ -673,10 +673,14 @@ export function AddOutboundButton({
 // agent-driven from here on (see `toggleFavorite` below); this is just the
 // starting state, not a pinned/can't-remove list. IDs match `directory.ts`
 // seed data (`DIRECTORY_AGENTS`/`DIRECTORY_SKILLS`/`DIRECTORY_CUSTOMERS`).
-// Trimmed to just two agents per an explicit follow-up (was five) — "sofia"
-// is the one customer here and, per that same follow-up, now has every
-// channel type the flyout can show (see her `channels` in directory.ts).
-const DEFAULT_FAVORITE_IDS = ["john-smith", "amara", "vip-support", "sofia"];
+// Trimmed to just two agents per an explicit follow-up (was five). "sofia"
+// and "jordan" are the two customers here — per that same follow-up (and a
+// later one adding "jordan"), both have every channel type the flyout can
+// show (see their `channels` in directory.ts), and "jordan" is seeded right
+// after "sofia" in DIRECTORY_CUSTOMERS specifically so she lands directly
+// under Sofia in this Favorites list too (`allContacts`, and therefore this
+// filtered view, follows that array's own order).
+const DEFAULT_FAVORITE_IDS = ["john-smith", "amara", "vip-support", "sofia", "jordan"];
 
 export function NewOutboundPopover({ title = "New Outbound", expanded = false, outbound }: NewOutboundPopoverProps) {
   const [open, setOpen] = useState(false);
