@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import {
   AppHeader,
@@ -44,7 +44,7 @@ import {
 import { SlideInPage, SlideInPlaceholder } from "@/components/SlideInPage";
 import { NewOutboundPopover, AddOutboundButton, type NewOutboundConfig } from "@/components/NewOutboundPopover";
 import { InternalChatTrigger, InternalChatDockedPanel, InternalChatFloatPanel, InternalChatMaximizedPanel, type ChatView } from "@/components/InternalChatPopover";
-import { LiveVoiceCallBar } from "@/components/LiveVoiceCallBar";
+import { LiveVoiceCallBar, DockedVoiceControlBar } from "@/components/LiveVoiceCallBar";
 import { INITIAL_FAVORITE_EMPLOYEE_IDS, INITIAL_CHAT_THREADS, type InternalChatMessage } from "@/data/internalChat";
 import { DirectoryPage } from "@/components/DirectoryPage";
 import { CustomerProfilePanel } from "@/components/CustomerSnapshotPanel";
@@ -661,6 +661,13 @@ const CHAT_FLOAT_HEIGHT = 560;
 /** Below this viewport width the nav rail can't stay expanded — used both
  *  to pick navOpen's initial state and to auto-collapse it on resize. */
 const NAV_NARROW_BREAKPOINT = 1280;
+// Gap between the floating voice bar's bottom edge and the digital
+// channel's composer's top edge, when the bar defaults to sitting just
+// above it (see `composerRect`/`voiceBarDefaultAnchor` in the component
+// below) — a hair tighter than the bar's own generic `bottom-4` (16px)
+// corner anchor, since this is sitting right above content the agent is
+// about to look back at rather than floating free in empty space.
+const VOICE_BAR_COMPOSER_GAP = 12;
 
 export function AgentNextGenPage({
   showPageHeader = false,
@@ -733,12 +740,78 @@ export function AgentNextGenPage({
   // a "Call ended" label next to the channel name (InteractionActionsBar)
   // and the same tile preview override `heldVoiceCallAssignmentIds` uses.
   const [endedVoiceCallAssignmentIds, setEndedVoiceCallAssignmentIds] = useState<Set<string>>(new Set());
+  // Mute/speaker-mute/recording toggles for whichever call is currently
+  // live — lifted here (not local `useState` inside `LiveVoiceCallBar`) so
+  // the SAME state reads correctly from either presentation of that call's
+  // controls: the floating `LiveVoiceCallBar` when the agent is looking at
+  // something else, or the in-flow `DockedVoiceControlBar` (rendered via
+  // `CustomerInteractionPanel`'s `voiceControls` slot) when the agent is
+  // looking at this call's own interaction. Unlike `voiceCallStartedAt`/
+  // `voiceCallHeldSince`, these are plain booleans rather than
+  // per-assignment records — they're only ever meaningful for whichever
+  // call is live right now, not something a backgrounded held call needs to
+  // remember, so they simply reset in `goLiveWithVoiceCall` below.
+  const [isVoiceCallMuted, setIsVoiceCallMuted] = useState(false);
+  const [isVoiceCallSpeakerMuted, setIsVoiceCallSpeakerMuted] = useState(false);
+  const [isVoiceCallRecording, setIsVoiceCallRecording] = useState(false);
   // The bar's own dragged position — lifted here (not local to
   // LiveVoiceCallBar) since that component remounts via `key={assignmentId}`
   // on every hold-swap; keeping this here means dragging the bar once keeps
   // it there across whichever call currently owns it. `null` = default
   // bottom-left anchor (see LiveVoiceCallBar's own doc comment).
   const [voiceBarPosition, setVoiceBarPosition] = useState<{ top: number; left: number } | null>(null);
+  // Where the current digital channel's own message composer sits on
+  // screen — read off the DOM (not derivable from any layout state, since
+  // it depends on the rail's collapsed width, whether a side panel is open,
+  // etc.) so the floating `LiveVoiceCallBar`'s default position (see
+  // `voiceBarDefaultAnchor` below) can sit just above and left-aligned with
+  // it, per an explicit follow-up that popping a call out over a digital
+  // channel must never cover that channel's own input area. `null` when
+  // there's no composer showing right now (a voice call is active, or
+  // there's no active assignment at all) — the bar then falls back to its
+  // own generic corner anchor instead.
+  const [composerRect, setComposerRect] = useState<{ left: number; top: number } | null>(null);
+  // Callback ref (not a plain object ref) so measuring happens the instant
+  // the composer mounts/unmounts — e.g. switching from an email to a voice
+  // call unmounts it immediately, which should clear `composerRect` right
+  // away rather than waiting on some other effect to notice. A
+  // `ResizeObserver` (rather than a one-time read) keeps it live across
+  // anything that changes the composer's own box after that — the rail
+  // collapsing/expanding, a side panel opening, adding Cc/Bcc rows to an
+  // email composer, etc. — all of which resize this element even though
+  // none of them are "resize the window."
+  const composerResizeObserverRef = useRef<ResizeObserver | null>(null);
+  const composerNodeRef = useRef<HTMLDivElement | null>(null);
+  const measureComposerRect = useCallback(() => {
+    const node = composerNodeRef.current;
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    setComposerRect({ left: rect.left, top: rect.top });
+  }, []);
+  const composerContainerRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      composerResizeObserverRef.current?.disconnect();
+      composerResizeObserverRef.current = null;
+      composerNodeRef.current = node;
+      if (!node) {
+        setComposerRect(null);
+        return;
+      }
+      measureComposerRect();
+      const observer = new ResizeObserver(measureComposerRect);
+      observer.observe(node);
+      composerResizeObserverRef.current = observer;
+    },
+    [measureComposerRect]
+  );
+  // Belt-and-suspenders alongside the ResizeObserver above — catches a pure
+  // window resize that happens to leave the composer's own box dimensions
+  // unchanged (rare, but cheap to guard against since the composer's own
+  // width almost always changes with the window in this layout).
+  useEffect(() => {
+    window.addEventListener("resize", measureComposerRect);
+    return () => window.removeEventListener("resize", measureComposerRect);
+  }, [measureComposerRect]);
   const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   const [notifications, setNotifications] = useState(INITIAL_NOTIFICATIONS);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>("available");
@@ -1169,6 +1242,16 @@ export function AgentNextGenPage({
   const activeChannel = activeAssignment?.channels.find((c) => channelKey(c) === activeCurrentChannelKey);
   const activeChannelType = activeChannel?.type;
   const isActiveAssignmentVoiceCall = activeChannelType === "voice";
+  // Whether the live call's controls should render docked in-flow at the
+  // bottom of the center panel (`DockedVoiceControlBar`, via
+  // `CustomerInteractionPanel`'s `voiceControls` slot) rather than floating
+  // (`LiveVoiceCallBar`) — fully derived, not its own tracked state, per an
+  // explicit follow-up ("re-dock when a voice call is selected"): the agent
+  // never manually docks/undocks, it's simply true whenever the card
+  // currently open IS the live call's own card, and false the instant the
+  // agent looks at anything else (including a different voice call, which
+  // auto-holds this one — see the hold-swap logic below).
+  const isVoiceCallDocked = liveVoiceCall !== null && activeAssignmentId === liveVoiceCall.assignmentId;
   // Shared by the kebab's "Unassign & Dismiss" (`onDismissCurrentChannel`)
   // and the Outcome form's "Approve & Save" (`onApproveOutcome`) — two
   // different buttons that both end the interaction the exact same way, so
@@ -1330,6 +1413,12 @@ export function AgentNextGenPage({
   const goLiveWithVoiceCall = (assignmentId: string) => {
     setVoiceCallStartedAt((prev) => (prev[assignmentId] !== undefined ? prev : { ...prev, [assignmentId]: Date.now() }));
     setLiveVoiceCall({ assignmentId });
+    // Fresh call, fresh controls — a new/resumed live call doesn't inherit
+    // whatever mute/speaker/record state a previous live call happened to
+    // leave behind.
+    setIsVoiceCallMuted(false);
+    setIsVoiceCallSpeakerMuted(false);
+    setIsVoiceCallRecording(false);
   };
 
   // Manual Hold/Resume toggle — the single source of truth for both the
@@ -2457,6 +2546,37 @@ export function AgentNextGenPage({
                    *  Customer Profile is different: it's part of this
                    *  interaction's own layout (right-docked, pushes the
                    *  conversation narrower), so it lives in here instead. */}
+                  {/* Computed once and reused in both branches below — when
+                   *  Customer Profile is maximized, `CustomerInteractionPanel`
+                   *  (and its own `voiceControls` slot) is replaced entirely
+                   *  by the full-takeover profile view, which used to mean a
+                   *  docked call's controls vanished from the screen
+                   *  completely (the floating bar stays suppressed too,
+                   *  since `isVoiceCallDocked` is still true — the agent
+                   *  never actually left this call's own card). Per an
+                   *  explicit follow-up, the controls must stay visible at
+                   *  the bottom regardless of which view is showing, so the
+                   *  maximized branch now renders this same element as its
+                   *  own bottom-pinned sibling instead of just dropping it. */}
+                  {(() => {
+                    const dockedVoiceControls = isVoiceCallDocked ? (
+                      <DockedVoiceControlBar
+                        customerName={activeAssignment.customerName}
+                        isInternalAgentCall={activeAssignment.isInternalAgentCall}
+                        startedAt={voiceCallStartedAt[liveVoiceCall!.assignmentId] ?? Date.now()}
+                        heldSince={voiceCallHeldSince[liveVoiceCall!.assignmentId]}
+                        isOnHold={heldVoiceCallAssignmentIds.has(liveVoiceCall!.assignmentId)}
+                        onToggleHold={() => toggleVoiceCallHold(liveVoiceCall!.assignmentId)}
+                        isMuted={isVoiceCallMuted}
+                        onToggleMute={() => setIsVoiceCallMuted((v) => !v)}
+                        isSpeakerMuted={isVoiceCallSpeakerMuted}
+                        onToggleSpeakerMute={() => setIsVoiceCallSpeakerMuted((v) => !v)}
+                        isRecording={isVoiceCallRecording}
+                        onToggleRecording={() => setIsVoiceCallRecording((v) => !v)}
+                        onHangUp={handleHangUpLiveCall}
+                      />
+                    ) : undefined;
+                    return (
                   <div ref={bodyRowRef} className="relative flex flex-1 overflow-hidden">
                     {customerProfileMaximized ? (
                       /* Full takeover — same idea as the Settings/Dashboard
@@ -2483,6 +2603,14 @@ export function AgentNextGenPage({
                           onUpdateCustomer={(fields) => activeCustomer && handleUpdateCustomerFields(activeCustomer.id, fields)}
                           collapsed={false}
                         />
+                        {/* `CustomerProfilePanel` is itself already a
+                         *  `flex-1` child (see its own root className) built
+                         *  to sit inside a flex column and yield space to a
+                         *  sibling — same shape this takeover's own wrapper
+                         *  div already has — so this just slots in
+                         *  underneath it, `shrink-0`, same as the header row
+                         *  above. */}
+                        {dockedVoiceControls}
                       </div>
                     ) : (
                       <>
@@ -2495,6 +2623,8 @@ export function AgentNextGenPage({
                           sendOnEnter={activeChannelType !== "email"}
                           isEmailChannel={activeChannelType === "email"}
                           toAddress={activeChannel?.address}
+                          composerContainerRef={composerContainerRef}
+                          voiceControls={dockedVoiceControls}
                         />
                         {showPanelToggle && (
                           <SidePanel
@@ -2528,6 +2658,8 @@ export function AgentNextGenPage({
                       </>
                     )}
                   </div>
+                    );
+                  })()}
                 </>
               ) : openSlideInPage !== null && slideInVariant !== "float" ? (
                 // slideInVariant === "float" is deliberately excluded here — the
@@ -2745,13 +2877,18 @@ export function AgentNextGenPage({
       {/* Persistent voice-call bar — deliberately outside the
        *  `activeAssignment`-gated content column above, so it has no
        *  dependency on which interaction is currently on screen (see its own
-       *  doc comment in LiveVoiceCallBar.tsx). `key` still resets the bar's
-       *  own local mute/mute-speaker/record state whenever a *different*
-       *  call becomes the live one — Hold and the call timer are no longer
-       *  among those (see `heldVoiceCallAssignmentIds`/`voiceCallStartedAt`
-       *  above), so they survive the remount via the controlled
-       *  `isOnHold`/`startedAt` props below instead of resetting. */}
-      {liveVoiceCall && (() => {
+       *  doc comment in LiveVoiceCallBar.tsx). Hold, the call timer, and now
+       *  mute/mute-speaker/record are all lifted to this page (see
+       *  `heldVoiceCallAssignmentIds`/`voiceCallStartedAt`/
+       *  `isVoiceCallMuted` etc. above), so none of them reset on the `key`
+       *  remount below — they're passed in as controlled props instead.
+       *  Only rendered while NOT docked — `isVoiceCallDocked` true means the
+       *  agent is looking at this exact call's own card, where
+       *  `DockedVoiceControlBar` (via `CustomerInteractionPanel`'s
+       *  `voiceControls` slot above) shows the same controls in-flow
+       *  instead; the two are mutually exclusive so the call's controls
+       *  only ever appear once on screen. */}
+      {liveVoiceCall && !isVoiceCallDocked && (() => {
         const callAssignment = assignments.find((a) => a.id === liveVoiceCall.assignmentId);
         // Every other switchable voice call — same eligibility
         // `handleSelectAssignment`'s own hold-swap check uses (a real,
@@ -2793,9 +2930,20 @@ export function AgentNextGenPage({
             isOnHold={heldVoiceCallAssignmentIds.has(liveVoiceCall.assignmentId)}
             heldSince={voiceCallHeldSince[liveVoiceCall.assignmentId]}
             onToggleHold={() => toggleVoiceCallHold(liveVoiceCall.assignmentId)}
+            isMuted={isVoiceCallMuted}
+            onToggleMute={() => setIsVoiceCallMuted((v) => !v)}
+            isSpeakerMuted={isVoiceCallSpeakerMuted}
+            onToggleSpeakerMute={() => setIsVoiceCallSpeakerMuted((v) => !v)}
+            isRecording={isVoiceCallRecording}
+            onToggleRecording={() => setIsVoiceCallRecording((v) => !v)}
             onHangUp={handleHangUpLiveCall}
             position={voiceBarPosition}
             onPositionChange={setVoiceBarPosition}
+            defaultAnchor={
+              composerRect
+                ? { left: composerRect.left, bottom: window.innerHeight - composerRect.top + VOICE_BAR_COMPOSER_GAP }
+                : null
+            }
             otherVoiceCalls={otherVoiceCalls}
             // Reuses the exact same handler a tile click uses — the whole
             // point being that switching from the bar is indistinguishable

@@ -143,7 +143,12 @@ export const DIRECTORY_CUSTOMERS: DirectoryCustomer[] = [
     subtitle: "CST-10021",
     kind: "customer",
     avatarClassName: "bg-lyra-accent-green-soft text-lyra-accent-green-strong",
-    channels: ["voice", "sms", "email", "whatsapp"],
+    // Includes every channel type the New Outbound flyout can show
+    // (CONTACT_CHANNEL_ORDER in DirectoryPage.tsx: voice/email/chat/
+    // whatsapp) — per an explicit follow-up, the favorited customer should
+    // demonstrate all of them at once rather than the usual 3-of-4 mix
+    // every other customer record has.
+    channels: ["voice", "sms", "email", "chat", "whatsapp"],
     phoneNumbers: [
       { value: "+15552018842", label: "Mobile · (555) 201-8842" },
       { value: "+15552010091", label: "Home · (555) 201-0091" },

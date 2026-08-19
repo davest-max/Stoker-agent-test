@@ -33,6 +33,21 @@ function MutedAudioLinesIcon({ strokeWidth = 2, className }: { strokeWidth?: num
  *  `cn`'s tailwind-merge. */
 const SELECTED_RED = "bg-lyra-status-critical-strong hover:bg-lyra-status-critical-strong active:bg-lyra-status-critical-strong";
 const SELECTED_SLATE = "bg-lyra-accent-slate-strong hover:bg-lyra-accent-slate-strong active:bg-lyra-accent-slate-strong";
+// Circular ring shape for every Hold/Mute/Mute Speaker/Record/Keypad/Hang Up
+// button — shared between the floating bar's own row and the docked
+// presentation's `DockedControlButton` so the two stay the same shape (an
+// explicit follow-up: try a circular button instead of `ActionIconButton`'s
+// own default corner radius, and keep both presentations matching rather
+// than letting them diverge again).
+// `!rounded-full` (not plain `rounded-full`) — `ActionIconButton`'s own base
+// class is `rounded-lyra-sm`, a custom token tailwind-merge's default config
+// doesn't recognize as part of the border-radius group (its matcher only
+// accepts a fixed set of suffixes: none/sm/DEFAULT/md/lg/xl/2xl/3xl/full),
+// so `cn()` leaves both classes in the output instead of dropping the base
+// one — and plain "rounded-full" was losing the resulting cascade-order tie
+// (confirmed empirically: buttons rendered as rounded squares, not
+// circles). The `!` forces `!important`, which wins regardless of that.
+const CIRCULAR_BUTTON = "!rounded-full border-2 border-lyra-border-subtle";
 
 /** Same first+last-initial derivation CustomerInteractionPanel's own
  *  `getInitials` and lyra-ui's `InteractionNavItem` already use — small
@@ -88,6 +103,19 @@ export interface LiveVoiceCallBarProps {
    *  in addition to the total call time, not instead of it. */
   heldSince?: number;
   onToggleHold: () => void;
+  /** Mute/Mute Speaker/Record — lifted to `AgentNextGenPage` for the same
+   *  reason `isOnHold` is: this bar needs to render in two different places
+   *  (this floating presentation, and the docked `DockedVoiceControlBar`
+   *  below) for the *same* ongoing call without losing state when the agent
+   *  switches between them. Reset by the parent only when a genuinely
+   *  different call goes live — see `goLiveWithVoiceCall` in
+   *  AgentNextGenPage.tsx. */
+  isMuted: boolean;
+  onToggleMute: () => void;
+  isSpeakerMuted: boolean;
+  onToggleSpeakerMute: () => void;
+  isRecording: boolean;
+  onToggleRecording: () => void;
   onHangUp: () => void;
   /** Every other switchable voice call (never includes the one this bar is
    *  currently showing) — populates the "switch call" picker below the
@@ -122,6 +150,20 @@ export interface LiveVoiceCallBarProps {
    *  the default bottom-left anchor." */
   position: VoiceBarPosition | null;
   onPositionChange: (position: VoiceBarPosition) => void;
+  /** Where to sit BEFORE the agent has ever dragged the bar themselves —
+   *  computed by `AgentNextGenPage` from the current digital channel's own
+   *  message composer position (see its own `composerRect`/
+   *  `voiceBarDefaultAnchor`), so popping out over a digital channel never
+   *  covers that channel's input area. Expressed as `left`/`bottom` (not
+   *  `top`) specifically so this doesn't need to know the bar's own
+   *  rendered height to sit flush just above the composer — anchoring the
+   *  bar's bottom edge a fixed distance up from the viewport bottom does
+   *  that regardless of how tall the bar itself is. `null` when there's no
+   *  composer to align to right now (a voice call is active, or there's no
+   *  active assignment at all), in which case this falls back to the
+   *  bar's own generic bottom-left corner anchor below. Ignored entirely
+   *  once `position` is set — dragging always wins. */
+  defaultAnchor: { left: number; bottom: number } | null;
 }
 
 /** Persistent, global "there's a live voice call somewhere" strip — survives
@@ -133,10 +175,16 @@ export interface LiveVoiceCallBarProps {
  *  `activeAssignment`-gated content column, so it has no dependency on
  *  which interaction is currently on screen — only on whether a call is
  *  live at all (`AgentNextGenPage`'s own `liveVoiceCall` state).
- *  Anchored bottom-left, near the assignment rail, per an explicit request
- *  — reads as tied to "whichever tile has the live-call badge" (see
- *  lyra-ui's `InteractionNavItem` `liveCall` prop) rather than floating
- *  ambiguously somewhere else on screen.
+ *  Defaults to sitting just above and left-aligned with whatever digital
+ *  channel's message composer the agent is currently looking at (see
+ *  `defaultAnchor` below) — per an explicit follow-up, popping this out
+ *  over a digital channel must never cover that channel's own input area.
+ *  Falls back to the plain bottom-left viewport corner, near the
+ *  assignment rail, only when there's no composer to align to right now
+ *  (e.g. the agent is looking at another voice call, or nothing at all) —
+ *  reads as tied to "whichever tile has the live-call badge" (see lyra-ui's
+ *  `InteractionNavItem` `liveCall` prop) rather than floating ambiguously
+ *  somewhere else on screen.
  *  Full control set (hold, mute, mute speaker, record, keypad, hang up —
  *  same order/icons the old inline InteractionActionsBar row used) — no
  *  click-to-reopen (the agent
@@ -145,13 +193,14 @@ export interface LiveVoiceCallBarProps {
  *  looking at something else. Only one of these can exist at a time (an
  *  explicit product decision — a second call simply supersedes this one
  *  rather than stacking), so there's no queueing/stacking UI to build here.
- *  Render this with `key={assignmentId}` at the call site — that's what
- *  resets `isMuted`/`isSpeakerMuted`/`isRecording` cleanly whenever a
- *  *different* call becomes the live one, without this component needing to
- *  watch for that itself. Hold and the call timer are deliberately NOT among
- *  those — they're controlled props now (`isOnHold`/`startedAt`), sourced
- *  from state lifted to `AgentNextGenPage`, so they survive being
- *  backgrounded and resumed instead of quietly resetting. Draggable anywhere
+ *  Render this with `key={assignmentId}` at the call site — that resets any
+ *  remaining purely-local state (the drag-in-progress flag, the switcher's
+ *  open/closed state) whenever a *different* call becomes the live one.
+ *  Hold, mute, mute speaker, record, and the call timer are NOT among those
+ *  — they're all controlled props now, sourced from state lifted to
+ *  `AgentNextGenPage`, so they survive both a hold-swap AND moving between
+ *  this floating presentation and the docked `DockedVoiceControlBar` below,
+ *  instead of quietly resetting either way. Draggable anywhere
  *  on screen (grab anywhere on the bar except its
  *  own buttons) — see `position`/`onPositionChange` above for why that's
  *  lifted to the parent instead of local state. The name/timer block
@@ -165,15 +214,19 @@ export function LiveVoiceCallBar({
   isOnHold,
   heldSince,
   onToggleHold,
+  isMuted,
+  onToggleMute,
+  isSpeakerMuted,
+  onToggleSpeakerMute,
+  isRecording,
+  onToggleRecording,
   onHangUp,
   otherVoiceCalls,
   onSwitchCall,
   position,
   onPositionChange,
+  defaultAnchor,
 }: LiveVoiceCallBarProps) {
-  const [isMuted, setIsMuted] = useState(false);
-  const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(() => Math.floor((Date.now() - startedAt) / 1000));
   const [isDragging, setIsDragging] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
@@ -254,7 +307,14 @@ export function LiveVoiceCallBar({
       onPointerMove={handlePointerMove}
       onPointerUp={stopDragging}
       onPointerCancel={stopDragging}
-      style={{ touchAction: "none", ...(position ? { position: "fixed", top: position.top, left: position.left } : undefined) }}
+      style={{
+        touchAction: "none",
+        ...(position
+          ? { position: "fixed", top: position.top, left: position.left }
+          : defaultAnchor
+            ? { position: "fixed", bottom: defaultAnchor.bottom, left: defaultAnchor.left }
+            : undefined),
+      }}
       className={cn(
         // Sized up ~20% overall per an explicit follow-up (container
         // padding/gap, the avatar, both text lines, the divider, and every
@@ -263,7 +323,11 @@ export function LiveVoiceCallBar({
         // the closest built-in size step to +20% (+22%), rather than a
         // one-off arbitrary size on a shared lyra-ui component.
         "z-[9998] flex select-none items-center gap-3 rounded-lyra-lg border border-lyra-border-subtle bg-lyra-bg-surface-base px-3.5 py-2.5 shadow-md",
-        !position && "fixed bottom-4 left-4 animate-in fade-in-0 slide-in-from-bottom-2 duration-200",
+        // Only falls back to the plain viewport corner when there's truly
+        // nothing better to anchor to (no composer on screen to align
+        // with) — see `defaultAnchor`'s own doc comment.
+        !position && !defaultAnchor && "fixed bottom-4 left-4",
+        !position && "animate-in fade-in-0 slide-in-from-bottom-2 duration-200",
         isDragging ? "cursor-grabbing" : "cursor-grab"
       )}
       role="region"
@@ -351,7 +415,7 @@ export function LiveVoiceCallBar({
         title={isOnHold ? "Resume" : "Hold"}
         aria-pressed={isOnHold}
         onClick={onToggleHold}
-        className={cn(isOnHold && SELECTED_RED)}
+        className={cn(CIRCULAR_BUTTON, isOnHold && SELECTED_RED)}
       >
         <Pause className={cn("h-6 w-6", isOnHold && "text-lyra-fg-on-primary")} strokeWidth={2} />
       </ActionIconButton>
@@ -359,8 +423,8 @@ export function LiveVoiceCallBar({
         size="xl"
         title={isMuted ? "Unmute" : "Mute"}
         aria-pressed={isMuted}
-        onClick={() => setIsMuted((v) => !v)}
-        className={cn(isMuted && SELECTED_SLATE)}
+        onClick={onToggleMute}
+        className={cn(CIRCULAR_BUTTON, isMuted && SELECTED_SLATE)}
       >
         {isMuted ? (
           <MicOff className="h-6 w-6 text-lyra-fg-on-primary" strokeWidth={2} />
@@ -372,8 +436,8 @@ export function LiveVoiceCallBar({
         size="xl"
         title={isSpeakerMuted ? "Unmute Speaker" : "Mute Speaker"}
         aria-pressed={isSpeakerMuted}
-        onClick={() => setIsSpeakerMuted((v) => !v)}
-        className={cn(isSpeakerMuted && SELECTED_SLATE)}
+        onClick={onToggleSpeakerMute}
+        className={cn(CIRCULAR_BUTTON, isSpeakerMuted && SELECTED_SLATE)}
       >
         {isSpeakerMuted ? (
           <MutedAudioLinesIcon strokeWidth={2} className="text-lyra-fg-on-primary" />
@@ -385,17 +449,208 @@ export function LiveVoiceCallBar({
         size="xl"
         title={isRecording ? "Stop Recording" : "Record"}
         aria-pressed={isRecording}
-        onClick={() => setIsRecording((v) => !v)}
-        className={cn(isRecording && SELECTED_RED)}
+        onClick={onToggleRecording}
+        className={cn(CIRCULAR_BUTTON, isRecording && SELECTED_RED)}
       >
         <CircleDot className={cn("h-6 w-6", isRecording && "text-lyra-fg-on-primary")} strokeWidth={2} />
       </ActionIconButton>
-      <ActionIconButton size="xl" title="Keypad">
+      <ActionIconButton size="xl" title="Keypad" className={CIRCULAR_BUTTON}>
         <Grip className="h-6 w-6" strokeWidth={2} />
       </ActionIconButton>
-      <ActionIconButton size="xl" title="Hang Up" onClick={onHangUp}>
+      <ActionIconButton size="xl" title="Hang Up" onClick={onHangUp} className={CIRCULAR_BUTTON}>
         <PhoneOff className="h-6 w-6 text-lyra-status-critical-strong" strokeWidth={2} />
       </ActionIconButton>
+    </div>
+  );
+}
+
+/* ── Docked presentation ──
+ * See `DockedVoiceControlBarProps`'s own doc comment for the full "why" —
+ * this is the same underlying call's controls, just rendered inline in
+ * `CustomerInteractionPanel` instead of floating, whenever the agent is
+ * looking at that call's own interaction. Captioned per an explicit
+ * follow-up ("Option B" — a centered pill with each button labeled
+ * underneath) — meant to be more immediately noticeable than the floating
+ * bar's smaller icons-only row, which relies on a tooltip alone. Per a
+ * later follow-up, the buttons themselves share the exact same shape as
+ * the floating bar's (no `rounded-full` override) — only the caption and
+ * the lack of a name/timer/switcher distinguish this from that presentation
+ * now, so the two read as the same control set rather than two different
+ * designs. */
+
+function DockedControlButton({
+  title,
+  selected,
+  tone,
+  onClick,
+  children,
+}: {
+  title: string;
+  selected?: boolean;
+  /** Which `SELECTED_*` fill to use once `selected` — see that constant's
+   *  own doc comment (red = "actively happening", slate = "quieter, not
+   *  critical"). Omitted for buttons with no selected state (Keypad, Hang
+   *  Up). */
+  tone?: "red" | "slate";
+  onClick?: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-0.5">
+      <ActionIconButton
+        size="xl"
+        title={title}
+        aria-pressed={selected}
+        onClick={onClick}
+        className={cn(CIRCULAR_BUTTON, selected && (tone === "red" ? SELECTED_RED : SELECTED_SLATE))}
+      >
+        {children}
+      </ActionIconButton>
+      <span className="lyra-body-xs text-lyra-fg-secondary">{title}</span>
+    </div>
+  );
+}
+
+export interface DockedVoiceControlBarProps {
+  /** Shown next to a small avatar at the pill's leading edge — per an
+   *  explicit follow-up, the docked controls can sit far from the panel
+   *  header's own name (top-left) once the message thread scrolls, so this
+   *  re-affirms exactly who the agent is about to put on hold/mute/etc.
+   *  right at the point of action. Same fallback as the floating bar's own
+   *  `customerName` — "Customer" (or "Colleague" for an internal call) when
+   *  absent. */
+  customerName?: string;
+  isInternalAgentCall?: boolean;
+  /** This call's real start time — same continuous-timer value
+   *  `LiveVoiceCallBar` itself is given, so the elapsed time reads
+   *  identically in both presentations rather than resetting when the call
+   *  moves between them. Restored here per an explicit follow-up ("restore
+   *  timers to the bottom phone control area also, under the customer
+   *  name") after the original "Option B" pick had left it out. */
+  startedAt: number;
+  /** When this call most recently went on hold — same value/semantics as
+   *  `LiveVoiceCallBar`'s own `heldSince`. `undefined` while not on hold.
+   *  Drives the red "On hold MM:SS" line under the timer, matching that
+   *  bar's identical treatment. */
+  heldSince?: number;
+  isOnHold: boolean;
+  onToggleHold: () => void;
+  isMuted: boolean;
+  onToggleMute: () => void;
+  isSpeakerMuted: boolean;
+  onToggleSpeakerMute: () => void;
+  isRecording: boolean;
+  onToggleRecording: () => void;
+  onHangUp: () => void;
+}
+
+/** Docked presentation of the exact same live call's controls
+ *  `LiveVoiceCallBar` shows floating — rendered through
+ *  `CustomerInteractionPanel`'s own `voiceControls` slot at the bottom of
+ *  the center panel, only while the agent is actively viewing this call's
+ *  own interaction (see `AgentNextGenPage`'s derived `isVoiceCallDocked`).
+ *  Shows a small avatar + `customerName` + elapsed timer at the leading
+ *  edge, same shape as the floating bar's own name/timer stack — no
+ *  switcher though (per the original "Option B" pick, since picking a
+ *  *different* call to switch to is only meaningful when the agent isn't
+ *  already looking at the one they'd be switching away from). The moment
+ *  the agent selects a *different* interaction, this bar disappears and
+ *  `LiveVoiceCallBar` takes over instead — reappearing with the switcher on
+ *  top of the same name/timer, per an explicit follow-up ("when popped
+ *  out, add the customer name, timer etc. until redocked"). Not
+ *  draggable — it's laid out in-flow at the bottom of the panel, not
+ *  floating on top of anything.
+ *  `isMuted`/`isSpeakerMuted`/`isRecording`/`isOnHold` are all controlled
+ *  from `AgentNextGenPage`, the same state `LiveVoiceCallBar` reads — so
+ *  muting here and then looking away (popping this out) still shows the
+ *  call as muted; neither presentation owns this state itself. */
+export function DockedVoiceControlBar({
+  customerName,
+  isInternalAgentCall,
+  startedAt,
+  heldSince,
+  isOnHold,
+  onToggleHold,
+  isMuted,
+  onToggleMute,
+  isSpeakerMuted,
+  onToggleSpeakerMute,
+  isRecording,
+  onToggleRecording,
+  onHangUp,
+}: DockedVoiceControlBarProps) {
+  const accent = CHANNEL_ACCENT.voice;
+  const displayName = isInternalAgentCall ? customerName ?? "Colleague" : customerName || "Customer";
+  // Same continuous 1s tick `LiveVoiceCallBar` runs off its own `startedAt`
+  // — kept local to whichever presentation is actually mounted rather than
+  // lifted, since `startedAt`/`heldSince` (the only real state) already
+  // live in `AgentNextGenPage` and are all this needs to derive from.
+  const [elapsedSeconds, setElapsedSeconds] = useState(() => Math.floor((Date.now() - startedAt) / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+  const heldSeconds = isOnHold && heldSince ? Math.floor((Date.now() - heldSince) / 1000) : undefined;
+  return (
+    <div className="flex justify-center border-t border-lyra-border-subtle bg-lyra-bg-surface-base py-3">
+      {/* Same rounded-lyra-lg/background as the floating bar's own outer
+       *  container (see its className above) — per an explicit follow-up,
+       *  the two should read as the same bar in two locations, not two
+       *  different designs. Two differences: no `shadow-md` (in-flow at the
+       *  bottom of the panel, not floating on top of other content, so a
+       *  drop shadow would look out of place until it actually pops out),
+       *  and no outer border either — per a later follow-up, now that each
+       *  button carries its own circular border (`CIRCULAR_BUTTON`), an
+       *  outer border around the whole pill too just doubled up. */}
+      <div className="flex items-center gap-5 rounded-lyra-lg bg-lyra-bg-surface-base px-6 py-3">
+        <span className="flex items-center gap-2">
+          <span
+            className={cn("flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full lyra-body-md-emphasis", accent.bg, accent.text)}
+            aria-hidden="true"
+          >
+            {isInternalAgentCall ? <Headset className="h-[19px] w-[19px]" strokeWidth={1.5} /> : getInitials(customerName)}
+          </span>
+          <span className="min-w-0 max-w-[160px]">
+            <p className="truncate lyra-body-md-emphasis text-lyra-fg-default">{displayName}</p>
+            <p className="lyra-body-sm text-lyra-fg-secondary">{formatElapsed(elapsedSeconds)}</p>
+            {heldSeconds !== undefined && (
+              <p className="lyra-body-sm-emphasis text-lyra-status-critical-strong">On hold {formatElapsed(heldSeconds)}</p>
+            )}
+          </span>
+        </span>
+        <div className="mx-0.5 h-7 w-px bg-lyra-border-subtle" />
+        <DockedControlButton title={isOnHold ? "Resume" : "Hold"} selected={isOnHold} tone="red" onClick={onToggleHold}>
+          <Pause className={cn("h-6 w-6", isOnHold && "text-lyra-fg-on-primary")} strokeWidth={2} />
+        </DockedControlButton>
+        <DockedControlButton title={isMuted ? "Unmute" : "Mute"} selected={isMuted} tone="slate" onClick={onToggleMute}>
+          {isMuted ? (
+            <MicOff className="h-6 w-6 text-lyra-fg-on-primary" strokeWidth={2} />
+          ) : (
+            <Mic className="h-6 w-6" strokeWidth={2} />
+          )}
+        </DockedControlButton>
+        <DockedControlButton
+          title={isSpeakerMuted ? "Unmute Speaker" : "Mute Speaker"}
+          selected={isSpeakerMuted}
+          tone="slate"
+          onClick={onToggleSpeakerMute}
+        >
+          {isSpeakerMuted ? (
+            <MutedAudioLinesIcon strokeWidth={2} className="text-lyra-fg-on-primary" />
+          ) : (
+            <AudioLines className="h-6 w-6" strokeWidth={2} />
+          )}
+        </DockedControlButton>
+        <DockedControlButton title={isRecording ? "Stop Recording" : "Record"} selected={isRecording} tone="red" onClick={onToggleRecording}>
+          <CircleDot className={cn("h-6 w-6", isRecording && "text-lyra-fg-on-primary")} strokeWidth={2} />
+        </DockedControlButton>
+        <DockedControlButton title="Keypad">
+          <Grip className="h-6 w-6" strokeWidth={2} />
+        </DockedControlButton>
+        <DockedControlButton title="Hang Up" onClick={onHangUp}>
+          <PhoneOff className="h-6 w-6 text-lyra-status-critical-strong" strokeWidth={2} />
+        </DockedControlButton>
+      </div>
     </div>
   );
 }

@@ -668,12 +668,15 @@ export function AddOutboundButton({
 /* ── Root ── */
 
 // Seeded so the popover never opens to an empty, unconvincing "Favorites"
-// screen during a demo — a handful of agents an outbound skill and a
+// screen during a demo — a couple of agents, an outbound skill, and a
 // customer, favorited from the start. Real favoriting is still fully
 // agent-driven from here on (see `toggleFavorite` below); this is just the
 // starting state, not a pinned/can't-remove list. IDs match `directory.ts`
 // seed data (`DIRECTORY_AGENTS`/`DIRECTORY_SKILLS`/`DIRECTORY_CUSTOMERS`).
-const DEFAULT_FAVORITE_IDS = ["john-smith", "amara", "diego", "lena", "tomas", "vip-support", "sofia"];
+// Trimmed to just two agents per an explicit follow-up (was five) — "sofia"
+// is the one customer here and, per that same follow-up, now has every
+// channel type the flyout can show (see her `channels` in directory.ts).
+const DEFAULT_FAVORITE_IDS = ["john-smith", "amara", "vip-support", "sofia"];
 
 export function NewOutboundPopover({ title = "New Outbound", expanded = false, outbound }: NewOutboundPopoverProps) {
   const [open, setOpen] = useState(false);
