@@ -86,7 +86,7 @@ const SLIDE_IN_META: Record<SlideInDestination, { title: string; icon: React.Rea
   // `FileSearch2`) is the one whose magnifying glass actually sits in a
   // corner of the document rather than centered over it, so that's the
   // match for what was asked for here.
-  contacts: { title: "Search Contacts", icon: <FileSearch className="h-4 w-4" strokeWidth={1.5} /> },
+  contacts: { title: "Interaction Search", icon: <FileSearch className="h-4 w-4" strokeWidth={1.5} /> },
   directory: { title: "Directory", icon: <BookUser className="h-4 w-4" strokeWidth={1.5} /> },
   schedule: { title: "Schedule", icon: <CalendarDays className="h-4 w-4" strokeWidth={1.5} /> },
   customWorkspace: { title: "Custom Workspace", icon: <Monitor className="h-4 w-4" strokeWidth={1.5} /> },
@@ -745,19 +745,23 @@ export function AgentNextGenPage({
   // a "Call ended" label next to the channel name (InteractionActionsBar)
   // and the same tile preview override `heldVoiceCallAssignmentIds` uses.
   const [endedVoiceCallAssignmentIds, setEndedVoiceCallAssignmentIds] = useState<Set<string>>(new Set());
-  // Mute/speaker-mute/recording toggles for whichever call is currently
-  // live — lifted here (not local `useState` inside `LiveVoiceCallBar`) so
-  // the SAME state reads correctly from either presentation of that call's
-  // controls: the floating `LiveVoiceCallBar` when the agent is looking at
-  // something else, or the in-flow `DockedVoiceControlBar` (rendered via
+  // Mute/mask/recording toggles for whichever call is currently live —
+  // lifted here (not local `useState` inside `LiveVoiceCallBar`) so the SAME
+  // state reads correctly from either presentation of that call's controls:
+  // the floating `LiveVoiceCallBar` when the agent is looking at something
+  // else, or the in-flow `DockedVoiceControlBar` (rendered via
   // `CustomerInteractionPanel`'s `voiceControls` slot) when the agent is
   // looking at this call's own interaction. Unlike `voiceCallStartedAt`/
   // `voiceCallHeldSince`, these are plain booleans rather than
   // per-assignment records — they're only ever meaningful for whichever
   // call is live right now, not something a backgrounded held call needs to
   // remember, so they simply reset in `goLiveWithVoiceCall` below.
+  // `isVoiceCallMasked` backs the "Mask" control — it mutes/obscures the
+  // customer's sensitive personal info (card numbers, SSNs, etc. read aloud
+  // mid-call), not the agent's own outgoing speaker audio, hence the name
+  // (and icon/label) being distinct from `isVoiceCallMuted`.
   const [isVoiceCallMuted, setIsVoiceCallMuted] = useState(false);
-  const [isVoiceCallSpeakerMuted, setIsVoiceCallSpeakerMuted] = useState(false);
+  const [isVoiceCallMasked, setIsVoiceCallMasked] = useState(false);
   const [isVoiceCallRecording, setIsVoiceCallRecording] = useState(false);
   // The bar's own dragged position — lifted here (not local to
   // LiveVoiceCallBar) since that component remounts via `key={assignmentId}`
@@ -1444,10 +1448,10 @@ export function AgentNextGenPage({
     setVoiceCallStartedAt((prev) => (prev[assignmentId] !== undefined ? prev : { ...prev, [assignmentId]: Date.now() }));
     setLiveVoiceCall({ assignmentId });
     // Fresh call, fresh controls — a new/resumed live call doesn't inherit
-    // whatever mute/speaker/record state a previous live call happened to
+    // whatever mute/mask/record state a previous live call happened to
     // leave behind.
     setIsVoiceCallMuted(false);
-    setIsVoiceCallSpeakerMuted(false);
+    setIsVoiceCallMasked(false);
     setIsVoiceCallRecording(false);
   };
 
@@ -2278,7 +2282,7 @@ export function AgentNextGenPage({
              *  already matches across all of them (NavIconButton hardcodes
              *  it), so size was the only inconsistency. */}
             <NavIconButton item="customWorkspace" title="Custom Workspace" icon={Monitor} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
-            <NavIconButton item="contacts" title="Search Contacts" icon={FileSearch} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
+            <NavIconButton item="contacts" title="Interaction Search" icon={FileSearch} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
             <NavIconButton item="directory" title="Directory" icon={BookUser} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
             <NavIconButton item="schedule" title="Schedule" icon={CalendarDays} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
             <div className="mx-1 h-5 w-px bg-lyra-border-subtle" />
@@ -2606,8 +2610,8 @@ export function AgentNextGenPage({
                         onToggleHold={() => toggleVoiceCallHold(liveVoiceCall!.assignmentId)}
                         isMuted={isVoiceCallMuted}
                         onToggleMute={() => setIsVoiceCallMuted((v) => !v)}
-                        isSpeakerMuted={isVoiceCallSpeakerMuted}
-                        onToggleSpeakerMute={() => setIsVoiceCallSpeakerMuted((v) => !v)}
+                        isMasked={isVoiceCallMasked}
+                        onToggleMask={() => setIsVoiceCallMasked((v) => !v)}
                         isRecording={isVoiceCallRecording}
                         onToggleRecording={() => setIsVoiceCallRecording((v) => !v)}
                         onHangUp={handleHangUpLiveCall}
@@ -2972,8 +2976,8 @@ export function AgentNextGenPage({
             onToggleHold={() => toggleVoiceCallHold(liveVoiceCall.assignmentId)}
             isMuted={isVoiceCallMuted}
             onToggleMute={() => setIsVoiceCallMuted((v) => !v)}
-            isSpeakerMuted={isVoiceCallSpeakerMuted}
-            onToggleSpeakerMute={() => setIsVoiceCallSpeakerMuted((v) => !v)}
+            isMasked={isVoiceCallMasked}
+            onToggleMask={() => setIsVoiceCallMasked((v) => !v)}
             isRecording={isVoiceCallRecording}
             onToggleRecording={() => setIsVoiceCallRecording((v) => !v)}
             onHangUp={handleHangUpLiveCall}

@@ -19,6 +19,17 @@ export interface DraggablePanelProps {
   /** Header title — should match the trigger button's label */
   title: string;
   /**
+   * Optional content icon shown in the header next to the drag grip (float
+   * mode) or in its place (docked mode, where there's no grip to make room
+   * for) — e.g. the same icon used on the trigger button that opens this
+   * panel, so the panel reads as "the same destination" whether it's shown
+   * full-page, docked, or floating. Omit for the plain grip/spacer-only
+   * header every other `DraggablePanel` consumer already gets (Notifications,
+   * Ask AI) — this was previously accepted by `SlideInPage` for API
+   * compatibility but silently dropped; it's now actually rendered.
+   */
+  icon?: React.ReactNode;
+  /**
    * Extra content rendered directly below the title row, still above the
    * header's bottom divider — e.g. a filter or app-select field that should
    * stay fixed at the top of the panel (outside the scrollable body below)
@@ -61,7 +72,7 @@ export interface DraggablePanelProps {
 
 const DraggablePanel = React.forwardRef<HTMLDivElement, DraggablePanelProps>(
   ({
-    title, headerContent, children, onClose,
+    title, icon, headerContent, children, onClose,
     defaultWidth = 320, maxWidth, defaultHeight = 480, height,
     draggableVariant: draggableVariantProp = "float",
     onVariantChange, onWidthChange, onResizeStateChange, onInteract,
@@ -95,12 +106,21 @@ const DraggablePanel = React.forwardRef<HTMLDivElement, DraggablePanelProps>(
           <>
             <ContainerHeader
               title={title}
-              /* Grip icon in float mode; spacer div to preserve header height in docked mode */
+              /* Float mode: grip (always) + the content `icon`, if given, right
+               *  next to it — the grip still needs its own hit target to drag
+               *  by. Docked mode: no grip needed, so the content `icon` (if
+               *  given) fills that slot directly; falls back to the old blank
+               *  spacer when no `icon` is passed, purely so existing
+               *  icon-less consumers (Notifications, Ask AI) keep the exact
+               *  same header layout they've always had. */
               icon={
                 variant === "float" ? (
-                  <div {...gripProps}><GripVertical className="h-4 w-4" strokeWidth={1.5} /></div>
+                  <div className="flex items-center gap-1.5">
+                    <div {...gripProps}><GripVertical className="h-4 w-4" strokeWidth={1.5} /></div>
+                    {icon}
+                  </div>
                 ) : (
-                  <div className="w-4" aria-hidden="true" />
+                  icon ?? <div className="w-4" aria-hidden="true" />
                 )
               }
               actions={

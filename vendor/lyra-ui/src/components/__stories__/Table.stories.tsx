@@ -131,6 +131,71 @@ export const WithSelectedRows: Story = {
   ),
 };
 
+/* ── Expandable row (accordion) ──
+ * No built-in expandable-row/accordion primitive exists on `Table`/
+ * `TableRow` — this demonstrates the pattern a consumer builds by hand:
+ * a normal row's `onClick` toggles which row id is "open", and when a row
+ * matches, an extra `<TableRow>` is rendered right after it with a single
+ * `<TableCell block colSpan={N}>` spanning the full row width. `block` is
+ * required here — the default `TableCell` force-wraps children in a
+ * truncating `<span>`, which breaks multi-line detail content. Real
+ * consumer: Stoker's Interaction Search results table (row click → case
+ * details + conversation thread). */
+function ExpandableRowDemo() {
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  return (
+    <div className="h-[400px]">
+      <Table>
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            <TableHead className="flex-[2]">Name</TableHead>
+            <TableHead className="flex-1">Published</TableHead>
+            <TableHead className="flex-[2]">Description</TableHead>
+            <TableHead className="flex-[1.3]">Created By</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {sampleData.map((row) => (
+            <React.Fragment key={row.id}>
+              <TableRow
+                className="cursor-pointer"
+                onClick={() => setExpandedId((prev) => (prev === row.id ? null : row.id))}
+              >
+                <TableCell className="flex-[2] text-lyra-fg-link">{row.name}</TableCell>
+                <TableCell className="flex-1">
+                  {row.published ? (
+                    <CircleCheck className="h-5 w-5 text-lyra-status-success-strong" strokeWidth={1.5} />
+                  ) : (
+                    <Minus className="h-5 w-5 text-lyra-fg-disabled" strokeWidth={1.5} />
+                  )}
+                </TableCell>
+                <TableCell className="flex-[2]">{row.description}</TableCell>
+                <TableCell className="flex-[1.3]">{row.createdBy}</TableCell>
+              </TableRow>
+              {expandedId === row.id && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell block colSpan={4} className="bg-lyra-bg-surface-canvas py-3">
+                    <p className="lyra-body-sm text-lyra-fg-secondary">
+                      Extra detail for "{row.name}" goes here — case fields,
+                      a conversation thread, whatever doesn't fit as its own
+                      column.
+                    </p>
+                  </TableCell>
+                </TableRow>
+              )}
+            </React.Fragment>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+export const ExpandableRow: Story = {
+  name: "Expandable row (accordion)",
+  render: () => <ExpandableRowDemo />,
+};
+
 /* ── Sortable ── */
 
 const sortableData = [
@@ -454,6 +519,35 @@ export const ToolbarFiltersCollapseWidth: Story = {
             />
           </div>
         </div>
+      </div>
+    );
+  },
+};
+
+/* ── Toolbar — filterChipSize / advancedSearchButtonSize ──
+ * Both default "md" (unchanged from every existing consumer's current
+ * look); passing "sm" for a toolbar's filter row lets it read lighter than
+ * a taller primary search field placed above/beside it, rather than every
+ * control competing at the same visual weight. See `FilterChip`'s own
+ * "Sizes" story for the same "sm" treatment on a standalone chip. */
+export const ToolbarCompactFilters: Story = {
+  name: "Toolbar — filterChipSize/advancedSearchButtonSize",
+  render: () => {
+    const [values, setValues] = useState<Record<string, string[]>>({ description: [], createdBy: [] });
+    return (
+      <div className="w-[700px]">
+        <TableToolbar
+          searchQuery=""
+          onSearchChange={() => {}}
+          filterDefs={toolbarFilterDefs}
+          filterValues={values}
+          onFilterChange={(key, vals) => setValues((p) => ({ ...p, [key]: vals }))}
+          onFilterClear={() => setValues({ description: [], createdBy: [] })}
+          filterChipSize="sm"
+          showAdvancedSearch
+          advancedSearchButtonSize="sm"
+          advancedSearchContent={<div className="p-4 lyra-body-md text-lyra-fg-secondary">Query builder content goes here.</div>}
+        />
       </div>
     );
   },

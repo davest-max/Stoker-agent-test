@@ -98,19 +98,33 @@ TableHead.displayName = "TableHead";
 
 const TableCell = React.forwardRef<
   HTMLTableCellElement,
-  React.TdHTMLAttributes<HTMLTableCellElement>
->(({ className, children, title, ...props }, ref) => (
+  React.TdHTMLAttributes<HTMLTableCellElement> & {
+    /**
+     * Renders `children` directly, with a plain block layout, instead of
+     * the default single-line `flex items-center` row that force-wraps
+     * children in a truncating `<span>` — for a row-detail/expand cell
+     * whose content is multi-line and needs to actually be readable (e.g.
+     * a `colSpan` row under a clicked table row showing extra fields and a
+     * conversation thread). Default `false` — every existing consumer's
+     * plain single-line cell is unaffected.
+     */
+    block?: boolean;
+  }
+>(({ className, children, title, block = false, ...props }, ref) => (
   <td
     ref={ref}
     role="cell"
     title={title ?? (typeof children === "string" ? children : undefined)}
     className={cn(
-      "flex items-center h-10 px-3 lyra-body-md text-lyra-fg-default [&:has([role=checkbox])]:pr-0 [&:has([role=checkbox])]:w-[40px] min-w-0",
+      block
+        ? "block h-auto items-start whitespace-normal"
+        : "flex items-center h-10 [&:has([role=checkbox])]:pr-0 [&:has([role=checkbox])]:w-[40px]",
+      "px-3 lyra-body-md text-lyra-fg-default min-w-0",
       className
     )}
     {...props}
   >
-    <span className="truncate">{children}</span>
+    {block ? children : <span className="truncate">{children}</span>}
   </td>
 ));
 TableCell.displayName = "TableCell";
@@ -384,10 +398,25 @@ interface TableToolbarProps extends React.HTMLAttributes<HTMLDivElement> {
    * existing consumer that doesn't pass this keeps its current behavior.
    */
   filtersCollapseWidth?: number;
+  /**
+   * Size for the `filterDefs`-rendered `FilterChip`s (both the inline row
+   * and the narrow-width collapsed dropdown's own list) — "sm" matches
+   * `FilterChip`'s own compact treatment, for a toolbar that wants its
+   * filter row to read lighter than the primary search field next to it.
+   * Default "md" — the original hardcoded size, so existing consumers are
+   * unaffected.
+   */
+  filterChipSize?: "sm" | "md";
+  /**
+   * Size for the "Query Builder"/"Applied Filters" trigger button —
+   * independent of `filterChipSize` since a consumer might want one but
+   * not the other. Default "md" — `Button`'s own previous hardcoded size.
+   */
+  advancedSearchButtonSize?: "sm" | "md";
 }
 
 const TableToolbar = React.forwardRef<HTMLDivElement, TableToolbarProps>(
-  ({ className, searchQuery, onSearchChange, searchPlaceholder = "Quick Search", recordCount, recordLabel = "Records", filters, filterDefs, filterValues, onFilterChange, onFilterClear, actions, actionDefs, title, toolbarPanelToggle, onLeftPanelToggle, onRightPanelToggle, showAdvancedSearch, advancedSearchContent, advancedSearchApplied, advancedSearchDescription, advancedSearchTitle, onAdvancedSearchApply, onAdvancedSearchCancel, onSaveSearch, filtersCollapseWidth = 991, ...props }, ref) => {
+  ({ className, searchQuery, onSearchChange, searchPlaceholder = "Quick Search", recordCount, recordLabel = "Records", filters, filterDefs, filterValues, onFilterChange, onFilterClear, actions, actionDefs, title, toolbarPanelToggle, onLeftPanelToggle, onRightPanelToggle, showAdvancedSearch, advancedSearchContent, advancedSearchApplied, advancedSearchDescription, advancedSearchTitle, onAdvancedSearchApply, onAdvancedSearchCancel, onSaveSearch, filtersCollapseWidth = 991, filterChipSize = "md", advancedSearchButtonSize = "md", ...props }, ref) => {
     const [advancedOpen, setAdvancedOpen] = useState(false);
     const [saveSearchOpen, setSaveSearchOpen] = useState(false);
     const [saveSearchName, setSaveSearchName] = useState("");
@@ -459,7 +488,8 @@ const TableToolbar = React.forwardRef<HTMLDivElement, TableToolbarProps>(
         <button
           onClick={() => setFiltersDropdownOpen((v) => !v)}
           className={cn(
-            "inline-flex items-center gap-1.5 h-8 px-3 rounded-lyra-md lyra-body-md-emphasis border transition-colors whitespace-nowrap",
+            "inline-flex items-center gap-1.5 rounded-lyra-md border transition-colors whitespace-nowrap",
+            filterChipSize === "sm" ? "h-6 px-2 lyra-body-sm-emphasis" : "h-8 px-3 lyra-body-md-emphasis",
             activeFilterCount > 0
               ? "bg-lyra-bg-active-subtle border-lyra-border-active text-lyra-fg-active-strong"
               : "bg-lyra-bg-control border-lyra-border-default text-lyra-fg-default hover:bg-lyra-state-hover"
@@ -477,6 +507,7 @@ const TableToolbar = React.forwardRef<HTMLDivElement, TableToolbarProps>(
                 options={f.options}
                 selectedValues={filterValues?.[f.key] ?? []}
                 onSelectionChange={(vals) => onFilterChange?.(f.key, vals)}
+                size={filterChipSize}
               />
             ))}
             {hasActiveFilters && (
@@ -501,10 +532,11 @@ const TableToolbar = React.forwardRef<HTMLDivElement, TableToolbarProps>(
             options={f.options}
             selectedValues={filterValues?.[f.key] ?? []}
             onSelectionChange={(vals) => onFilterChange?.(f.key, vals)}
+            size={filterChipSize}
           />
         ))}
         {hasActiveFilters && (
-          <Button variant="ghost" size="default" onClick={onFilterClear}>
+          <Button variant="ghost" size={filterChipSize === "sm" ? "sm" : "default"} onClick={onFilterClear}>
             Clear
           </Button>
         )}
@@ -614,7 +646,7 @@ const TableToolbar = React.forwardRef<HTMLDivElement, TableToolbarProps>(
         className="w-[min(1024px,90vw)]"
       >
         {/* Button is always the direct Popover trigger (asChild requires a DOM element) */}
-        <Button variant={advancedSearchApplied ? "default" : "outline"} size="md">
+        <Button variant={advancedSearchApplied ? "default" : "outline"} size={advancedSearchButtonSize}>
           <SlidersHorizontal className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
           {advancedSearchApplied ? "Applied Filters" : "Query Builder"}
         </Button>

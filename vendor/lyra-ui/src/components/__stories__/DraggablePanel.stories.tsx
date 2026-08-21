@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { useState } from "react";
+import { FileSearch } from "lucide-react";
 import { DraggablePanel } from "../draggable-panel";
 import type { DraggableVariant } from "../draggable";
 
@@ -39,6 +40,47 @@ export const WithContent: Story = {
       </DraggablePanel>
     </div>
   ),
+};
+
+/* ── With a content icon ── */
+export const WithIcon: Story = {
+  name: "With content icon",
+  parameters: { layout: "fullscreen" },
+  render: () => {
+    const [variant, setVariant] = useState<DraggableVariant>("docked");
+
+    const panel = (
+      <DraggablePanel
+        title="Interaction Search"
+        icon={<FileSearch className="h-4 w-4" strokeWidth={1.5} />}
+        draggableVariant={variant}
+        onVariantChange={setVariant}
+        defaultWidth={320}
+        defaultHeight={420}
+      >
+        <p className="lyra-body-md text-lyra-fg-default text-center">
+          The icon sits next to the drag grip while floating, and takes the
+          grip's place while docked — same destination, same icon, in both
+          the panel and the full-page header (see `SlideInPage`).
+        </p>
+      </DraggablePanel>
+    );
+
+    return (
+      <div className="flex h-screen overflow-hidden bg-lyra-bg-surface-shell">
+        <div className="flex-1 flex items-center justify-center">
+          <p className="lyra-body-md text-lyra-fg-secondary">
+            Main content area — use the dock icon in the panel's header to toggle.
+          </p>
+        </div>
+        {variant === "docked" ? (
+          <div className="h-full pr-3 pb-3">{panel}</div>
+        ) : (
+          <div className="absolute top-16 left-16">{panel}</div>
+        )}
+      </div>
+    );
+  },
 };
 
 /* ── Interactive (toggle float ↔ docked) ── */

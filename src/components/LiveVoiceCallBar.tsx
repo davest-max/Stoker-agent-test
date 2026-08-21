@@ -3,13 +3,17 @@ import { ActionIconButton, CHANNEL_ACCENT, Popover, Menu, type MenuEntry } from 
 import { Headset, Mic, MicOff, Pause, AudioLines, CircleDot, Grip, PhoneOff, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/** AudioLines with a diagonal slash — Lucide has no ready "off" variant for
- *  it, so composite one: the base icon plus an overlaid line, drawn
- *  corner-to-corner the same way Lucide's own `-Off` icons (e.g. MicOff)
- *  draw their slash. Same icon InteractionActionsBar's old inline "Mute
- *  Speaker" button used before that whole control set moved here — recreated
- *  locally rather than exported/imported since it's a small, self-contained
- *  composite (same reasoning as `getInitials`'s own doc comment below). */
+/** AudioLines with a diagonal slash — Lucide has no ready icon for "mask
+ *  sensitive audio", so composite one: the base icon plus an overlaid line,
+ *  drawn corner-to-corner the same way Lucide's own `-Off` icons (e.g.
+ *  MicOff) draw their slash. Used by the "Mask" control below — unlike
+ *  Mute's `Mic`/`MicOff` pair, this renders with the slash in BOTH states
+ *  (see that button's own comment for why), so it's really just a fixed
+ *  glyph rather than an on/off icon pair; kept as its own small component
+ *  anyway since compositing the slash-overlay SVG inline at both call sites
+ *  would duplicate it. Recreated locally rather than exported/imported
+ *  since it's a small, self-contained composite (same reasoning as
+ *  `getInitials`'s own doc comment below). */
 function MutedAudioLinesIcon({ strokeWidth = 2, className }: { strokeWidth?: number; className?: string }) {
   return (
     <span className={cn("relative inline-flex h-6 w-6 items-center justify-center", className)} aria-hidden="true">
@@ -25,29 +29,22 @@ function MutedAudioLinesIcon({ strokeWidth = 2, className }: { strokeWidth?: num
  *  colored background with a white icon, per the reference screenshot,
  *  rather than the subtle default hover-only look `ActionIconButton` uses at
  *  rest. Hold/Record share the same red (they're both "something is actively
- *  happening" states); Mute/Mute Speaker share a separate dark slate (a
- *  quieter, non-alarming color — muting audio isn't a critical state the way
- *  holding or recording a call is). `hover:`/`active:` are repeated at the
- *  same color so the fill doesn't wash out lighter on hover — this class
+ *  happening" states); Mute/Mask share a separate dark slate (a quieter,
+ *  non-alarming color — muting audio or masking sensitive info isn't a
+ *  critical state the way holding or recording a call is). `hover:`/
+ *  `active:` are repeated at the same color so the fill doesn't wash out
+ *  lighter on hover — this class
  *  wins over `ActionIconButton`'s own `hover:bg-lyra-state-hover` via
  *  `cn`'s tailwind-merge. */
 const SELECTED_RED = "bg-lyra-status-critical-strong hover:bg-lyra-status-critical-strong active:bg-lyra-status-critical-strong";
 const SELECTED_SLATE = "bg-lyra-accent-slate-strong hover:bg-lyra-accent-slate-strong active:bg-lyra-accent-slate-strong";
-// Circular ring shape for every Hold/Mute/Mute Speaker/Record/Keypad/Hang Up
-// button — shared between the floating bar's own row and the docked
-// presentation's `DockedControlButton` so the two stay the same shape (an
-// explicit follow-up: try a circular button instead of `ActionIconButton`'s
-// own default corner radius, and keep both presentations matching rather
-// than letting them diverge again).
-// `!rounded-full` (not plain `rounded-full`) — `ActionIconButton`'s own base
-// class is `rounded-lyra-sm`, a custom token tailwind-merge's default config
-// doesn't recognize as part of the border-radius group (its matcher only
-// accepts a fixed set of suffixes: none/sm/DEFAULT/md/lg/xl/2xl/3xl/full),
-// so `cn()` leaves both classes in the output instead of dropping the base
-// one — and plain "rounded-full" was losing the resulting cascade-order tie
-// (confirmed empirically: buttons rendered as rounded squares, not
-// circles). The `!` forces `!important`, which wins regardless of that.
-const CIRCULAR_BUTTON = "!rounded-full border-2 border-lyra-border-subtle";
+// Reverted per an explicit follow-up: no per-button shape override
+// (`ActionIconButton`'s own default rounded-square/no-border look is used
+// as-is for Hold/Mute/Mask/Record/Keypad/Hang Up, in both the floating bar
+// and the docked `DockedControlButton`) and no per-button border — a
+// circular-with-border treatment was tried and then explicitly rolled back.
+// The bar's own containing border comes from its outer wrapper instead (see
+// that div's className in each presentation below), not from the buttons.
 
 /** Same first+last-initial derivation CustomerInteractionPanel's own
  *  `getInitials` and lyra-ui's `InteractionNavItem` already use — small
@@ -103,17 +100,20 @@ export interface LiveVoiceCallBarProps {
    *  in addition to the total call time, not instead of it. */
   heldSince?: number;
   onToggleHold: () => void;
-  /** Mute/Mute Speaker/Record — lifted to `AgentNextGenPage` for the same
-   *  reason `isOnHold` is: this bar needs to render in two different places
-   *  (this floating presentation, and the docked `DockedVoiceControlBar`
-   *  below) for the *same* ongoing call without losing state when the agent
+  /** Mute/Mask/Record — lifted to `AgentNextGenPage` for the same reason
+   *  `isOnHold` is: this bar needs to render in two different places (this
+   *  floating presentation, and the docked `DockedVoiceControlBar` below)
+   *  for the *same* ongoing call without losing state when the agent
    *  switches between them. Reset by the parent only when a genuinely
    *  different call goes live — see `goLiveWithVoiceCall` in
    *  AgentNextGenPage.tsx. */
   isMuted: boolean;
   onToggleMute: () => void;
-  isSpeakerMuted: boolean;
-  onToggleSpeakerMute: () => void;
+  /** "Mask" — masks the customer's own sensitive info (card numbers, SSNs,
+   *  etc. spoken mid-call) for PCI/PII compliance, not the agent's outgoing
+   *  audio, hence the distinct name/icon/label from `isMuted`. */
+  isMasked: boolean;
+  onToggleMask: () => void;
   isRecording: boolean;
   onToggleRecording: () => void;
   onHangUp: () => void;
@@ -216,8 +216,8 @@ export function LiveVoiceCallBar({
   onToggleHold,
   isMuted,
   onToggleMute,
-  isSpeakerMuted,
-  onToggleSpeakerMute,
+  isMasked,
+  onToggleMask,
   isRecording,
   onToggleRecording,
   onHangUp,
@@ -415,7 +415,7 @@ export function LiveVoiceCallBar({
         title={isOnHold ? "Resume" : "Hold"}
         aria-pressed={isOnHold}
         onClick={onToggleHold}
-        className={cn(CIRCULAR_BUTTON, isOnHold && SELECTED_RED)}
+        className={cn(isOnHold && SELECTED_RED)}
       >
         <Pause className={cn("h-6 w-6", isOnHold && "text-lyra-fg-on-primary")} strokeWidth={2} />
       </ActionIconButton>
@@ -424,7 +424,7 @@ export function LiveVoiceCallBar({
         title={isMuted ? "Unmute" : "Mute"}
         aria-pressed={isMuted}
         onClick={onToggleMute}
-        className={cn(CIRCULAR_BUTTON, isMuted && SELECTED_SLATE)}
+        className={cn(isMuted && SELECTED_SLATE)}
       >
         {isMuted ? (
           <MicOff className="h-6 w-6 text-lyra-fg-on-primary" strokeWidth={2} />
@@ -434,30 +434,30 @@ export function LiveVoiceCallBar({
       </ActionIconButton>
       <ActionIconButton
         size="xl"
-        title={isSpeakerMuted ? "Unmute Speaker" : "Mute Speaker"}
-        aria-pressed={isSpeakerMuted}
-        onClick={onToggleSpeakerMute}
-        className={cn(CIRCULAR_BUTTON, isSpeakerMuted && SELECTED_SLATE)}
+        title="Mask"
+        aria-pressed={isMasked}
+        onClick={onToggleMask}
+        className={cn(isMasked && SELECTED_SLATE)}
       >
-        {isSpeakerMuted ? (
-          <MutedAudioLinesIcon strokeWidth={2} className="text-lyra-fg-on-primary" />
-        ) : (
-          <AudioLines className="h-6 w-6" strokeWidth={2} />
-        )}
+        {/* Slash stays on in both states — this isn't a mute toggle whose
+         *  icon reflects on/off, it's a fixed "masking" glyph; the filled
+         *  slate background (via SELECTED_SLATE above) is what shows the
+         *  toggle is engaged. See `isMasked`'s own doc comment. */}
+        <MutedAudioLinesIcon strokeWidth={2} className={isMasked ? "text-lyra-fg-on-primary" : undefined} />
       </ActionIconButton>
       <ActionIconButton
         size="xl"
         title={isRecording ? "Stop Recording" : "Record"}
         aria-pressed={isRecording}
         onClick={onToggleRecording}
-        className={cn(CIRCULAR_BUTTON, isRecording && SELECTED_RED)}
+        className={cn(isRecording && SELECTED_RED)}
       >
         <CircleDot className={cn("h-6 w-6", isRecording && "text-lyra-fg-on-primary")} strokeWidth={2} />
       </ActionIconButton>
-      <ActionIconButton size="xl" title="Keypad" className={CIRCULAR_BUTTON}>
+      <ActionIconButton size="xl" title="Keypad">
         <Grip className="h-6 w-6" strokeWidth={2} />
       </ActionIconButton>
-      <ActionIconButton size="xl" title="Hang Up" onClick={onHangUp} className={CIRCULAR_BUTTON}>
+      <ActionIconButton size="xl" title="Hang Up" onClick={onHangUp}>
         <PhoneOff className="h-6 w-6 text-lyra-status-critical-strong" strokeWidth={2} />
       </ActionIconButton>
     </div>
@@ -502,7 +502,7 @@ function DockedControlButton({
         title={title}
         aria-pressed={selected}
         onClick={onClick}
-        className={cn(CIRCULAR_BUTTON, selected && (tone === "red" ? SELECTED_RED : SELECTED_SLATE))}
+        className={cn(selected && (tone === "red" ? SELECTED_RED : SELECTED_SLATE))}
       >
         {children}
       </ActionIconButton>
@@ -537,8 +537,8 @@ export interface DockedVoiceControlBarProps {
   onToggleHold: () => void;
   isMuted: boolean;
   onToggleMute: () => void;
-  isSpeakerMuted: boolean;
-  onToggleSpeakerMute: () => void;
+  isMasked: boolean;
+  onToggleMask: () => void;
   isRecording: boolean;
   onToggleRecording: () => void;
   onHangUp: () => void;
@@ -560,10 +560,10 @@ export interface DockedVoiceControlBarProps {
  *  out, add the customer name, timer etc. until redocked"). Not
  *  draggable — it's laid out in-flow at the bottom of the panel, not
  *  floating on top of anything.
- *  `isMuted`/`isSpeakerMuted`/`isRecording`/`isOnHold` are all controlled
- *  from `AgentNextGenPage`, the same state `LiveVoiceCallBar` reads — so
- *  muting here and then looking away (popping this out) still shows the
- *  call as muted; neither presentation owns this state itself. */
+ *  `isMuted`/`isMasked`/`isRecording`/`isOnHold` are all controlled from
+ *  `AgentNextGenPage`, the same state `LiveVoiceCallBar` reads — so muting
+ *  here and then looking away (popping this out) still shows the call as
+ *  muted; neither presentation owns this state itself. */
 export function DockedVoiceControlBar({
   customerName,
   isInternalAgentCall,
@@ -573,8 +573,8 @@ export function DockedVoiceControlBar({
   onToggleHold,
   isMuted,
   onToggleMute,
-  isSpeakerMuted,
-  onToggleSpeakerMute,
+  isMasked,
+  onToggleMask,
   isRecording,
   onToggleRecording,
   onHangUp,
@@ -593,16 +593,14 @@ export function DockedVoiceControlBar({
   const heldSeconds = isOnHold && heldSince ? Math.floor((Date.now() - heldSince) / 1000) : undefined;
   return (
     <div className="flex justify-center border-t border-lyra-border-subtle bg-lyra-bg-surface-base py-3">
-      {/* Same rounded-lyra-lg/background as the floating bar's own outer
-       *  container (see its className above) — per an explicit follow-up,
-       *  the two should read as the same bar in two locations, not two
-       *  different designs. Two differences: no `shadow-md` (in-flow at the
-       *  bottom of the panel, not floating on top of other content, so a
-       *  drop shadow would look out of place until it actually pops out),
-       *  and no outer border either — per a later follow-up, now that each
-       *  button carries its own circular border (`CIRCULAR_BUTTON`), an
-       *  outer border around the whole pill too just doubled up. */}
-      <div className="flex items-center gap-5 rounded-lyra-lg bg-lyra-bg-surface-base px-6 py-3">
+      {/* Same rounded-lyra-lg/border/background as the floating bar's own
+       *  outer container (see its className above) — per an explicit
+       *  follow-up, the two should read as the same bar in two locations,
+       *  not two different designs. The one difference: no `shadow-md`
+       *  (in-flow at the bottom of the panel, not floating on top of other
+       *  content, so a drop shadow would look out of place until it
+       *  actually pops out). */}
+      <div className="flex items-center gap-5 rounded-lyra-lg border border-lyra-border-subtle bg-lyra-bg-surface-base px-6 py-3">
         <span className="flex items-center gap-2">
           <span
             className={cn("flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full lyra-body-md-emphasis", accent.bg, accent.text)}
@@ -630,16 +628,14 @@ export function DockedVoiceControlBar({
           )}
         </DockedControlButton>
         <DockedControlButton
-          title={isSpeakerMuted ? "Unmute Speaker" : "Mute Speaker"}
-          selected={isSpeakerMuted}
+          title="Mask"
+          selected={isMasked}
           tone="slate"
-          onClick={onToggleSpeakerMute}
+          onClick={onToggleMask}
         >
-          {isSpeakerMuted ? (
-            <MutedAudioLinesIcon strokeWidth={2} className="text-lyra-fg-on-primary" />
-          ) : (
-            <AudioLines className="h-6 w-6" strokeWidth={2} />
-          )}
+          {/* Slash stays on regardless of state — see the floating bar's
+           *  identical button for why. */}
+          <MutedAudioLinesIcon strokeWidth={2} className={isMasked ? "text-lyra-fg-on-primary" : undefined} />
         </DockedControlButton>
         <DockedControlButton title={isRecording ? "Stop Recording" : "Record"} selected={isRecording} tone="red" onClick={onToggleRecording}>
           <CircleDot className={cn("h-6 w-6", isRecording && "text-lyra-fg-on-primary")} strokeWidth={2} />

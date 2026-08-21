@@ -12,12 +12,10 @@ import { DraggablePanel, ContainerHeader, type DraggableVariant } from "@nicecxo
  *            consumer). Docking/floating and the resulting position math
  *            live in AgentNextGenPage.tsx, next to the identical plumbing
  *            already there for the AI panel/Notifications/Chat.
- *            One trade-off inherited from `DraggablePanel`: its header's
- *            leading-icon slot is reserved for the drag grip (float mode)
- *            or a same-width spacer (docked mode) — `icon` is accepted here
- *            for API compatibility with existing call sites but no longer
- *            rendered in the header, matching how Notifications/Ask AI
- *            already forgo a custom leading icon of their own.
+ *            `icon` is passed straight through to `DraggablePanel`, which
+ *            renders it next to the drag grip while floating and in its
+ *            place while docked — so a destination shows the same icon in
+ *            "full", "panel/docked", and "panel/float" alike.
  * "full"   — takes over the whole content column when there's no
  *            interaction behind it to dock beside. Unchanged — no
  *            float/dock capability here since there's nothing to dock
@@ -92,6 +90,7 @@ export const SlideInPage = forwardRef<HTMLDivElement, SlideInPageProps>(function
       <DraggablePanel
         ref={ref}
         title={title}
+        icon={icon}
         onClose={onClose}
         defaultWidth={width}
         maxWidth={maxWidth}

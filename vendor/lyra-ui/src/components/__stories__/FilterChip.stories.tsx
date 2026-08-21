@@ -917,3 +917,35 @@ export const AllVariants: Story = {
     </div>
   ),
 };
+
+/* ── Sizes ── */
+// "sm" exists for dense toolbars/filter rows that need to read lighter than
+// a primary search field next to them — see `TableToolbar`'s own
+// `filterChipSize` prop, which renders its `filterDefs` chips through this
+// same size. `DateRangePicker` picked up a matching `size` prop for the
+// same reason, so a compact filter row can mix chips and a date range at
+// the same height — shown together below since that's the real pairing.
+export const Sizes: Story = {
+  name: "Sizes (sm vs md)",
+  render: () => (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-2">
+        <span className="lyra-body-sm-emphasis text-lyra-fg-secondary">md (default)</span>
+        <div className="flex items-center gap-2">
+          <FilterChip label="Status" options={sampleOptions} selectedValues={["option-1"]} />
+          <FilterChip label="Skill" options={sampleOptions} selectedValues={[]} />
+          <DateRangePicker className="w-[220px]" />
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <span className="lyra-body-sm-emphasis text-lyra-fg-secondary">sm (compact toolbar row)</span>
+        <div className="flex items-center gap-2">
+          <FilterChip label="Status" options={sampleOptions} selectedValues={["option-1"]} size="sm" />
+          <FilterChip label="Skill" options={sampleOptions} selectedValues={[]} size="sm" />
+          <DateRangePicker className="w-[190px]" size="sm" />
+        </div>
+      </div>
+    </div>
+  ),
+};

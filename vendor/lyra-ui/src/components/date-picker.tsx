@@ -43,22 +43,33 @@ function parseRange(s: string): DateRange | undefined {
   return single ? { from: single } : undefined;
 }
 
-/* ── Shared input trigger styles ── */
+/* ── Shared input trigger styles ──
+ * Parameterized by size rather than plain constants — `DatePicker` always
+ * calls these at "md" (unchanged from before); `DateRangePicker` accepts
+ * its own `size` prop (see that component's doc comment) so a toolbar/
+ * filter row can drop it to "sm" to match a compact `FilterChip` row
+ * instead of standing out at the taller default height. */
 
-const inputClass = cn(
-  "relative flex h-9 w-full items-center rounded-lyra-sm border lyra-body-md transition-colors",
-  "bg-lyra-bg-field text-lyra-fg-default cursor-text",
-  "border-lyra-border-strong hover:border-lyra-state-border-hover-neutral",
-  "focus-within:border-lyra-border-active focus-within:ring-2 focus-within:ring-lyra-border-active/20",
-  "data-[disabled=true]:bg-lyra-bg-disabled data-[disabled=true]:border-transparent",
-  "data-[disabled=true]:text-lyra-fg-disabled data-[disabled=true]:cursor-not-allowed",
-  "data-[readonly=true]:bg-lyra-bg-surface-canvas data-[readonly=true]:cursor-default data-[readonly=true]:pointer-events-none"
-);
+function getInputClass(size: "sm" | "md") {
+  return cn(
+    "relative flex w-full items-center rounded-lyra-sm border transition-colors",
+    size === "sm" ? "h-6 lyra-body-sm" : "h-9 lyra-body-md",
+    "bg-lyra-bg-field text-lyra-fg-default cursor-text",
+    "border-lyra-border-strong hover:border-lyra-state-border-hover-neutral",
+    "focus-within:border-lyra-border-active focus-within:ring-2 focus-within:ring-lyra-border-active/20",
+    "data-[disabled=true]:bg-lyra-bg-disabled data-[disabled=true]:border-transparent",
+    "data-[disabled=true]:text-lyra-fg-disabled data-[disabled=true]:cursor-not-allowed",
+    "data-[readonly=true]:bg-lyra-bg-surface-canvas data-[readonly=true]:cursor-default data-[readonly=true]:pointer-events-none"
+  );
+}
 
-const textInputClass = cn(
-  "flex-1 bg-transparent outline-none pl-3 pr-1 truncate h-full",
-  "placeholder:text-lyra-fg-disabled"
-);
+function getTextInputClass(size: "sm" | "md") {
+  return cn(
+    "flex-1 bg-transparent outline-none truncate h-full",
+    size === "sm" ? "pl-2 pr-1" : "pl-3 pr-1",
+    "placeholder:text-lyra-fg-disabled"
+  );
+}
 
 /* ── Calendar popover panel ── */
 
@@ -143,11 +154,11 @@ const DatePicker = React.forwardRef<HTMLDivElement, DatePickerProps>(
         <PopoverPrimitive.Root open={!disabled && !readonly && open} onOpenChange={setOpen}>
           <PopoverPrimitive.Anchor asChild>
             <div data-disabled={disabled || undefined} data-readonly={readonly || undefined}
-              className={inputClass} onClick={() => !disabled && !readonly && setOpen(true)}>
+              className={getInputClass("md")} onClick={() => !disabled && !readonly && setOpen(true)}>
               <input ref={inputRef} id={inputId} type="text" value={text}
                 onChange={handleTextChange} placeholder={placeholder}
                 disabled={disabled} readOnly={readonly}
-                className={cn(textInputClass, (disabled || readonly) && "cursor-not-allowed")}
+                className={cn(getTextInputClass("md"), (disabled || readonly) && "cursor-not-allowed")}
                 role="combobox" aria-expanded={open} aria-haspopup="dialog"
                 aria-label={label ?? "Date"} autoComplete="off" />
               <span className="pr-3 flex items-center text-lyra-fg-secondary flex-shrink-0">
@@ -182,12 +193,19 @@ export interface DateRangePickerProps {
   required?: boolean;
   readonly?: boolean;
   defaultMonth?: Date;
+  /**
+   * Compact sizing to match a "sm" `FilterChip` row — drops the trigger
+   * from `h-9` to `h-6` with tighter padding, a smaller calendar icon, and
+   * `lyra-body-sm` instead of `lyra-body-md`. Default `"md"` — existing
+   * consumers keep their current size unless they opt in.
+   */
+  size?: "sm" | "md";
   className?: string;
   id?: string;
 }
 
 const DateRangePicker = React.forwardRef<HTMLDivElement, DateRangePickerProps>(
-  ({ value, onChange, placeholder = `${FORMAT} – ${FORMAT}`, disabled, label, labelHelpText, required, readonly, defaultMonth, className, id }, ref) => {
+  ({ value, onChange, placeholder = `${FORMAT} – ${FORMAT}`, disabled, label, labelHelpText, required, readonly, defaultMonth, size = "md", className, id }, ref) => {
     const autoId = React.useId();
     const inputId = id ?? autoId;
     const inputRef = React.useRef<HTMLInputElement>(null);
@@ -227,15 +245,15 @@ const DateRangePicker = React.forwardRef<HTMLDivElement, DateRangePickerProps>(
         <PopoverPrimitive.Root open={!disabled && !readonly && open} onOpenChange={setOpen}>
           <PopoverPrimitive.Anchor asChild>
             <div data-disabled={disabled || undefined} data-readonly={readonly || undefined}
-              className={inputClass} onClick={() => !disabled && !readonly && setOpen(v => !v)}>
+              className={getInputClass(size)} onClick={() => !disabled && !readonly && setOpen(v => !v)}>
               <input ref={inputRef} id={inputId} type="text" value={text}
                 onChange={handleTextChange} placeholder={placeholder}
                 disabled={disabled} readOnly={readonly}
-                className={cn(textInputClass, (disabled || readonly) && "cursor-not-allowed")}
+                className={cn(getTextInputClass(size), (disabled || readonly) && "cursor-not-allowed")}
                 role="combobox" aria-expanded={open} aria-haspopup="dialog"
                 aria-label={label ?? "Date range"} autoComplete="off" />
-              <span className="pr-3 flex items-center text-lyra-fg-secondary flex-shrink-0">
-                <CalendarIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
+              <span className={cn("flex items-center text-lyra-fg-secondary flex-shrink-0", size === "sm" ? "pr-2" : "pr-3")}>
+                <CalendarIcon className={size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4"} strokeWidth={1.5} aria-hidden="true" />
               </span>
             </div>
           </PopoverPrimitive.Anchor>

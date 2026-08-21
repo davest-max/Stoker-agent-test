@@ -21,7 +21,7 @@ type FilterChipVariant = "default" | "active" | "error" | "disabled";
 /* ── CVA definitions ── */
 
 const filterChipVariants = cva(
-  "inline-flex items-center gap-1.5 border px-3 h-8 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus focus-visible:ring-offset-2",
+  "inline-flex items-center gap-1.5 border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus focus-visible:ring-offset-2",
   {
     variants: {
       variant: {
@@ -30,8 +30,16 @@ const filterChipVariants = cva(
         error:    "border-lyra-status-critical-strong bg-lyra-status-critical-subtle text-lyra-status-critical-strong hover:bg-lyra-state-hover-critical-subtle active:bg-lyra-state-pressed-critical-subtle",
         disabled: "border-lyra-border-disabled bg-lyra-bg-disabled text-lyra-fg-disabled cursor-not-allowed",
       },
+      /** `sm` is a deliberately compact treatment for toolbars/filter rows
+       *  that need several chips side by side without dominating the row
+       *  the way the default size does — see `FilterChipProps.size`'s own
+       *  doc comment. */
+      size: {
+        sm: "h-6 px-2",
+        md: "h-8 px-3",
+      },
     },
-    defaultVariants: { variant: "default" },
+    defaultVariants: { variant: "default", size: "md" },
   }
 );
 
@@ -63,7 +71,7 @@ const filterChipOuterBorderVariants = cva("", {
 
 /** Remove button classes */
 const filterChipRemoveButtonVariants = cva(
-  "inline-flex items-center justify-center h-8 w-8 -ml-px rounded-r-lyra-md border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus focus-visible:ring-offset-2",
+  "inline-flex items-center justify-center -ml-px rounded-r-lyra-md border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus focus-visible:ring-offset-2",
   {
     variants: {
       variant: {
@@ -72,8 +80,12 @@ const filterChipRemoveButtonVariants = cva(
         error:    "border-lyra-status-critical-strong bg-lyra-status-critical-subtle text-lyra-status-critical-strong hover:bg-lyra-state-hover-critical-subtle active:bg-lyra-state-pressed-critical-subtle",
         disabled: "border-lyra-border-disabled bg-lyra-bg-disabled text-lyra-fg-disabled cursor-not-allowed",
       },
+      size: {
+        sm: "h-6 w-6",
+        md: "h-8 w-8",
+      },
     },
-    defaultVariants: { variant: "default" },
+    defaultVariants: { variant: "default", size: "md" },
   }
 );
 
@@ -113,6 +125,15 @@ interface FilterChipProps {
    * to `"right"` for exactly this reason (see `dashboard-card.tsx`).
    */
   dropdownAlign?: "left" | "right";
+  /**
+   * Compact sizing for dense toolbars/filter rows — `"sm"` drops the chip
+   * to `h-6` (from the default `h-8`) with tighter padding and `lyra-body-sm`
+   * typography instead of `lyra-body-md`, so several filter chips can sit
+   * next to a primary search field without reading at the same visual
+   * weight as it. Default `"md"` — every existing consumer keeps its
+   * current size unless it opts in.
+   */
+  size?: "sm" | "md";
   /** Additional className */
   className?: string;
 }
@@ -133,6 +154,7 @@ const FilterChip = React.forwardRef<HTMLButtonElement, FilterChipProps>(
       disabled = false,
       onRemove,
       dropdownAlign = "left",
+      size = "md",
       className,
     },
     ref
@@ -143,6 +165,12 @@ const FilterChip = React.forwardRef<HTMLButtonElement, FilterChipProps>(
     const operatorLabel = hasOperators
       ? operators!.find((o) => o.value === selectedOperator)?.label ?? operators![0]?.label
       : null;
+    const isSm = size === "sm";
+    /** `lyra-body-sm`/`-emphasis` at `sm`, `lyra-body-md`/`-emphasis` at
+     *  `md` — kept as two small lookups rather than sprinkling the ternary
+     *  at every call site below. */
+    const labelTextClass = isSm ? "lyra-body-sm-emphasis" : "lyra-body-md-emphasis";
+    const valueTextClass = isSm ? "lyra-body-sm" : "lyra-body-md";
 
     const hasValues = selectedValues.length > 0;
     const firstSelectedLabel = hasValues
@@ -168,7 +196,7 @@ const FilterChip = React.forwardRef<HTMLButtonElement, FilterChipProps>(
         aria-haspopup="listbox"
         aria-expanded={open}
         className={cn(
-          filterChipVariants({ variant }),
+          filterChipVariants({ variant, size }),
           // In operator wrapper, the trigger has no visible border (wrapper provides it)
           hasOperators
             ? "border-0 rounded-none"
@@ -184,19 +212,19 @@ const FilterChip = React.forwardRef<HTMLButtonElement, FilterChipProps>(
         {!hasOperators && (
           hasValues ? (
             <span className="inline-flex items-baseline gap-1 max-w-[200px]">
-              <span className="lyra-body-md-emphasis whitespace-nowrap">{label}:</span>
-              <span className="lyra-body-md truncate">{firstSelectedLabel}</span>
+              <span className={cn(labelTextClass, "whitespace-nowrap")}>{label}:</span>
+              <span className={cn(valueTextClass, "truncate")}>{firstSelectedLabel}</span>
             </span>
           ) : (
-            <span className="lyra-body-md-emphasis text-lyra-fg-default whitespace-nowrap">{label}</span>
+            <span className={cn(labelTextClass, "text-lyra-fg-default whitespace-nowrap")}>{label}</span>
           )
         )}
         {/* Value only — when operators are shown, label+operator are separate segments */}
         {hasOperators && (
           hasValues ? (
-            <span className="lyra-body-md truncate max-w-[120px]">{firstSelectedLabel}</span>
+            <span className={cn(valueTextClass, "truncate max-w-[120px]")}>{firstSelectedLabel}</span>
           ) : (
-            <span className="lyra-body-md text-lyra-fg-disabled whitespace-nowrap">Value</span>
+            <span className={cn(valueTextClass, "text-lyra-fg-disabled whitespace-nowrap")}>Value</span>
           )
         )}
 
@@ -239,14 +267,15 @@ const FilterChip = React.forwardRef<HTMLButtonElement, FilterChipProps>(
         aria-haspopup="listbox"
         aria-expanded={operatorOpen}
         className={cn(
-          "inline-flex items-center gap-1.5 h-8 px-2 transition-colors whitespace-nowrap",
+          "inline-flex items-center gap-1.5 transition-colors whitespace-nowrap",
+          isSm ? "h-6 px-1.5" : "h-8 px-2",
           segmentColor,
           !disabled && variant === "default" && "hover:bg-lyra-state-hover active:bg-lyra-state-pressed",
           !disabled && variant === "active" && "hover:bg-lyra-state-hover-active-subtle active:bg-lyra-state-pressed-active-subtle",
           !disabled && "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus focus-visible:ring-inset"
         )}
       >
-        <span className="lyra-body-md-emphasis">{operatorLabel}</span>
+        <span className={labelTextClass}>{operatorLabel}</span>
         <ChevronDown
           className={cn("h-3.5 w-3.5 flex-shrink-0 transition-transform", operatorOpen && "rotate-180")}
           strokeWidth={1.5}
@@ -260,12 +289,13 @@ const FilterChip = React.forwardRef<HTMLButtonElement, FilterChipProps>(
       return (
         <div className={cn("inline-flex", className)}>
           <div className={cn(
-            "inline-flex items-center rounded-l-lyra-md border h-8 overflow-hidden",
+            "inline-flex items-center rounded-l-lyra-md border overflow-hidden",
+            isSm ? "h-6" : "h-8",
             outerBorder, segmentColor,
             onRemove && !disabled ? "rounded-r-none" : "rounded-r-lyra-md"
           )}>
             {/* Label */}
-            <span className="px-3 lyra-body-md-emphasis whitespace-nowrap select-none">{label}:</span>
+            <span className={cn(isSm ? "px-2" : "px-3", labelTextClass, "whitespace-nowrap select-none")}>{label}:</span>
 
             {/* Operator selector */}
             <Select
@@ -304,7 +334,7 @@ const FilterChip = React.forwardRef<HTMLButtonElement, FilterChipProps>(
               type="button"
               onClick={(e) => { e.stopPropagation(); onRemove(); }}
               aria-label={`Remove ${label} filter`}
-              className={filterChipRemoveButtonVariants({ variant })}
+              className={filterChipRemoveButtonVariants({ variant, size })}
             >
               <X className="h-3.5 w-3.5" strokeWidth={1.5} />
             </button>
@@ -338,7 +368,7 @@ const FilterChip = React.forwardRef<HTMLButtonElement, FilterChipProps>(
             type="button"
             onClick={(e) => { e.stopPropagation(); onRemove(); }}
             aria-label={`Remove ${label} filter`}
-            className={filterChipRemoveButtonVariants({ variant })}
+            className={filterChipRemoveButtonVariants({ variant, size })}
           >
             <X className="h-3.5 w-3.5" strokeWidth={1.5} />
           </button>

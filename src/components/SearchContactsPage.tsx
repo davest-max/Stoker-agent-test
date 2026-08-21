@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   Table,
   TableHeader,
@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CONTACT_CHANNEL_ICON, CONTACT_CHANNEL_LABEL } from "@/components/DirectoryPage";
+import { TranscriptThread } from "@/components/CustomerInteractionPanel";
 import {
   CONTACTS,
   CONTACT_SKILLS,
@@ -54,7 +55,11 @@ import {
   type ContactStatus,
 } from "@/data/contacts";
 
-/* ── Search Contacts ──
+/* ── Interaction Search ──
+ * (Named "Search Contacts" during development — renamed per an explicit
+ * follow-up; the underlying `Contact`/`contacts.ts` data model and this
+ * component's own file/export name are unchanged, since neither is
+ * user-facing.)
  * A new nav destination (see AgentNextGenPage's `contacts` case in
  * renderSlideInContent) for finding ANY past contact across the whole app,
  * any status — distinct from the assignment rail, which only ever shows
@@ -75,7 +80,7 @@ import {
  * options/trade-offs presented first):
  *   1. Nothing loads on page mount — no query runs until the agent either
  *      searches or applies a filter (`hasSearched` below). Cheapest, and
- *      matches what a page literally named "Search Contacts" implies.
+ *      matches what a page literally named "Interaction Search" implies.
  *   2. The toolbar offers BOTH a quick type+value search (name/ID/date/etc,
  *      see `SEARCH_TYPES`) AND the full Query Builder — not an either/or.
  *   3. Each bulk action (Assign to Me/Others, Change Status, Send Message)
@@ -423,7 +428,7 @@ function QueryBuilderContent({ root, onUpdate }: { root: QbGroup; onUpdate: (g: 
 
 const SEARCH_TYPES: { value: string; label: string; placeholder: string }[] = [
   { value: "name", label: "Customer Name", placeholder: "Search by customer name…" },
-  { value: "id", label: "Contact ID", placeholder: "Search by contact ID…" },
+  { value: "id", label: "Interaction ID", placeholder: "Search by interaction ID…" },
   { value: "date", label: "Date Created", placeholder: "Search by date (MM/DD/YY)…" },
 ];
 
@@ -474,6 +479,20 @@ export function SearchContactsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const [activeBulkAction, setActiveBulkAction] = useState<BulkAction | null>(null);
+
+  /* Row-expand accordion — clicking anywhere on a row (other than the
+   *  checkbox/kebab, which stop propagation) expands it in place to show
+   *  fields not in the table plus the full conversation thread, for
+   *  review. True accordion, not independent per-row toggles — per an
+   *  explicit follow-up, opening a row auto-collapses whichever one was
+   *  already open, so `expandedId` is a single id rather than a Set.
+   *  Reset whenever the page changes so a stale expanded row from page 1
+   *  doesn't silently carry over and "expand" a different contact that
+   *  happens to land in the same row position on page 2. */
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  useEffect(() => {
+    setExpandedId(null);
+  }, [currentPage]);
 
   /* Bulk action inline-row fields */
   const [assignOthersType, setAssignOthersType] = useState<"Agent" | "Team">("Agent");
@@ -624,7 +643,7 @@ export function SearchContactsPage() {
        *  can't be gated behind having already searched. */}
       <TableToolbar
         recordCount={hasSearched ? totalRecords : undefined}
-        recordLabel="Contacts"
+        recordLabel="Interactions"
         // Per an explicit follow-up — keep these filter chips
         // listed and wrapping across as many lines as needed, and only
         // collapse them into the "Filters" dropdown once the panel gets
@@ -632,6 +651,15 @@ export function SearchContactsPage() {
         // 991px breakpoint (still used for the action-buttons/panel-toggle
         // side of this same toolbar, unaffected by this).
         filtersCollapseWidth={360}
+        // Compact ("sm") sizing for the whole filter row — per an explicit
+        // follow-up, the filter chips/date range/Query Builder button were
+        // reading at the same visual weight as the primary search row
+        // above, with nothing signaling "these are secondary." lyra-ui's
+        // FilterChip/DateRangePicker/TableToolbar all gained a `size="sm"`
+        // option for exactly this (see their own doc comments) — this is
+        // the first consumer to use it.
+        filterChipSize="sm"
+        advancedSearchButtonSize="sm"
         filterDefs={filterDefs}
         filterValues={filterValues}
         onFilterChange={(key, values) => {
@@ -644,7 +672,7 @@ export function SearchContactsPage() {
           setCurrentPage(1);
         }}
         filters={
-          <DateRangePicker value={dateRange} onChange={(range) => { setDateRange(range); setCurrentPage(1); }} placeholder="Date Created" className="w-[240px]" />
+          <DateRangePicker value={dateRange} onChange={(range) => { setDateRange(range); setCurrentPage(1); }} placeholder="Date Created" className="w-[220px]" size="sm" />
         }
         showAdvancedSearch
         advancedSearchContent={<QueryBuilderContent root={qbRoot} onUpdate={setQbRoot} />}
@@ -826,35 +854,82 @@ export function SearchContactsPage() {
                   const ChannelIcon = CONTACT_CHANNEL_ICON[contact.channel];
                   const accent = CHANNEL_ACCENT[contact.channel];
                   const DirectionIcon = contact.direction === "inbound" ? ArrowDownLeft : ArrowUpRight;
+                  const isExpanded = expandedId === contact.id;
                   return (
-                    <TableRow key={contact.id}>
-                      <TableCell className="w-[40px] shrink-0">
-                        <Checkbox checked={selectedIds.has(contact.id)} onCheckedChange={() => toggleRow(contact.id)} aria-label={`Select ${contact.customerName}`} />
-                      </TableCell>
-                      <TableCell className="w-[56px] shrink-0">
-                        <span className="flex items-center gap-0.5" title={`${contact.direction === "inbound" ? "Inbound" : "Outbound"} ${CONTACT_CHANNEL_LABEL[contact.channel]}`}>
-                          <DirectionIcon className={cn("h-3.5 w-3.5", accent.text)} strokeWidth={2} aria-hidden="true" />
-                          <ChannelIcon className={cn("h-4 w-4", accent.text)} strokeWidth={1.5} aria-hidden="true" />
-                        </span>
-                      </TableCell>
-                      <TableCell className="flex-[1.2] lyra-body-sm text-lyra-fg-secondary">{contact.dateCreated}</TableCell>
-                      <TableCell className="flex-1">
-                        <span className="inline-flex items-center gap-1.5">
-                          <StatusBadge variant={STATUS_VARIANT[contact.status]} size="sm" dot />
-                          {contact.status}
-                        </span>
-                      </TableCell>
-                      <TableCell className="flex-[2]">{contact.customerName}</TableCell>
-                      <TableCell className="flex-[1.5] lyra-body-sm text-lyra-fg-secondary">{contact.skill}</TableCell>
-                      <TableCell className="w-[40px] shrink-0">
-                        <KebabMenuButton
-                          items={[
-                            { id: "view", label: "View Contact", onClick: () => {} },
-                            { id: "assign", label: "Assign to Me", onClick: () => {} },
-                          ]}
-                        />
-                      </TableCell>
-                    </TableRow>
+                    <Fragment key={contact.id}>
+                      {/* Clicking anywhere on the row toggles the accordion below it
+                       *  — checkbox/kebab cells stop propagation so selecting a row
+                       *  or opening its menu doesn't also expand/collapse it. */}
+                      <TableRow
+                        className="cursor-pointer"
+                        aria-expanded={isExpanded}
+                        onClick={() => setExpandedId((prev) => (prev === contact.id ? null : contact.id))}
+                      >
+                        <TableCell className="w-[40px] shrink-0" onClick={(e) => e.stopPropagation()}>
+                          <Checkbox checked={selectedIds.has(contact.id)} onCheckedChange={() => toggleRow(contact.id)} aria-label={`Select ${contact.customerName}`} />
+                        </TableCell>
+                        <TableCell className="w-[56px] shrink-0">
+                          <span className="flex items-center gap-0.5" title={`${contact.direction === "inbound" ? "Inbound" : "Outbound"} ${CONTACT_CHANNEL_LABEL[contact.channel]}`}>
+                            <DirectionIcon className={cn("h-3.5 w-3.5", accent.text)} strokeWidth={2} aria-hidden="true" />
+                            <ChannelIcon className={cn("h-4 w-4", accent.text)} strokeWidth={1.5} aria-hidden="true" />
+                          </span>
+                        </TableCell>
+                        <TableCell className="flex-[1.2] lyra-body-sm text-lyra-fg-secondary">{contact.dateCreated}</TableCell>
+                        <TableCell className="flex-1">
+                          <span className="inline-flex items-center gap-1.5">
+                            <StatusBadge variant={STATUS_VARIANT[contact.status]} size="sm" dot />
+                            {contact.status}
+                          </span>
+                        </TableCell>
+                        <TableCell className="flex-[2]">{contact.customerName}</TableCell>
+                        <TableCell className="flex-[1.5] lyra-body-sm text-lyra-fg-secondary">{contact.skill}</TableCell>
+                        <TableCell className="w-[40px] shrink-0" onClick={(e) => e.stopPropagation()}>
+                          <KebabMenuButton
+                            items={[
+                              { id: "view", label: "View Interaction", onClick: () => {} },
+                              { id: "assign", label: "Assign to Me", onClick: () => {} },
+                            ]}
+                          />
+                        </TableCell>
+                      </TableRow>
+                      {isExpanded && (
+                        <TableRow className="cursor-default hover:bg-transparent active:bg-transparent">
+                          {/* `block` — the default TableCell force-wraps children in a
+                           *  truncating single-line <span>, which breaks this multi-line
+                           *  detail-fields + thread content. colSpan matches the 7
+                           *  TableHead columns above. */}
+                          <TableCell block colSpan={7} className="bg-lyra-bg-surface-canvas px-6 py-4">
+                            <div className="flex flex-col gap-3">
+                              {/* Fields not already shown as their own table column. */}
+                              <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 lyra-body-sm">
+                                <span><span className="text-lyra-fg-secondary">Case ID:</span> {contact.caseId}</span>
+                                <span><span className="text-lyra-fg-secondary">Direction:</span> {contact.direction === "inbound" ? "Inbound" : "Outbound"}</span>
+                                <span><span className="text-lyra-fg-secondary">Inbox Assignee:</span> {contact.assignee ?? "—"}</span>
+                                <span><span className="text-lyra-fg-secondary">Assigned Owner:</span> {contact.ownerAssignee ?? "—"}</span>
+                                <span><span className="text-lyra-fg-secondary">Tags:</span> {contact.tags?.length ? contact.tags.join(", ") : "—"}</span>
+                              </div>
+                              <div className="border-t border-lyra-border-subtle" />
+                              {/* Full thread for review — chat/SMS/voice transcript/email,
+                               *  same read-only renderer the Customer Profile's own past-
+                               *  interaction history uses (see CustomerSnapshotPanel). Fixed
+                               *  `h-` (not `max-h-`) per an explicit follow-up — a real,
+                               *  generously-sized scrollable pane rather than one that
+                               *  shrinks to fit whatever a short thread happens to need;
+                               *  a longer thread scrolls inside it instead of growing the
+                               *  row (and the whole table) taller. */}
+                              <div className="h-[420px] overflow-y-auto">
+                                <TranscriptThread
+                                  messages={contact.transcript.messages}
+                                  isVoiceCall={contact.channel === "voice"}
+                                  isEmailChannel={contact.channel === "email"}
+                                  callEvents={contact.transcript.callEvents}
+                                />
+                              </div>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
                   );
                 })}
               </TableBody>
