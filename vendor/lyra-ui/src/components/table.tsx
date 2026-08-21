@@ -373,10 +373,21 @@ interface TableToolbarProps extends React.HTMLAttributes<HTMLDivElement> {
   onAdvancedSearchCancel?: () => void;
   /** Called when user saves a named search — receives the search name */
   onSaveSearch?: (name: string) => void;
+  /**
+   * Container width (px) below which `filterDefs`' chips collapse into a
+   * single "Filters" dropdown button instead of listing/wrapping inline —
+   * separate from the `actionDefs`/panel-toggle "wide" breakpoint (still a
+   * fixed 991px), since a consumer may want its filter row to keep
+   * wrapping across several lines well past that point rather than
+   * collapsing early, without changing how action buttons behave. Default
+   * 991 — matches the toolbar's original, single shared breakpoint, so any
+   * existing consumer that doesn't pass this keeps its current behavior.
+   */
+  filtersCollapseWidth?: number;
 }
 
 const TableToolbar = React.forwardRef<HTMLDivElement, TableToolbarProps>(
-  ({ className, searchQuery, onSearchChange, searchPlaceholder = "Quick Search", recordCount, recordLabel = "Records", filters, filterDefs, filterValues, onFilterChange, onFilterClear, actions, actionDefs, title, toolbarPanelToggle, onLeftPanelToggle, onRightPanelToggle, showAdvancedSearch, advancedSearchContent, advancedSearchApplied, advancedSearchDescription, advancedSearchTitle, onAdvancedSearchApply, onAdvancedSearchCancel, onSaveSearch, ...props }, ref) => {
+  ({ className, searchQuery, onSearchChange, searchPlaceholder = "Quick Search", recordCount, recordLabel = "Records", filters, filterDefs, filterValues, onFilterChange, onFilterClear, actions, actionDefs, title, toolbarPanelToggle, onLeftPanelToggle, onRightPanelToggle, showAdvancedSearch, advancedSearchContent, advancedSearchApplied, advancedSearchDescription, advancedSearchTitle, onAdvancedSearchApply, onAdvancedSearchCancel, onSaveSearch, filtersCollapseWidth = 991, ...props }, ref) => {
     const [advancedOpen, setAdvancedOpen] = useState(false);
     const [saveSearchOpen, setSaveSearchOpen] = useState(false);
     const [saveSearchName, setSaveSearchName] = useState("");
@@ -407,6 +418,11 @@ const TableToolbar = React.forwardRef<HTMLDivElement, TableToolbarProps>(
     }, []);
 
     const isWide = containerWidth >= 991;
+    // See `filtersCollapseWidth`'s own doc comment — deliberately a
+    // separate flag from `isWide` above, so a consumer can push the
+    // filter row's own collapse point down (e.g. to 360) without touching
+    // when action buttons collapse into the "more" menu.
+    const isFiltersWide = containerWidth >= filtersCollapseWidth;
 
     useEffect(() => {
       if (!moreOpen) return;
@@ -761,23 +777,24 @@ const TableToolbar = React.forwardRef<HTMLDivElement, TableToolbarProps>(
             {/* Filters: inline when wide, collapsed chip when narrow */}
             {hasFilters && (!hasSearch ? (
               /* No search: filters + Query Builder inline */
-              isWide ? (
-                <div className="flex items-center gap-2">{filterChips}{filters}{advancedSearchNode}</div>
+              isFiltersWide ? (
+                <div className="flex flex-wrap items-center gap-2">{filterChips}{filters}{advancedSearchNode}</div>
               ) : (
                 <div className="flex items-center gap-2">{collapsedFilterChip}{advancedSearchNode}</div>
               )
             ) : (
-              /* Search present: wide shows everything inline;
-                 narrow collapses filter chips + keeps QBuilder on the same row */
-              isWide
-                ? <div className="flex items-center gap-2">{filterChips}{filters}{advancedSearchNode}</div>
+              /* Search present: wide shows everything inline (wrapping as
+                 needed, not just overflowing) — narrow collapses filter
+                 chips + keeps QBuilder on the same row */
+              isFiltersWide
+                ? <div className="flex flex-wrap items-center gap-2">{filterChips}{filters}{advancedSearchNode}</div>
                 : <div className="flex items-center gap-2">{collapsedFilterChip}{advancedSearchNode}</div>
             ))}
           </div>
           {actionButtons}
         </div>
         {/* Filter chips on second row in narrow mode when search is present */}
-        {hasSearch && filters && !isWide && (
+        {hasSearch && filters && !isFiltersWide && (
           <div className="flex items-center gap-2">{filters}</div>
         )}
       </div>

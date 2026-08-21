@@ -414,6 +414,51 @@ function ToolbarDemo({ showSearch, showFilters, showColumns, showActions, showTi
   );
 }
 
+/** Demonstrates `filtersCollapseWidth` — drag the dashed box's right edge
+ *  narrower. With the default 991px breakpoint (left box) the filter chips
+ *  collapse into a single "Filters" dropdown as soon as the box gets even
+ *  moderately narrow. With `filtersCollapseWidth={360}` (right box) they
+ *  keep listing and wrapping across lines all the way down to 360px
+ *  instead, only collapsing once the box is genuinely too narrow for even
+ *  one chip to sit comfortably next to the search field. */
+export const ToolbarFiltersCollapseWidth: Story = {
+  name: "Toolbar — filtersCollapseWidth",
+  render: () => {
+    const [values, setValues] = useState<Record<string, string[]>>({ description: [], createdBy: [] });
+    return (
+      <div className="flex flex-col gap-6">
+        <div>
+          <p className="lyra-body-sm text-lyra-fg-secondary mb-2">Default breakpoint (991px) — narrow this and the chips collapse early:</p>
+          <div className="w-[600px] resize-x overflow-auto border border-dashed border-lyra-border-subtle">
+            <TableToolbar
+              searchQuery=""
+              onSearchChange={() => {}}
+              filterDefs={toolbarFilterDefs}
+              filterValues={values}
+              onFilterChange={(key, vals) => setValues((p) => ({ ...p, [key]: vals }))}
+              onFilterClear={() => setValues({ description: [], createdBy: [] })}
+            />
+          </div>
+        </div>
+        <div>
+          <p className="lyra-body-sm text-lyra-fg-secondary mb-2">filtersCollapseWidth=360 — stays inline/wrapping until much narrower:</p>
+          <div className="w-[600px] resize-x overflow-auto border border-dashed border-lyra-border-subtle">
+            <TableToolbar
+              searchQuery=""
+              onSearchChange={() => {}}
+              filterDefs={toolbarFilterDefs}
+              filterValues={values}
+              onFilterChange={(key, vals) => setValues((p) => ({ ...p, [key]: vals }))}
+              onFilterClear={() => setValues({ description: [], createdBy: [] })}
+              filtersCollapseWidth={360}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  },
+};
+
 export const Toolbar: Story = {
   name: "Toolbar",
   parameters: {

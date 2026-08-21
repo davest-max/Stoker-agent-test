@@ -47,6 +47,7 @@ import { InternalChatTrigger, InternalChatDockedPanel, InternalChatFloatPanel, I
 import { LiveVoiceCallBar, DockedVoiceControlBar } from "@/components/LiveVoiceCallBar";
 import { INITIAL_FAVORITE_EMPLOYEE_IDS, INITIAL_CHAT_THREADS, type InternalChatMessage } from "@/data/internalChat";
 import { DirectoryPage } from "@/components/DirectoryPage";
+import { SearchContactsPage } from "@/components/SearchContactsPage";
 import { CustomerProfilePanel } from "@/components/CustomerSnapshotPanel";
 import {
   DIRECTORY_CUSTOMERS,
@@ -64,7 +65,6 @@ import {
   MessageSquare,
   MessageCircle,
   BookUser,
-  Users,
   CalendarDays,
   LayoutGrid,
   Settings,
@@ -73,6 +73,7 @@ import {
   Maximize2,
   Minimize2,
   Monitor,
+  FileSearch,
 } from "lucide-react";
 
 /** Title + icon for each right-side slide-in destination — Directory has
@@ -81,7 +82,11 @@ import {
  *  SlideInPlaceholder. Settings/Dashboard aren't here — they take over the
  *  content column instead of sliding in (see FULL_PAGE_META below). */
 const SLIDE_IN_META: Record<SlideInDestination, { title: string; icon: React.ReactNode }> = {
-  contacts: { title: "Contacts", icon: <Users className="h-4 w-4" strokeWidth={1.5} /> },
+  // Lucide has no literal "file-search-corner" icon — `FileSearch` (vs.
+  // `FileSearch2`) is the one whose magnifying glass actually sits in a
+  // corner of the document rather than centered over it, so that's the
+  // match for what was asked for here.
+  contacts: { title: "Search Contacts", icon: <FileSearch className="h-4 w-4" strokeWidth={1.5} /> },
   directory: { title: "Directory", icon: <BookUser className="h-4 w-4" strokeWidth={1.5} /> },
   schedule: { title: "Schedule", icon: <CalendarDays className="h-4 w-4" strokeWidth={1.5} /> },
   customWorkspace: { title: "Custom Workspace", icon: <Monitor className="h-4 w-4" strokeWidth={1.5} /> },
@@ -1010,6 +1015,29 @@ export function AgentNextGenPage({
   useEffect(() => {
     setSlideInMaximized(false);
   }, [lastSlideIn]);
+  /** A slide-in destination (Contacts/Directory/Schedule/Custom Workspace)
+   *  always renders full-screen while no interaction is active (see
+   *  `slideInOpen` below) — there's no docked/floating "variant" to speak
+   *  of yet in that state. The moment an interaction becomes active while
+   *  one of these is open, it demotes to a side panel; per Dave, that
+   *  demotion always lands docked, regardless of whatever `slideInVariant`
+   *  was left over from a previous session with a different interaction —
+   *  the agent is still free to drag it to floating afterward. Settings/
+   *  Dashboard are excluded since they have no docked/floating presentation
+   *  at all (`isFullPageActive` handles those unconditionally). */
+  const prevHasActiveAssignmentRef = useRef(false);
+  useEffect(() => {
+    const hasActiveAssignment = activeAssignmentId !== undefined;
+    if (
+      hasActiveAssignment &&
+      !prevHasActiveAssignmentRef.current &&
+      openSlideInPage !== null &&
+      !FULL_PAGE_DESTINATIONS.has(openSlideInPage)
+    ) {
+      setSlideInVariant("docked");
+    }
+    prevHasActiveAssignmentRef.current = hasActiveAssignment;
+  }, [activeAssignmentId, openSlideInPage]);
   const handleDirectoryContactAction = (contact: DirectoryCustomer | DirectoryAgent, channel: ChannelType) => {
     // eslint-disable-next-line no-console
     console.log("Directory contact action:", channel, contact.name);
@@ -1024,6 +1052,8 @@ export function AgentNextGenPage({
    *  (`h-full w-full`) — same content regardless of panel vs. full variant. */
   const renderSlideInContent = (destination: SlideInDestination): React.ReactNode => {
     switch (destination) {
+      case "contacts":
+        return <SearchContactsPage />;
       case "directory":
         return (
           <DirectoryPage
@@ -1865,10 +1895,17 @@ export function AgentNextGenPage({
 
   /* Slide-in panel show/hide — same state machine as the AI panel/
    *  Notifications above, keyed off whether a slide-in destination
-   *  (Contacts/Directory/Schedule) is open beside an active interaction —
-   *  `isFullPageActive` destinations (Settings/Dashboard) use the "full"
-   *  variant instead, which has no dock/float state of its own. */
-  const slideInOpen = openSlideInPage !== null && !isFullPageActive;
+   *  (Contacts/Directory/Schedule/Custom Workspace) is open BESIDE an
+   *  active interaction. `isFullPageActive` destinations (Settings/
+   *  Dashboard) use the "full" variant instead, which has no dock/float
+   *  state of its own. Requiring `activeAssignment` here (not just
+   *  `!isFullPageActive`) is deliberate and load-bearing: without an active
+   *  interaction, a slide-in destination already renders full-screen in the
+   *  content column below (see that ternary's final branch) regardless of
+   *  `slideInVariant` — if this docked/floating sibling panel were also
+   *  "open" at the same time, the agent would see the same content twice
+   *  (a redundant panel next to its own full-screen self). */
+  const slideInOpen = openSlideInPage !== null && !isFullPageActive && activeAssignmentId !== undefined;
   useEffect(() => {
     clearTimeout(slideInAnimTimer.current);
     if (slideInOpen) {
@@ -2241,7 +2278,7 @@ export function AgentNextGenPage({
              *  already matches across all of them (NavIconButton hardcodes
              *  it), so size was the only inconsistency. */}
             <NavIconButton item="customWorkspace" title="Custom Workspace" icon={Monitor} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
-            <NavIconButton item="contacts" title="Contacts" icon={Users} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
+            <NavIconButton item="contacts" title="Search Contacts" icon={FileSearch} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
             <NavIconButton item="directory" title="Directory" icon={BookUser} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
             <NavIconButton item="schedule" title="Schedule" icon={CalendarDays} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
             <div className="mx-1 h-5 w-px bg-lyra-border-subtle" />
@@ -2661,11 +2698,14 @@ export function AgentNextGenPage({
                     );
                   })()}
                 </>
-              ) : openSlideInPage !== null && slideInVariant !== "float" ? (
-                // slideInVariant === "float" is deliberately excluded here — the
-                // floating panel (rendered independently of activeAssignment,
-                // just below) already shows this same content in that case, so
-                // taking over the content column too would render it twice.
+              ) : openSlideInPage !== null ? (
+                // No active interaction — a slide-in destination always takes
+                // the whole content column, full-screen, regardless of
+                // `slideInVariant`. There's no docked/floating sibling to
+                // conflict with here: `slideInOpen` (above) requires an
+                // active interaction before it'll mount either one, so this
+                // is the only place this destination's content ever renders
+                // in this state.
                 <SlideInPage
                   variant="full"
                   open
@@ -2675,7 +2715,7 @@ export function AgentNextGenPage({
                 >
                   {renderSlideInContent(lastSlideIn)}
                 </SlideInPage>
-              ) : openSlideInPage !== null ? null : (
+              ) : (
                 <div className="flex flex-1 items-center justify-center text-lyra-fg-secondary lyra-body-md">
                   No active interaction selected.
                 </div>
