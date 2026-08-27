@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ActionIconButton, CHANNEL_ACCENT, Popover, Menu, type MenuEntry } from "@nicecxone/lyra-ui";
-import { Headset, Mic, MicOff, Pause, AudioLines, CircleDot, Grip, PhoneOff, ChevronDown } from "lucide-react";
+import { Headset, Mic, MicOff, Pause, AudioLines, CircleDot, Grip, PhoneOff, ChevronDown, Video, VideoOff, ScreenShare, ScreenShareOff, Move, PanelRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /** AudioLines with a diagonal slash — Lucide has no ready icon for "mask
@@ -69,6 +69,159 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), Math.max(min, max));
 }
 
+/** Shown above the control row in both presentations once video or screen
+ *  share is on (see `isVideoOn`/`isScreenSharing` on both prop interfaces
+ *  below). Two mutually-exclusive layouts sharing one component so a resize
+ *  handle/lifted size only has to be threaded through once: screen share
+ *  (a single placeholder standing in for the shared screen, with a small
+ *  circular "who else is here" tile in the corner — same auto-PiP idea
+ *  Meet uses) takes priority when both happen to be on at once, otherwise
+ *  the two equal-weight agent/customer video tiles from the original
+ *  symmetric pick. This app has no real camera/screen feed to render, so
+ *  both are placeholders using the same accent-tinted circle treatment the
+ *  bar's own leading avatar already uses. Identical in both the floating bar
+ *  and the docked bar — per the same "read as the same bar" convention
+ *  already governing the rest of this file's controls — except the resize
+ *  handle, which only renders when `resizable` (see below).
+ *
+ *  Resizing (per an explicit follow-up, after two earlier attempts):
+ *  dragging only ever GROWS the panel, never shrinks it below whatever size
+ *  it's already safely showing at (so it can never regress into the bug
+ *  where a manually-shrunk media area left the button row's own required
+ *  width sticking out past the bar's border) — see `handleResizePointerMove`
+ *  below, which floors both axes at the size captured when the drag began
+ *  rather than an arbitrary hardcoded minimum. Height is this component's
+ *  own to control; width is applied one level up, on the whole bar's outer
+ *  container (`containerRef`, passed in by the consumer) instead of on this
+ *  div — that's what keeps the media area and the button row growing
+ *  together as one aligned unit instead of drifting apart. */
+function CallMediaArea({
+  customerName,
+  isInternalAgentCall,
+  isScreenSharing,
+  size,
+  onSizeChange,
+  resizable = false,
+  containerRef,
+}: {
+  customerName?: string;
+  isInternalAgentCall?: boolean;
+  isScreenSharing: boolean;
+  /** Explicit width/height once the agent drags the resize handle below —
+   *  `null`/omitted uses the natural intrinsic size (132px tall, full bar
+   *  width via the `w-full` fallback below). Lifted to `AgentNextGenPage` —
+   *  the floating bar's own `videoPanelSize` and the docked bar's own
+   *  `dockedVideoPanelSize` are two separate pieces of state (not shared,
+   *  since each remounts independently on its own lifecycle), but both
+   *  resize the same way and exist for the same reason `position` does:
+   *  this component remounts via `key={assignmentId}` on every hold-swap,
+   *  and a resize should survive that the same way a drag does. */
+  size?: { width: number; height: number } | null;
+  onSizeChange?: (size: { width: number; height: number }) => void;
+  resizable?: boolean;
+  /** The bar's own outer container — read at the moment a resize starts to
+   *  find its CURRENT (already-safe, non-overflowing) width, which becomes
+   *  the floor for the drag. Required whenever `resizable` is true. */
+  containerRef?: React.RefObject<HTMLDivElement | null>;
+}) {
+  const accent = CHANNEL_ACCENT.voice;
+  const customerDisplayName = isInternalAgentCall ? customerName ?? "Colleague" : customerName || "Customer";
+
+  const areaRef = useRef<HTMLDivElement>(null);
+  const resizeOrigin = useRef<{ pointerX: number; pointerY: number; width: number; height: number } | null>(null);
+  const [isResizing, setIsResizing] = useState(false);
+
+  // Same PointerEvent drag technique the bar itself uses for dragging (see
+  // `handlePointerDown`/`handlePointerMove` below) — matching the visual
+  // language (and even the handle glyph) of lyra-ui's own `Draggable`
+  // corner resize, without actually wrapping this bar in `Draggable`: that
+  // primitive's "docked" variant pins to the viewport's right edge like a
+  // sidebar, which doesn't match either of this bar's own two positioning
+  // models (composer-anchored float, inline bottom-of-panel dock) — see
+  // this file's own top-level doc comments for the rest of that reasoning.
+  const handleResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    // Width's origin comes from the OUTER bar (`containerRef`), not this
+    // div — see this component's own top doc comment for why. Height still
+    // comes from this div itself, since only the media area (not the
+    // button row) grows taller.
+    const containerRect = containerRef?.current?.getBoundingClientRect();
+    const ownRect = areaRef.current?.getBoundingClientRect();
+    if (!containerRect || !ownRect) return;
+    resizeOrigin.current = { pointerX: e.clientX, pointerY: e.clientY, width: containerRect.width, height: ownRect.height };
+    setIsResizing(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const handleResizePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!resizeOrigin.current || !onSizeChange) return;
+    // Grow-only: the delta is floored at 0 on both axes, so dragging up/left
+    // never shrinks below the size already showing when the drag started
+    // (itself always a safe, non-overflowing size) — see this component's
+    // own top doc comment. Capped well above anything the button row could
+    // ever need, purely to stop runaway drags off toward the edge of the
+    // screen.
+    const nextWidth = clamp(resizeOrigin.current.width + Math.max(0, e.clientX - resizeOrigin.current.pointerX), resizeOrigin.current.width, 900);
+    const nextHeight = clamp(resizeOrigin.current.height + Math.max(0, e.clientY - resizeOrigin.current.pointerY), resizeOrigin.current.height, 480);
+    onSizeChange({ width: nextWidth, height: nextHeight });
+  };
+  const stopResizing = () => {
+    resizeOrigin.current = null;
+    setIsResizing(false);
+  };
+
+  return (
+    <div
+      ref={areaRef}
+      style={size ? { height: size.height } : undefined}
+      className={cn("relative mb-2.5 w-full", !size && "h-[132px]")}
+    >
+      {isScreenSharing ? (
+        <div className="flex h-full w-full items-center justify-center rounded-lyra-md border border-lyra-border-subtle bg-lyra-bg-surface-container-subtle">
+          <ScreenShare className="h-7 w-7 text-lyra-fg-disabled" strokeWidth={1.5} aria-hidden="true" />
+          {/* Bottom-LEFT (not right) so it never collides with the resize
+           *  handle in the opposite corner below. */}
+          <span className="absolute bottom-2 left-2 flex h-7 w-7 items-center justify-center rounded-full border border-lyra-border-subtle bg-lyra-bg-surface-base lyra-body-xs-emphasis text-lyra-fg-secondary">
+            {isInternalAgentCall ? <Headset className="h-3.5 w-3.5" strokeWidth={1.5} /> : getInitials(customerName)}
+          </span>
+        </div>
+      ) : (
+        <div className="flex h-full w-full gap-2">
+          <div className={cn("flex flex-1 flex-col items-center justify-center gap-1.5 rounded-lyra-md", accent.bg)}>
+            <span className={cn("flex h-10 w-10 items-center justify-center rounded-full bg-lyra-bg-surface-base lyra-body-md-emphasis", accent.text)}>
+              You
+            </span>
+            <span className={cn("lyra-body-xs-emphasis", accent.text)}>Agent</span>
+          </div>
+          <div className="flex flex-1 flex-col items-center justify-center gap-1.5 rounded-lyra-md border border-lyra-border-subtle bg-lyra-bg-surface-container-subtle">
+            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-lyra-bg-surface-base lyra-body-md-emphasis text-lyra-fg-secondary">
+              {isInternalAgentCall ? <Headset className="h-5 w-5" strokeWidth={1.5} /> : getInitials(customerName)}
+            </span>
+            <span className="lyra-body-xs-emphasis text-lyra-fg-secondary truncate max-w-[90%]">{customerDisplayName}</span>
+          </div>
+        </div>
+      )}
+      {resizable && onSizeChange && (
+        <div
+          onPointerDown={handleResizePointerDown}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={stopResizing}
+          onPointerCancel={stopResizing}
+          className={cn(
+            "absolute bottom-0 right-0 flex h-4 w-4 touch-none items-end justify-end pb-0.5 pr-0.5 text-lyra-fg-secondary",
+            isResizing ? "text-lyra-fg-default cursor-se-resize" : "cursor-se-resize hover:text-lyra-fg-default"
+          )}
+          role="presentation"
+          aria-hidden="true"
+        >
+          <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+            <path d="M9 1L1 9M9 5L5 9" />
+          </svg>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export interface VoiceBarPosition {
   top: number;
   left: number;
@@ -116,6 +269,33 @@ export interface LiveVoiceCallBarProps {
   onToggleMask: () => void;
   isRecording: boolean;
   onToggleRecording: () => void;
+  /** Adds video to this same call — same lifted-to-`AgentNextGenPage`
+   *  reasoning as `isMuted`/`isMasked`/`isRecording` above (survives moving
+   *  between this floating presentation and the docked bar). When true, both
+   *  presentations render `VideoTiles` above their control row — there's no
+   *  separate "video call" bar/panel, this IS the voice call's bar, just
+   *  taller. */
+  isVideoOn: boolean;
+  onToggleVideo: () => void;
+  /** Independent of `isVideoOn` — an agent can share a screen with or
+   *  without their own camera on, same as Slack/Meet. `CallMediaArea` shows
+   *  the share placeholder over the video tiles whenever this is true,
+   *  regardless of `isVideoOn`. */
+  isScreenSharing: boolean;
+  onToggleScreenShare: () => void;
+  /** The floating media area's explicit size once dragged via its resize
+   *  handle — lifted to `AgentNextGenPage`'s own `videoPanelSize` for the
+   *  same "survive this component remounting on a hold-swap" reason
+   *  `position` is. `null` uses the default intrinsic size. */
+  videoPanelSize?: { width: number; height: number } | null;
+  onVideoPanelSizeChange?: (size: { width: number; height: number }) => void;
+  /** Only passed while this bar is floating *because the agent manually hit
+   *  Undock while still viewing this call's own interaction* (see
+   *  `AgentNextGenPage`'s own `voiceCallManuallyUndocked`) — omitted (not
+   *  just falsy) hides the Dock button entirely otherwise, e.g. while
+   *  floating because the agent is genuinely looking at something else,
+   *  where there's nothing sensible to "dock back" to on screen right now. */
+  onDock?: () => void;
   onHangUp: () => void;
   /** Every other switchable voice call (never includes the one this bar is
    *  currently showing) — populates the "switch call" picker below the
@@ -220,6 +400,13 @@ export function LiveVoiceCallBar({
   onToggleMask,
   isRecording,
   onToggleRecording,
+  isVideoOn,
+  onToggleVideo,
+  isScreenSharing,
+  onToggleScreenShare,
+  videoPanelSize,
+  onVideoPanelSizeChange,
+  onDock,
   onHangUp,
   otherVoiceCalls,
   onSwitchCall,
@@ -309,6 +496,13 @@ export function LiveVoiceCallBar({
       onPointerCancel={stopDragging}
       style={{
         touchAction: "none",
+        // Dragging the media area's own resize handle sets `width` here
+        // (not on `CallMediaArea` itself) so the whole bar — media area and
+        // button row together — grows as one aligned unit. Safe against the
+        // earlier overflow bug since the resize is grow-only, floored at
+        // this container's own current width — see `CallMediaArea`'s own
+        // top doc comment.
+        ...(videoPanelSize ? { width: videoPanelSize.width } : {}),
         ...(position
           ? { position: "fixed", top: position.top, left: position.left }
           : defaultAnchor
@@ -322,7 +516,12 @@ export function LiveVoiceCallBar({
         // ActionIconButton's "default" (36px) to its "xl" (44px) variant,
         // the closest built-in size step to +20% (+22%), rather than a
         // one-off arbitrary size on a shared lyra-ui component.
-        "z-[9998] flex select-none items-center gap-3 rounded-lyra-lg border border-lyra-border-subtle bg-lyra-bg-surface-base px-3.5 py-2.5 shadow-md",
+        // `flex-col` unconditionally (not just while `isVideoOn`) — the row
+        // of switcher/avatar/buttons below is its own nested flex row, so
+        // this outer column layout is a no-op on alignment while video is
+        // off and simply makes room for `VideoTiles` above that row once
+        // it's on.
+        "z-[9998] flex select-none flex-col rounded-lyra-lg border border-lyra-border-subtle bg-lyra-bg-surface-base px-3.5 py-2.5 shadow-md",
         // Only falls back to the plain viewport corner when there's truly
         // nothing better to anchor to (no composer on screen to align
         // with) — see `defaultAnchor`'s own doc comment.
@@ -331,8 +530,20 @@ export function LiveVoiceCallBar({
         isDragging ? "cursor-grabbing" : "cursor-grab"
       )}
       role="region"
-      aria-label={`Live call with ${displayName}, ${formatElapsed(elapsedSeconds)} elapsed`}
+      aria-label={`Live call with ${displayName}, ${formatElapsed(elapsedSeconds)} elapsed${isVideoOn ? ", video on" : ""}${isScreenSharing ? ", screen sharing" : ""}`}
     >
+      {(isVideoOn || isScreenSharing) && (
+        <CallMediaArea
+          customerName={customerName}
+          isInternalAgentCall={isInternalAgentCall}
+          isScreenSharing={isScreenSharing}
+          size={videoPanelSize}
+          onSizeChange={onVideoPanelSizeChange}
+          resizable
+          containerRef={containerRef}
+        />
+      )}
+      <div className="flex items-center gap-3">
       {otherVoiceCalls.length > 0 ? (
         <Popover
           open={switcherOpen}
@@ -457,9 +668,48 @@ export function LiveVoiceCallBar({
       <ActionIconButton size="xl" title="Keypad">
         <Grip className="h-6 w-6" strokeWidth={2} />
       </ActionIconButton>
+      {/* Video/Share/Dock form their own group, separated from the call
+       *  controls above by this divider — per an explicit follow-up, these
+       *  three read as "how this call is being presented" (audio-only vs.
+       *  video/share, floating vs. docked) rather than "in-call actions"
+       *  like Hold/Mute/Mask/Record, so they're visually set apart instead
+       *  of interleaved among them. */}
+      <div className="mx-0.5 h-7 w-px bg-lyra-border-subtle" />
+      <ActionIconButton
+        size="xl"
+        title={isVideoOn ? "Turn off video" : "Add video"}
+        aria-pressed={isVideoOn}
+        onClick={onToggleVideo}
+        className={cn(isVideoOn && SELECTED_SLATE)}
+      >
+        {isVideoOn ? (
+          <Video className="h-6 w-6 text-lyra-fg-on-primary" strokeWidth={2} />
+        ) : (
+          <VideoOff className="h-6 w-6" strokeWidth={2} />
+        )}
+      </ActionIconButton>
+      <ActionIconButton
+        size="xl"
+        title={isScreenSharing ? "Stop sharing" : "Share screen"}
+        aria-pressed={isScreenSharing}
+        onClick={onToggleScreenShare}
+        className={cn(isScreenSharing && SELECTED_SLATE)}
+      >
+        {isScreenSharing ? (
+          <ScreenShare className="h-6 w-6 text-lyra-fg-on-primary" strokeWidth={2} />
+        ) : (
+          <ScreenShareOff className="h-6 w-6" strokeWidth={2} />
+        )}
+      </ActionIconButton>
+      {onDock && (
+        <ActionIconButton size="xl" title="Dock" onClick={onDock}>
+          <PanelRight className="h-6 w-6" strokeWidth={2} />
+        </ActionIconButton>
+      )}
       <ActionIconButton size="xl" title="Hang Up" onClick={onHangUp}>
         <PhoneOff className="h-6 w-6 text-lyra-status-critical-strong" strokeWidth={2} />
       </ActionIconButton>
+      </div>
     </div>
   );
 }
@@ -541,6 +791,37 @@ export interface DockedVoiceControlBarProps {
   onToggleMask: () => void;
   isRecording: boolean;
   onToggleRecording: () => void;
+  /** Same call, same state as `LiveVoiceCallBarProps.isVideoOn` — see that
+   *  prop's own doc comment. */
+  isVideoOn: boolean;
+  onToggleVideo: () => void;
+  isScreenSharing: boolean;
+  onToggleScreenShare: () => void;
+  /** Explicit width/height once the agent drags the docked media area's
+   *  own resize handle — a separate piece of state from the floating bar's
+   *  `videoPanelSize` since the two remount independently, but the same
+   *  shape/both-axes behavior. `null`/omitted uses the default 132px-tall,
+   *  panel-width size. */
+  videoPanelSize?: { width: number; height: number } | null;
+  onVideoPanelSizeChange?: (size: { width: number; height: number }) => void;
+  /** Pops this call's controls out to the floating `LiveVoiceCallBar`
+   *  without leaving this interaction — omitted (not just falsy) hides the
+   *  Undock button entirely, since the parent only passes this while
+   *  there's video or a share on (an audio-only call has nothing extra to
+   *  gain from floating it manually; it already floats automatically the
+   *  moment the agent looks elsewhere). See `AgentNextGenPage`'s own
+   *  `voiceCallManuallyUndocked`. */
+  onUndock?: () => void;
+  /** Reports this bar's own current rendered width (in px) every time it
+   *  changes — `AgentNextGenPage` caches the latest value (see its own
+   *  `dockedBarNeededWidth`) and compares it against how much room the
+   *  center column actually has (accounting for the Customer Profile side
+   *  panel, if open) to decide whether this bar even fits. Caching the
+   *  value, rather than only measuring while docked, is what lets that
+   *  auto-undock decision keep working once this component has already
+   *  unmounted (undocked) — there'd otherwise be nothing left to measure to
+   *  notice the panel has closed and there's room to redock. */
+  onNeededWidthChange?: (width: number) => void;
   onHangUp: () => void;
 }
 
@@ -577,6 +858,14 @@ export function DockedVoiceControlBar({
   onToggleMask,
   isRecording,
   onToggleRecording,
+  isVideoOn,
+  onToggleVideo,
+  isScreenSharing,
+  onToggleScreenShare,
+  videoPanelSize,
+  onVideoPanelSizeChange,
+  onUndock,
+  onNeededWidthChange,
   onHangUp,
 }: DockedVoiceControlBarProps) {
   const accent = CHANNEL_ACCENT.voice;
@@ -591,6 +880,22 @@ export function DockedVoiceControlBar({
     return () => clearInterval(id);
   }, [startedAt]);
   const heldSeconds = isOnHold && heldSince ? Math.floor((Date.now() - heldSince) / 1000) : undefined;
+  const pillRef = useRef<HTMLDivElement>(null);
+  // Reports this bar's own width any time it changes — video/share turning
+  // on or off, a manual resize, even the customer name changing length —
+  // so `AgentNextGenPage` always has a fresh answer for "how wide does this
+  // bar want to be" without having to re-derive it. See `onNeededWidthChange`'s
+  // own doc comment for why this is cached by the parent rather than only
+  // read while docked.
+  useEffect(() => {
+    if (!onNeededWidthChange || !pillRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width !== undefined) onNeededWidthChange(Math.ceil(width));
+    });
+    observer.observe(pillRef.current);
+    return () => observer.disconnect();
+  }, [onNeededWidthChange]);
   return (
     <div className="flex justify-center border-t border-lyra-border-subtle bg-lyra-bg-surface-base py-3">
       {/* Same rounded-lyra-lg/border/background as the floating bar's own
@@ -600,7 +905,25 @@ export function DockedVoiceControlBar({
        *  (in-flow at the bottom of the panel, not floating on top of other
        *  content, so a drop shadow would look out of place until it
        *  actually pops out). */}
-      <div className="flex items-center gap-5 rounded-lyra-lg border border-lyra-border-subtle bg-lyra-bg-surface-base px-6 py-3">
+      <div
+        ref={pillRef}
+        className="flex flex-col rounded-lyra-lg border border-lyra-border-subtle bg-lyra-bg-surface-base px-6 py-3"
+        // Same "resize sets width on the outer bar" as the floating bar —
+        // see `CallMediaArea`'s own top doc comment for why.
+        style={videoPanelSize ? { width: videoPanelSize.width } : undefined}
+      >
+        {(isVideoOn || isScreenSharing) && (
+          <CallMediaArea
+            customerName={customerName}
+            isInternalAgentCall={isInternalAgentCall}
+            isScreenSharing={isScreenSharing}
+            size={videoPanelSize}
+            onSizeChange={onVideoPanelSizeChange}
+            resizable={!!onVideoPanelSizeChange}
+            containerRef={pillRef}
+          />
+        )}
+        <div className="flex items-center gap-5">
         <span className="flex items-center gap-2">
           <span
             className={cn("flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full lyra-body-md-emphasis", accent.bg, accent.text)}
@@ -643,9 +966,39 @@ export function DockedVoiceControlBar({
         <DockedControlButton title="Keypad">
           <Grip className="h-6 w-6" strokeWidth={2} />
         </DockedControlButton>
+        {/* Video/Share/Undock form their own group, separated from the call
+         *  controls above — see the floating bar's identical divider for
+         *  why (same "how this call is presented" vs. "in-call action"
+         *  distinction). */}
+        <div className="mx-0.5 h-7 w-px bg-lyra-border-subtle" />
+        <DockedControlButton title={isVideoOn ? "Turn off video" : "Add video"} selected={isVideoOn} tone="slate" onClick={onToggleVideo}>
+          {isVideoOn ? (
+            <Video className="h-6 w-6 text-lyra-fg-on-primary" strokeWidth={2} />
+          ) : (
+            <VideoOff className="h-6 w-6" strokeWidth={2} />
+          )}
+        </DockedControlButton>
+        <DockedControlButton
+          title={isScreenSharing ? "Stop sharing" : "Share screen"}
+          selected={isScreenSharing}
+          tone="slate"
+          onClick={onToggleScreenShare}
+        >
+          {isScreenSharing ? (
+            <ScreenShare className="h-6 w-6 text-lyra-fg-on-primary" strokeWidth={2} />
+          ) : (
+            <ScreenShareOff className="h-6 w-6" strokeWidth={2} />
+          )}
+        </DockedControlButton>
+        {onUndock && (
+          <DockedControlButton title="Undock" onClick={onUndock}>
+            <Move className="h-6 w-6" strokeWidth={2} />
+          </DockedControlButton>
+        )}
         <DockedControlButton title="Hang Up" onClick={onHangUp}>
           <PhoneOff className="h-6 w-6 text-lyra-status-critical-strong" strokeWidth={2} />
         </DockedControlButton>
+        </div>
       </div>
     </div>
   );

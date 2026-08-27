@@ -763,6 +763,60 @@ export function AgentNextGenPage({
   const [isVoiceCallMuted, setIsVoiceCallMuted] = useState(false);
   const [isVoiceCallMasked, setIsVoiceCallMasked] = useState(false);
   const [isVoiceCallRecording, setIsVoiceCallRecording] = useState(false);
+  // Video-on-this-call — same lifted-state reasoning as the three above (has
+  // to read the same whether shown via the docked bar or the floating one).
+  // Turning this on doesn't swap in a different bar/panel; both
+  // `LiveVoiceCallBar`/`DockedVoiceControlBar` just render their own
+  // `VideoTiles` above the existing control row while this is true.
+  const [isVideoCallOn, setIsVideoCallOn] = useState(false);
+  // Screen share — independent of video (a real product lets an agent share
+  // a screen with or without their own camera on, same as Slack/Meet), so
+  // this is its own toggle rather than a mode of `isVideoCallOn`. Both
+  // `LiveVoiceCallBar`/`DockedVoiceControlBar` treat "is there visual media
+  // to show" as `isVideoCallOn || isScreenSharing` — see `CallMediaArea` in
+  // LiveVoiceCallBar.tsx.
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  // The floating video/screen-share area's explicit size once the agent
+  // drags its resize handle — `null` until then, using the natural intrinsic
+  // size. Lifted here (not local to `LiveVoiceCallBar`) for the same reason
+  // `voiceBarPosition` is: that component remounts via `key={assignmentId}`
+  // on every hold-swap, and a resize (like a drag) should survive that. Not
+  // reset in `goLiveWithVoiceCall` either, matching `voiceBarPosition`'s own
+  // "a dragged/resized preference sticks around" behavior.
+  const [videoPanelSize, setVideoPanelSize] = useState<{ width: number; height: number } | null>(null);
+  // Manual "pop this out to float while I'm still looking at this call's
+  // own interaction" — distinct from the fully automatic float that already
+  // happens the instant the agent looks at something else (`isVoiceCallDocked`
+  // below). Only reachable via the docked bar's own Undock button, which
+  // only renders while there's video or a share on (see that button's own
+  // doc comment in LiveVoiceCallBar.tsx) — an audio-only call already floats
+  // automatically the moment it's not the active card, so manually floating
+  // it while still looking at it wouldn't do anything useful. Reset by both
+  // effects below: leaving this call's own card entirely should hand control
+  // back to the ordinary automatic float/dock behavior next time the agent
+  // returns, not silently resume floating for a reason that's no longer true.
+  const [voiceCallManuallyUndocked, setVoiceCallManuallyUndocked] = useState(false);
+  // Automatic counterpart to the manual toggle above — set when the docked
+  // bar itself no longer fits the room the center column actually has (the
+  // Customer Profile side panel opening/widening is the common cause),
+  // rather than the agent asking for it. One-way, same as
+  // `customerProfileMaximized`'s own squeeze check right below (see its
+  // doc comment for why: flipping back the instant space frees up would
+  // flicker right at the threshold) — the docked bar's own Dock button is
+  // still there to force it back manually once there's room again.
+  const [voiceCallAutoUndocked, setVoiceCallAutoUndocked] = useState(false);
+  // The docked bar's own last-reported rendered width (see
+  // `DockedVoiceControlBar`'s `onNeededWidthChange`) — cached here (not just
+  // read while docked) so the squeeze check below still has something to
+  // compare against even after the bar itself has unmounted from going
+  // floating. `null` until it's rendered at least once.
+  const [dockedBarNeededWidth, setDockedBarNeededWidth] = useState<number | null>(null);
+  // The docked video area's own explicit size once resized — a separate
+  // piece of state from the floating bar's `videoPanelSize` since the two
+  // remount independently, but resizes the same way (both width and
+  // height). Not reset in `goLiveWithVoiceCall`, matching every other
+  // dragged/resized preference in this file.
+  const [dockedVideoPanelSize, setDockedVideoPanelSize] = useState<{ width: number; height: number } | null>(null);
   // The bar's own dragged position — lifted here (not local to
   // LiveVoiceCallBar) since that component remounts via `key={assignmentId}`
   // on every hold-swap; keeping this here means dragging the bar once keeps
@@ -1237,7 +1291,13 @@ export function AgentNextGenPage({
   useEffect(() => {
     const row = bodyRowRef.current;
     if (!row) return;
-    const observer = new ResizeObserver(() => checkSqueezeRef.current());
+    // Same observer covers both squeeze checks (Customer Profile takeover
+    // and the docked voice/video bar's own auto-undock) — they're reading
+    // the exact same row, no reason to attach two observers to one node.
+    const observer = new ResizeObserver(() => {
+      checkSqueezeRef.current();
+      checkVoiceBarSqueezeRef.current();
+    });
     observer.observe(row);
     return () => observer.disconnect();
   }, [activeAssignmentId]);
@@ -1286,6 +1346,45 @@ export function AgentNextGenPage({
   // agent looks at anything else (including a different voice call, which
   // auto-holds this one — see the hold-swap logic below).
   const isVoiceCallDocked = liveVoiceCall !== null && activeAssignmentId === liveVoiceCall.assignmentId;
+  // Whether the docked bar should actually render right now — same as
+  // `isVoiceCallDocked` except also false while the agent has manually
+  // popped this same call out via Undock (see `voiceCallManuallyUndocked`'s
+  // own doc comment above). Everything that used to gate on
+  // `isVoiceCallDocked` to decide docked-vs-floating now gates on this
+  // instead; `isVoiceCallDocked` itself is still read on its own where code
+  // genuinely means "is this call's own card the one on screen" regardless
+  // of the manual override (e.g. deciding whether Dock/Undock even apply).
+  const isVoiceCallActuallyDocked = isVoiceCallDocked && !voiceCallManuallyUndocked && !voiceCallAutoUndocked;
+  // Leaving this call's own card entirely (not just toggling Undock, or the
+  // auto-undock squeeze check kicking in) drops both overrides — see
+  // `voiceCallManuallyUndocked`'s own doc comment for why: coming back
+  // later should start from the ordinary automatic dock/float behavior, not
+  // silently resume floating for a reason no longer in effect.
+  useEffect(() => {
+    if (!isVoiceCallDocked) {
+      setVoiceCallManuallyUndocked(false);
+      setVoiceCallAutoUndocked(false);
+    }
+  }, [isVoiceCallDocked]);
+  // Squeeze check for the docked bar itself — same idea, and same one-way
+  // "only ever forces the takeover/undock, never reverses it automatically"
+  // policy, as `checkSqueezeRef` below for the Customer Profile panel (see
+  // its own doc comment for why: avoids flicker right at the threshold).
+  // Bails out early whenever there's nothing to protect — not actually
+  // docked right now, already manually undocked, or no width measurement
+  // yet to compare against.
+  const checkVoiceBarSqueezeRef = useRef<() => void>(() => {});
+  checkVoiceBarSqueezeRef.current = () => {
+    if (!isVoiceCallDocked || voiceCallManuallyUndocked || voiceCallAutoUndocked) return;
+    if (dockedBarNeededWidth === null) return;
+    const row = bodyRowRef.current;
+    if (!row) return;
+    const availableWidth = row.getBoundingClientRect().width - (sidePanelOpen ? sidePanelWidth : 0);
+    if (availableWidth < dockedBarNeededWidth) setVoiceCallAutoUndocked(true);
+  };
+  useEffect(() => {
+    checkVoiceBarSqueezeRef.current();
+  }, [sidePanelWidth, sidePanelOpen, dockedBarNeededWidth, isVoiceCallDocked]);
   // Shared by the kebab's "Unassign & Dismiss" (`onDismissCurrentChannel`)
   // and the Outcome form's "Approve & Save" (`onApproveOutcome`) — two
   // different buttons that both end the interaction the exact same way, so
@@ -1453,6 +1552,11 @@ export function AgentNextGenPage({
     setIsVoiceCallMuted(false);
     setIsVoiceCallMasked(false);
     setIsVoiceCallRecording(false);
+    setIsVideoCallOn(false);
+    setIsScreenSharing(false);
+    setVoiceCallManuallyUndocked(false);
+    setVoiceCallAutoUndocked(false);
+    setDockedBarNeededWidth(null);
   };
 
   // Manual Hold/Resume toggle — the single source of truth for both the
@@ -2600,7 +2704,7 @@ export function AgentNextGenPage({
                    *  maximized branch now renders this same element as its
                    *  own bottom-pinned sibling instead of just dropping it. */}
                   {(() => {
-                    const dockedVoiceControls = isVoiceCallDocked ? (
+                    const dockedVoiceControls = isVoiceCallActuallyDocked ? (
                       <DockedVoiceControlBar
                         customerName={activeAssignment.customerName}
                         isInternalAgentCall={activeAssignment.isInternalAgentCall}
@@ -2614,6 +2718,16 @@ export function AgentNextGenPage({
                         onToggleMask={() => setIsVoiceCallMasked((v) => !v)}
                         isRecording={isVoiceCallRecording}
                         onToggleRecording={() => setIsVoiceCallRecording((v) => !v)}
+                        isVideoOn={isVideoCallOn}
+                        onToggleVideo={() => setIsVideoCallOn((v) => !v)}
+                        isScreenSharing={isScreenSharing}
+                        onToggleScreenShare={() => setIsScreenSharing((v) => !v)}
+                        videoPanelSize={dockedVideoPanelSize}
+                        onVideoPanelSizeChange={setDockedVideoPanelSize}
+                        onUndock={
+                          isVideoCallOn || isScreenSharing ? () => setVoiceCallManuallyUndocked(true) : undefined
+                        }
+                        onNeededWidthChange={setDockedBarNeededWidth}
                         onHangUp={handleHangUpLiveCall}
                       />
                     ) : undefined;
@@ -2932,7 +3046,7 @@ export function AgentNextGenPage({
        *  `voiceControls` slot above) shows the same controls in-flow
        *  instead; the two are mutually exclusive so the call's controls
        *  only ever appear once on screen. */}
-      {liveVoiceCall && !isVoiceCallDocked && (() => {
+      {liveVoiceCall && !isVoiceCallActuallyDocked && (() => {
         const callAssignment = assignments.find((a) => a.id === liveVoiceCall.assignmentId);
         // Every other switchable voice call — same eligibility
         // `handleSelectAssignment`'s own hold-swap check uses (a real,
@@ -2980,6 +3094,25 @@ export function AgentNextGenPage({
             onToggleMask={() => setIsVoiceCallMasked((v) => !v)}
             isRecording={isVoiceCallRecording}
             onToggleRecording={() => setIsVoiceCallRecording((v) => !v)}
+            isVideoOn={isVideoCallOn}
+            onToggleVideo={() => setIsVideoCallOn((v) => !v)}
+            isScreenSharing={isScreenSharing}
+            onToggleScreenShare={() => setIsScreenSharing((v) => !v)}
+            videoPanelSize={videoPanelSize}
+            onVideoPanelSizeChange={setVideoPanelSize}
+            onDock={
+              isVoiceCallDocked && (voiceCallManuallyUndocked || voiceCallAutoUndocked)
+                ? () => {
+                    // Clears both — even when floating for the automatic
+                    // reason, Dock is still a reasonable "try again" action;
+                    // if the room genuinely isn't there, the very next
+                    // squeeze check just flips `voiceCallAutoUndocked` back
+                    // on rather than leaving the bar stuck half-visible.
+                    setVoiceCallManuallyUndocked(false);
+                    setVoiceCallAutoUndocked(false);
+                  }
+                : undefined
+            }
             onHangUp={handleHangUpLiveCall}
             position={voiceBarPosition}
             onPositionChange={setVoiceBarPosition}
