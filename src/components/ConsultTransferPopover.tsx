@@ -134,12 +134,18 @@ function ChatHeader({
   onCall,
   onTransfer,
   onAddToInteraction,
+  addToCallLabel,
 }: {
   agent: DirectoryAgent;
   onBack: () => void;
   onCall: () => void;
   onTransfer: () => void;
   onAddToInteraction: () => void;
+  /** Overrides the trailing button's title/tooltip when it's actually
+   *  wired to a live call (see `ConsultTransferButtonProps.onAddToCall`) —
+   *  "Add to call" reads more accurately than "Add to interaction" once
+   *  this really does drop the agent into an in-progress consult. */
+  addToCallLabel?: boolean;
 }) {
   return (
     <div className="flex items-center gap-2 border-b border-lyra-border-subtle px-3 py-2.5">
@@ -162,7 +168,7 @@ function ChatHeader({
       <ActionIconButton title={`Transfer to ${agent.name}`} onClick={onTransfer}>
         <ConsultTransferIcon strokeWidth={1.5} />
       </ActionIconButton>
-      <ActionIconButton title={`Add ${agent.name} to interaction`} onClick={onAddToInteraction}>
+      <ActionIconButton title={addToCallLabel ? `Add ${agent.name} to call` : `Add ${agent.name} to interaction`} onClick={onAddToInteraction}>
         <UserPlus className="h-4 w-4" strokeWidth={1.5} />
       </ActionIconButton>
     </div>
@@ -297,9 +303,17 @@ export interface ConsultTransferButtonProps {
    *  customerName). */
   customerName?: string;
   issueSummary?: string;
+  /** Wires "Add to interaction" to actually start a consult on the current
+   *  live voice call instead of the plain console.log stub — only passed
+   *  from `AgentNextGenPage` while this interaction's own call is the live
+   *  one (see `InteractionInfoBar`'s own `onAddColleagueToCall`). Omitted
+   *  (not just undefined-checked at the call site) leaves the original stub
+   *  behavior untouched for every other case — a digital interaction, or a
+   *  voice interaction with no live call right now. */
+  onAddToCall?: (colleague: { id: string; name: string }) => void;
 }
 
-export function ConsultTransferButton({ customerName, issueSummary }: ConsultTransferButtonProps) {
+export function ConsultTransferButton({ customerName, issueSummary, onAddToCall }: ConsultTransferButtonProps) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("agents");
   const [view, setView] = useState<View>({ kind: "list" });
@@ -374,7 +388,15 @@ export function ConsultTransferButton({ customerName, issueSummary }: ConsultTra
         onBack={() => setView({ kind: "list" })}
         onCall={() => log("Call", activeAgent.name)}
         onTransfer={() => { log("Transfer to", activeAgent.name); resetAndClose(); }}
-        onAddToInteraction={() => log("Add to interaction", activeAgent.name)}
+        onAddToInteraction={() => {
+          if (onAddToCall) {
+            onAddToCall({ id: activeAgent.id, name: activeAgent.name });
+            resetAndClose();
+          } else {
+            log("Add to interaction", activeAgent.name);
+          }
+        }}
+        addToCallLabel={!!onAddToCall}
       />
     ) : (
       <div className="flex flex-col gap-2 px-3 pb-2 pt-3">

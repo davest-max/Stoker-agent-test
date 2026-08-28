@@ -1,4 +1,4 @@
-import { CHANNEL_ACCENT, type ChannelType, type CreateNewOutboundContact, type CreateNewOutboundGroup } from "@nicecxone/lyra-ui";
+import { CHANNEL_ACCENT, type AgentStatus, type ChannelType, type CreateNewOutboundContact, type CreateNewOutboundGroup } from "@nicecxone/lyra-ui";
 import type { Message, CallTranscriptEvent } from "@/components/CustomerInteractionPanel";
 
 // `CHANNEL_ACCENT` used to be stood in here as a placeholder — it's now a
@@ -114,7 +114,14 @@ export interface DirectoryCustomer extends CreateNewOutboundContact {
   notes?: CustomerNote[];
 }
 
-export interface DirectoryAgent extends CreateNewOutboundContact {}
+export interface DirectoryAgent extends CreateNewOutboundContact {
+  /** Reuses lyra-ui's own `AgentStatus` (the same type/labels its
+   *  `AgentProfile` status menu uses: Available/Unavailable/Offline) rather
+   *  than inventing a parallel enum — New Outbound's contact rows show it
+   *  as a small corner dot on the avatar, same idiom `AgentProfile` itself
+   *  already uses (see that component's own `StatusIcon`/`Avatar`). */
+  availability: AgentStatus;
+}
 
 export interface DirectorySkill {
   id: string;
@@ -124,6 +131,12 @@ export interface DirectorySkill {
    *  color via CHANNEL_ACCENT[channelType]. */
   channelType: ChannelType;
   memberAgentIds: string[];
+  /** A skill/queue's own availability — per an explicit follow-up asking
+   *  for availability on skills too, not just agents. Same three-value
+   *  status as `DirectoryAgent.availability`, set independently here rather
+   *  than derived from member agents' own statuses (this app has no live
+   *  queue/routing engine to compute that from). */
+  availability: AgentStatus;
 }
 
 export interface DirectoryTeam {
@@ -131,6 +144,11 @@ export interface DirectoryTeam {
   name: string;
   description?: string;
   memberAgentIds: string[];
+  /** Which member is this team's supervisor — surfaced in New Outbound's
+   *  "My Team" group (see `OUTBOUND_MY_TEAM_CONTACTS` below), which shows
+   *  the logged-in agent's own teammates with the supervisor denoted.
+   *  Must be one of `memberAgentIds`. */
+  supervisorAgentId?: string;
 }
 
 /* ── Mock data ── */
@@ -468,67 +486,108 @@ export const DIRECTORY_CUSTOMERS: DirectoryCustomer[] = [
   },
 ];
 
+/** Extra agents beyond the original six — added per an explicit follow-up
+ *  sizing requirement: My Team (Tier 1 Support) needs exactly 12 members,
+ *  and every skill needs 6-20. The first 8 below join Tier 1 (bringing it
+ *  to 12 alongside John/Amara/Tomás/Priya above); the rest are skill-only
+ *  — staffing one or more skills without also being one of John's own
+ *  teammates, so the skill rosters read as their own varied pool rather
+ *  than just "the whole team again" under a different label. See
+ *  `DIRECTORY_TEAMS`/`DIRECTORY_SKILLS` below for exactly who's on what. */
+const EXTRA_DIRECTORY_AGENTS: DirectoryAgent[] = [
+  // Tier 1 Support teammates (8) — with John/Amara/Tomás/Priya, brings the
+  // team to 12.
+  { id: "naomi-chen", name: "Naomi Chen", initials: "NC", subtitle: "Support Agent", kind: "agent", avatarClassName: "bg-lyra-accent-green-soft text-lyra-accent-green-strong", channels: ["chat", "voice"], phoneNumbers: [{ value: "+15558140101", label: "Direct · (555) 814-0101" }], availability: "available" },
+  { id: "carlos-reyes", name: "Carlos Reyes", initials: "CR", subtitle: "Support Agent", kind: "agent", avatarClassName: "bg-lyra-accent-orange-soft text-lyra-accent-orange-strong", channels: ["chat", "voice"], phoneNumbers: [{ value: "+15558140102", label: "Direct · (555) 814-0102" }], availability: "available" },
+  { id: "grace-kim", name: "Grace Kim", initials: "GK", subtitle: "Support Agent", kind: "agent", avatarClassName: "bg-lyra-accent-red-soft text-lyra-accent-red-strong", channels: ["chat", "voice"], phoneNumbers: [{ value: "+15558140103", label: "Direct · (555) 814-0103" }], availability: "unavailable" },
+  { id: "owen-bailey", name: "Owen Bailey", initials: "OB", subtitle: "Support Agent", kind: "agent", avatarClassName: "bg-lyra-accent-yellow-soft text-lyra-accent-yellow-strong", channels: ["chat", "voice"], phoneNumbers: [{ value: "+15558140104", label: "Direct · (555) 814-0104" }], availability: "available" },
+  { id: "fatima-haidari", name: "Fatima Haidari", initials: "FH", subtitle: "Support Agent", kind: "agent", avatarClassName: "bg-lyra-accent-purple-soft text-lyra-accent-purple-strong", channels: ["chat", "voice"], phoneNumbers: [{ value: "+15558140105", label: "Direct · (555) 814-0105" }], availability: "offline" },
+  { id: "marcus-chen", name: "Marcus Chen", initials: "MC", subtitle: "Support Agent", kind: "agent", avatarClassName: "bg-lyra-accent-teal-soft text-lyra-accent-teal-strong", channels: ["chat", "voice"], phoneNumbers: [{ value: "+15558140106", label: "Direct · (555) 814-0106" }], availability: "available" },
+  { id: "sofia-delgado", name: "Sofia Delgado", initials: "SD", subtitle: "Support Agent", kind: "agent", avatarClassName: "bg-lyra-accent-pink-soft text-lyra-accent-pink-strong", channels: ["chat", "voice"], phoneNumbers: [{ value: "+15558140107", label: "Direct · (555) 814-0107" }], availability: "unavailable" },
+  { id: "ibrahim-yusuf", name: "Ibrahim Yusuf", initials: "IY", subtitle: "Support Agent", kind: "agent", avatarClassName: "bg-lyra-accent-slate-soft text-lyra-accent-slate-strong", channels: ["chat", "voice"], phoneNumbers: [{ value: "+15558140108", label: "Direct · (555) 814-0108" }], availability: "offline" },
+  // Skill-only agents (9) — not on Tier 1, staff one or more skills below.
+  { id: "isabel-ortiz", name: "Isabel Ortiz", initials: "IO", subtitle: "Support Agent", kind: "agent", avatarClassName: "bg-lyra-accent-blue-soft text-lyra-accent-blue-strong", channels: ["chat", "voice"], phoneNumbers: [{ value: "+15558140109", label: "Direct · (555) 814-0109" }], availability: "available" },
+  { id: "malik-davis", name: "Malik Davis", initials: "MD", subtitle: "Support Agent", kind: "agent", avatarClassName: "bg-lyra-accent-lime-soft text-lyra-accent-lime-strong", channels: ["chat", "voice"], phoneNumbers: [{ value: "+15558140110", label: "Direct · (555) 814-0110" }], availability: "available" },
+  { id: "sana-verma", name: "Sana Verma", initials: "SV", subtitle: "Support Agent", kind: "agent", avatarClassName: "bg-lyra-accent-orange-soft text-lyra-accent-orange-strong", channels: ["chat", "voice"], phoneNumbers: [{ value: "+15558140111", label: "Direct · (555) 814-0111" }], availability: "unavailable" },
+  { id: "theo-laurent", name: "Théo Laurent", initials: "TL", subtitle: "Support Agent", kind: "agent", avatarClassName: "bg-lyra-accent-green-soft text-lyra-accent-green-strong", channels: ["chat", "voice"], phoneNumbers: [{ value: "+15558140112", label: "Direct · (555) 814-0112" }], availability: "available" },
+  { id: "renee-dupont", name: "Renee Dupont", initials: "RD", subtitle: "Support Agent", kind: "agent", avatarClassName: "bg-lyra-accent-red-soft text-lyra-accent-red-strong", channels: ["chat", "voice"], phoneNumbers: [{ value: "+15558140113", label: "Direct · (555) 814-0113" }], availability: "offline" },
+  { id: "hiro-tanaka", name: "Hiro Tanaka", initials: "HT", subtitle: "Support Agent", kind: "agent", avatarClassName: "bg-lyra-accent-yellow-soft text-lyra-accent-yellow-strong", channels: ["chat", "voice"], phoneNumbers: [{ value: "+15558140114", label: "Direct · (555) 814-0114" }], availability: "available" },
+  { id: "aisha-bello", name: "Aisha Bello", initials: "AB", subtitle: "Support Agent", kind: "agent", avatarClassName: "bg-lyra-accent-purple-soft text-lyra-accent-purple-strong", channels: ["chat", "voice"], phoneNumbers: [{ value: "+15558140115", label: "Direct · (555) 814-0115" }], availability: "unavailable" },
+  { id: "ben-whitfield", name: "Ben Whitfield", initials: "BW", subtitle: "Support Agent", kind: "agent", avatarClassName: "bg-lyra-accent-teal-soft text-lyra-accent-teal-strong", channels: ["chat", "voice"], phoneNumbers: [{ value: "+15558140116", label: "Direct · (555) 814-0116" }], availability: "available" },
+  { id: "noah-fischer", name: "Noah Fischer", initials: "NF", subtitle: "Support Agent", kind: "agent", avatarClassName: "bg-lyra-accent-pink-soft text-lyra-accent-pink-strong", channels: ["chat", "voice"], phoneNumbers: [{ value: "+15558140117", label: "Direct · (555) 814-0117" }], availability: "offline" },
+];
+
 export const DIRECTORY_AGENTS: DirectoryAgent[] = [
   {
     id: "john-smith",
     name: "John Smith",
     initials: "JS",
-    subtitle: "Support Agent · Available",
+    subtitle: "Support Agent",
     kind: "agent",
     avatarClassName: "bg-lyra-accent-blue-soft text-lyra-accent-blue-strong",
     channels: ["chat", "voice"],
     phoneNumbers: [{ value: "+15558140021", label: "Direct · (555) 814-0021" }],
+    availability: "available",
   },
   {
     id: "amara",
     name: "Amara Okafor",
     initials: "AO",
-    subtitle: "Support Agent · Available",
+    subtitle: "Support Agent",
     kind: "agent",
     avatarClassName: "bg-lyra-accent-teal-soft text-lyra-accent-teal-strong",
     channels: ["chat", "voice"],
     phoneNumbers: [{ value: "+15558140034", label: "Direct · (555) 814-0034" }],
+    availability: "available",
   },
   {
     id: "diego",
     name: "Diego Fernandez",
     initials: "DF",
-    subtitle: "Support Agent · Available",
+    subtitle: "Support Agent",
     kind: "agent",
     avatarClassName: "bg-lyra-accent-purple-soft text-lyra-accent-purple-strong",
     channels: ["chat", "voice"],
     phoneNumbers: [{ value: "+15558140047", label: "Direct · (555) 814-0047" }],
+    availability: "unavailable",
   },
   {
     id: "lena",
     name: "Lena Kowalski",
     initials: "LK",
-    subtitle: "Support Agent · Offline",
+    subtitle: "Support Agent",
     kind: "agent",
     avatarClassName: "bg-lyra-accent-pink-soft text-lyra-accent-pink-strong",
     channels: ["chat"],
     phoneNumbers: [{ value: "+15558140058", label: "Direct · (555) 814-0058" }],
+    availability: "offline",
   },
   {
     id: "tomas",
     name: "Tomás Ibáñez",
     initials: "TI",
-    subtitle: "Support Agent · Available",
+    subtitle: "Support Agent",
     kind: "agent",
     avatarClassName: "bg-lyra-accent-lime-soft text-lyra-accent-lime-strong",
     channels: ["chat", "voice"],
     phoneNumbers: [{ value: "+15558140062", label: "Direct · (555) 814-0062" }],
+    availability: "available",
   },
   {
     id: "priya-shah",
     name: "Priya Shah",
     initials: "PS",
-    subtitle: "Team Supervisor · Available",
+    subtitle: "Team Supervisor",
     kind: "agent",
     avatarClassName: "bg-lyra-accent-slate-soft text-lyra-accent-slate-strong",
     channels: ["chat", "voice"],
     phoneNumbers: [{ value: "+15558140075", label: "Direct · (555) 814-0075" }],
+    availability: "available",
   },
+  // ── Additional teammates/skill agents — see the block right after this
+  // array closes for why these exist (My Team needs exactly 12 members;
+  // every skill needs 6-20) and for the shared helper that builds them. ──
+  ...EXTRA_DIRECTORY_AGENTS,
 ];
 
 /* ── Search ──
@@ -562,34 +621,44 @@ export function contactMatchesQuery(
   });
 }
 
+// Every skill's roster below is sized to 6-20 members per an explicit
+// follow-up (previously 2-3 each) — a mix of Tier 1 teammates and the
+// skill-only agents from EXTRA_DIRECTORY_AGENTS above, overlapping across
+// skills the way real staffing usually does (the same agent can easily
+// cover more than one queue) rather than each skill getting its own
+// fully-separate pool.
 export const DIRECTORY_SKILLS: DirectorySkill[] = [
   {
     id: "general-support",
     name: "General Support",
     description: "First-line chat support for general account questions.",
     channelType: "chat",
-    memberAgentIds: ["john-smith", "amara", "tomas"],
+    memberAgentIds: ["john-smith", "amara", "tomas", "naomi-chen", "carlos-reyes", "isabel-ortiz", "malik-davis", "sana-verma", "theo-laurent", "renee-dupont"],
+    availability: "available",
   },
   {
     id: "technical-support",
     name: "Technical Support",
     description: "App crashes, bugs, and troubleshooting.",
     channelType: "chat",
-    memberAgentIds: ["diego", "tomas"],
+    memberAgentIds: ["diego", "tomas", "owen-bailey", "fatima-haidari", "hiro-tanaka", "aisha-bello", "ben-whitfield", "noah-fischer"],
+    availability: "unavailable",
   },
   {
     id: "billing",
     name: "Billing",
     description: "Charges, refunds, and subscription questions.",
     channelType: "email",
-    memberAgentIds: ["amara", "lena"],
+    memberAgentIds: ["amara", "lena", "grace-kim", "ibrahim-yusuf", "marcus-chen", "sofia-delgado"],
+    availability: "offline",
   },
   {
     id: "vip-support",
     name: "VIP Support",
     description: "Priority phone support for VIP customers.",
     channelType: "voice",
-    memberAgentIds: ["john-smith", "diego"],
+    memberAgentIds: ["john-smith", "diego", "priya-shah", "carlos-reyes", "naomi-chen", "owen-bailey", "isabel-ortiz", "sana-verma", "theo-laurent", "hiro-tanaka", "ben-whitfield", "noah-fischer"],
+    availability: "available",
   },
 ];
 
@@ -598,7 +667,19 @@ export const DIRECTORY_TEAMS: DirectoryTeam[] = [
     id: "tier-1",
     name: "Tier 1 Support",
     description: "Front-line support team.",
-    memberAgentIds: ["john-smith", "amara", "tomas"],
+    // "priya-shah" added specifically as this team's supervisor — she was
+    // already seeded in DIRECTORY_AGENTS with a "Team Supervisor" subtitle
+    // but had never actually been placed on a team until New Outbound's
+    // "My Team" group (below) needed a real supervisor to denote. The other
+    // 8 (naomi-chen...ibrahim-yusuf, see EXTRA_DIRECTORY_AGENTS above) were
+    // added specifically to bring this team to exactly 12 members, per an
+    // explicit follow-up sizing requirement.
+    memberAgentIds: [
+      "john-smith", "amara", "tomas", "priya-shah",
+      "naomi-chen", "carlos-reyes", "grace-kim", "owen-bailey",
+      "fatima-haidari", "marcus-chen", "sofia-delgado", "ibrahim-yusuf",
+    ],
+    supervisorAgentId: "priya-shah",
   },
   {
     id: "escalations",
@@ -641,17 +722,39 @@ function initialsFor(name: string): string {
     .slice(0, 2);
 }
 
-const OUTBOUND_TEAM_CONTACTS: CreateNewOutboundContact[] = DIRECTORY_TEAMS.map((team) => ({
-  id: team.id,
-  name: team.name,
-  initials: initialsFor(team.name),
-  subtitle: team.description,
-  kind: "team",
-  avatarClassName: "bg-lyra-accent-slate-soft text-lyra-accent-slate-strong",
-  channels: ["voice", "sms", "email"],
-}));
+// The logged-in agent, for "My Team" below — must refer to the same person
+// as `CURRENT_AGENT_NAME` in AgentNextGenPage.tsx (that constant drives chat
+// sender names; this one drives which team/teammates count as "mine").
+// Kept as a separate constant here rather than importing across that
+// boundary — components import from data, not the other way around.
+export const CURRENT_AGENT_ID = "john-smith";
 
-const OUTBOUND_SKILL_CONTACTS: CreateNewOutboundContact[] = DIRECTORY_SKILLS.map((skill) => {
+/** New Outbound's "My Team" group (see `OUTBOUND_GROUPS` below) shows the
+ *  logged-in agent's own teammates as individual, callable/chattable agent
+ *  rows — NOT one row per team the way this group used to work (a flat list
+ *  of every `DirectoryTeam` as its own single contact). Reuses the real
+ *  `DIRECTORY_AGENTS` records directly (rather than synthesizing new ones)
+ *  so a teammate's row here is indistinguishable from the same person's row
+ *  in the Agents group — same avatar, subtitle, channels, chat/call
+ *  behavior. Excludes the agent themselves (you can't call or chat
+ *  yourself); the team's own `supervisorAgentId` (Priya Shah, currently)
+ *  already carries a "Team Supervisor" subtitle in `DIRECTORY_AGENTS`, so
+ *  no extra labeling is needed here to denote her — reusing her real record
+ *  handles it for free. `[]` if the current agent isn't on any team. */
+const myTeam = DIRECTORY_TEAMS.find((team) => team.memberAgentIds.includes(CURRENT_AGENT_ID));
+const OUTBOUND_MY_TEAM_CONTACTS: CreateNewOutboundContact[] = (myTeam?.memberAgentIds ?? [])
+  .filter((id) => id !== CURRENT_AGENT_ID)
+  .map((id) => DIRECTORY_AGENTS.find((a) => a.id === id))
+  .filter((a): a is DirectoryAgent => !!a);
+
+/** Every skill now supports a phone call in New Outbound regardless of
+ *  which channel it actually routes on day-to-day (`channelType` below
+ *  still drives the row's own accent color) — a real contact center skill/
+ *  queue can always be rung by phone even if its native routing channel is
+ *  chat or email, so `voice` is added unconditionally rather than only for
+ *  skills already routed on it (`Set` dedupes `vip-support`, which is
+ *  already voice-routed). */
+const OUTBOUND_SKILL_CONTACTS: (CreateNewOutboundContact & { availability: AgentStatus })[] = DIRECTORY_SKILLS.map((skill) => {
   const accent = CHANNEL_ACCENT[skill.channelType];
   return {
     id: skill.id,
@@ -660,20 +763,43 @@ const OUTBOUND_SKILL_CONTACTS: CreateNewOutboundContact[] = DIRECTORY_SKILLS.map
     subtitle: skill.description,
     kind: "skill",
     avatarClassName: `${accent.bg} ${accent.text}`,
-    channels: [skill.channelType],
+    channels: Array.from(new Set([skill.channelType, "voice" as ChannelType])),
+    availability: skill.availability,
   };
 });
 
-/** Placeholder external-directory contacts — the New Outbound flow spec
- *  calls for "some additional external directory names" alongside the core
- *  Favorites/Customers/Agents/Skills/Teams groups (e.g. a partner network
- *  or vendor contact list synced in from outside this system), but no real
- *  source/name was given. Standing in with one illustrative group so the
- *  group dropdown + "All" search demonstrate the shape; rename/replace
- *  once a real external directory is wired up. */
-const OUTBOUND_EXTERNAL_DIRECTORY_CONTACTS: CreateNewOutboundContact[] = [
-  { id: "ext-1", name: "Northwind Logistics", initials: "NL", subtitle: "Partner Network", kind: "external", avatarClassName: "bg-lyra-accent-slate-soft text-lyra-accent-slate-strong", channels: ["voice", "email"] },
-  { id: "ext-2", name: "Fabrikam Support", initials: "FS", subtitle: "Partner Network", kind: "external", avatarClassName: "bg-lyra-accent-slate-soft text-lyra-accent-slate-strong", channels: ["voice", "email", "sms"] },
+/** Skill id → the real `DIRECTORY_AGENTS` records staffing it — backs the
+ *  "view agents in this skill" screen a skill row's chevron now opens (see
+ *  `NewOutboundPopover`'s own `skillAgents` screen) instead of the generic
+ *  single-channel flyout every other contact kind's chevron still shows.
+ *  Reuses the real agent records directly, same reasoning as
+ *  `OUTBOUND_MY_TEAM_CONTACTS` above — an agent's row reads identically
+ *  whether reached via Agents, My Team, or a Skill's own roster. */
+export const OUTBOUND_SKILL_MEMBER_CONTACTS: Record<string, CreateNewOutboundContact[]> = Object.fromEntries(
+  DIRECTORY_SKILLS.map((skill) => [
+    skill.id,
+    skill.memberAgentIds.map((id) => DIRECTORY_AGENTS.find((a) => a.id === id)).filter((a): a is DirectoryAgent => !!a),
+  ])
+);
+
+/** Three separate external, customer-managed address books — per an
+ *  explicit follow-up asking for multiple distinct external directories
+ *  (previously just one placeholder "Partner Directory" group). Still
+ *  placeholder content (no real external-directory source was given), just
+ *  split into three illustrative books instead of one, in the same style
+ *  as the contacts they replace — rename/restock whenever a real source is
+ *  wired up. */
+const OUTBOUND_PARTNER_CONTACTS: CreateNewOutboundContact[] = [
+  { id: "ext-partner-1", name: "Northwind Logistics", initials: "NL", subtitle: "Partner Network", kind: "external", avatarClassName: "bg-lyra-accent-slate-soft text-lyra-accent-slate-strong", channels: ["voice", "email"] },
+  { id: "ext-partner-2", name: "Fabrikam Support", initials: "FS", subtitle: "Partner Network", kind: "external", avatarClassName: "bg-lyra-accent-slate-soft text-lyra-accent-slate-strong", channels: ["voice", "email", "sms"] },
+];
+const OUTBOUND_VENDOR_CONTACTS: CreateNewOutboundContact[] = [
+  { id: "ext-vendor-1", name: "Contoso Shipping", initials: "CS", subtitle: "Vendor Directory", kind: "external", avatarClassName: "bg-lyra-accent-orange-soft text-lyra-accent-orange-strong", channels: ["voice", "email"] },
+  { id: "ext-vendor-2", name: "Adatum Payments", initials: "AP", subtitle: "Vendor Directory", kind: "external", avatarClassName: "bg-lyra-accent-orange-soft text-lyra-accent-orange-strong", channels: ["voice", "email"] },
+];
+const OUTBOUND_REGIONAL_CONTACTS: CreateNewOutboundContact[] = [
+  { id: "ext-regional-1", name: "EMEA Regional Office", initials: "EO", subtitle: "Regional Offices", kind: "external", avatarClassName: "bg-lyra-accent-teal-soft text-lyra-accent-teal-strong", channels: ["voice", "email"] },
+  { id: "ext-regional-2", name: "APAC Regional Office", initials: "AO", subtitle: "Regional Offices", kind: "external", avatarClassName: "bg-lyra-accent-teal-soft text-lyra-accent-teal-strong", channels: ["voice", "email"] },
 ];
 
 /** Groups for CreateNew's outbound picker dropdown. */
@@ -684,11 +810,18 @@ const OUTBOUND_EXTERNAL_DIRECTORY_CONTACTS: CreateNewOutboundContact[] = [
  *  {group}". */
 const OUTBOUND_SEARCH_PLACEHOLDER = "Enter phone, email or search term";
 
+// "Customers" removed entirely per an explicit follow-up — New Outbound no
+// longer offers a way to browse/search customer records at all (DIRECTORY_
+// CUSTOMERS itself is untouched; it still backs the Customer Profile panel,
+// Directory page, etc., just no longer feeds this popover).
 export const OUTBOUND_GROUPS: CreateNewOutboundGroup[] = [
   { id: "favorites", label: "Favorites", kind: "favorites", emptyMessage: "No favorites yet" },
-  { id: "customers", label: "Customers", searchPlaceholder: OUTBOUND_SEARCH_PLACEHOLDER, contacts: DIRECTORY_CUSTOMERS },
   { id: "agents", label: "Agents", searchPlaceholder: OUTBOUND_SEARCH_PLACEHOLDER, contacts: DIRECTORY_AGENTS },
   { id: "skills", label: "Skills", searchPlaceholder: OUTBOUND_SEARCH_PLACEHOLDER, contacts: OUTBOUND_SKILL_CONTACTS },
-  { id: "teams", label: "Teams", searchPlaceholder: OUTBOUND_SEARCH_PLACEHOLDER, contacts: OUTBOUND_TEAM_CONTACTS },
-  { id: "partner-directory", label: "Partner Directory", searchPlaceholder: OUTBOUND_SEARCH_PLACEHOLDER, contacts: OUTBOUND_EXTERNAL_DIRECTORY_CONTACTS },
+  // "Teams" → "My Team": now the logged-in agent's own teammates (see
+  // `OUTBOUND_MY_TEAM_CONTACTS` above), not a flat list of every team.
+  { id: "teams", label: "My Team", searchPlaceholder: "Search your teammates", contacts: OUTBOUND_MY_TEAM_CONTACTS, emptyMessage: "You're not on a team yet" },
+  { id: "partner-directory", label: "Partner Network", searchPlaceholder: OUTBOUND_SEARCH_PLACEHOLDER, contacts: OUTBOUND_PARTNER_CONTACTS },
+  { id: "vendor-directory", label: "Vendor Directory", searchPlaceholder: OUTBOUND_SEARCH_PLACEHOLDER, contacts: OUTBOUND_VENDOR_CONTACTS },
+  { id: "regional-offices", label: "Regional Offices", searchPlaceholder: OUTBOUND_SEARCH_PLACEHOLDER, contacts: OUTBOUND_REGIONAL_CONTACTS },
 ];

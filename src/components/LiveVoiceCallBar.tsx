@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { ActionIconButton, CHANNEL_ACCENT, Popover, Menu, type MenuEntry } from "@nicecxone/lyra-ui";
-import { Headset, Mic, MicOff, Pause, AudioLines, CircleDot, Grip, PhoneOff, ChevronDown, Video, VideoOff, ScreenShare, ScreenShareOff, Move, PanelRight } from "lucide-react";
+import { ActionIconButton, Button, CHANNEL_ACCENT, Popover, Menu, type MenuEntry } from "@nicecxone/lyra-ui";
+import { Headset, Mic, MicOff, Pause, AudioLines, CircleDot, Grip, PhoneOff, ChevronDown, Video, VideoOff, Move, PanelRight, Users, ArrowRightLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /** AudioLines with a diagonal slash — Lucide has no ready icon for "mask
@@ -69,20 +69,175 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), Math.max(min, max));
 }
 
-/** Shown above the control row in both presentations once video or screen
- *  share is on (see `isVideoOn`/`isScreenSharing` on both prop interfaces
- *  below). Two mutually-exclusive layouts sharing one component so a resize
- *  handle/lifted size only has to be threaded through once: screen share
- *  (a single placeholder standing in for the shared screen, with a small
- *  circular "who else is here" tile in the corner — same auto-PiP idea
- *  Meet uses) takes priority when both happen to be on at once, otherwise
- *  the two equal-weight agent/customer video tiles from the original
- *  symmetric pick. This app has no real camera/screen feed to render, so
- *  both are placeholders using the same accent-tinted circle treatment the
- *  bar's own leading avatar already uses. Identical in both the floating bar
- *  and the docked bar — per the same "read as the same bar" convention
- *  already governing the rest of this file's controls — except the resize
- *  handle, which only renders when `resizable` (see below).
+/** A colleague added to this call via consult-then-merge (see
+ *  `VoiceCallConsult` below) — always an agent, never the customer, hence no
+ *  `isInternalAgentCall`-style flag: every colleague renders with the same
+ *  headset glyph the primary party already uses for that case. Lifted to
+ *  `AgentNextGenPage`'s own `voiceCallColleagues` (keyed by assignment id)
+ *  for the same "survive moving between the floating and docked
+ *  presentations" reason every other per-call control here is. `isOnHold`/
+ *  `heldSince` are this colleague's OWN hold state — independent of the
+ *  primary party's `isOnHold` above, per an explicit follow-up ("each
+ *  participant gets row-level hold") — see `onToggleColleagueHold`. */
+export interface CallColleague {
+  id: string;
+  name: string;
+  isOnHold: boolean;
+  heldSince?: number;
+}
+
+/** A private, pre-merge consult in progress — the primary party is
+ *  automatically held the moment this starts (same as picking up a
+ *  different line) until the agent either cancels (primary resumes, back to
+ *  a plain call) or merges (this colleague joins as a full `CallColleague`
+ *  and the primary resumes into a three-way conference). `undefined`/absent
+ *  on both bar components below means "not consulting right now." */
+export interface VoiceCallConsult {
+  id: string;
+  name: string;
+}
+
+/** Small avatar+name pill used by the participant strip shown under the
+ *  name/timer once `colleagues.length > 0` — one per person on the call
+ *  (self, the primary party, and every added colleague), so the agent can
+ *  see who's actually here at a glance without opening the Participants
+ *  menu. Purely a glanceable summary; the menu (see `buildParticipantMenuItems`
+ *  below) is where hold/transfer actions actually live — kept as two
+ *  separate affordances per an explicit follow-up, rather than making this
+ *  strip itself clickable. */
+function ParticipantChip({
+  label,
+  isSelf,
+  isInternalAgent,
+  isOnHold,
+}: {
+  label: string;
+  isSelf?: boolean;
+  isInternalAgent?: boolean;
+  isOnHold?: boolean;
+}) {
+  const accent = CHANNEL_ACCENT.voice;
+  return (
+    <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-lyra-bg-surface-container-subtle py-0.5 pl-0.5 pr-2">
+      <span
+        className={cn(
+          "flex h-5 w-5 items-center justify-center rounded-full lyra-body-xs-emphasis",
+          isSelf ? cn(accent.bg, accent.text) : "bg-lyra-bg-surface-base text-lyra-fg-secondary"
+        )}
+        aria-hidden="true"
+      >
+        {isSelf ? "You" : isInternalAgent ? <Headset className="h-2.5 w-2.5" strokeWidth={1.5} /> : getInitials(label)}
+      </span>
+      <span className="lyra-body-xs text-lyra-fg-secondary max-w-[80px] truncate">{label}</span>
+      {isOnHold && <span className="lyra-body-xs-emphasis text-lyra-status-critical-strong">Hold</span>}
+    </span>
+  );
+}
+
+/** Shown in place of the normal name/timer content while a consult is in
+ *  progress (see `VoiceCallConsult`) — the primary party's own "On hold"
+ *  line already communicates their side of it (see `nameAndTimer`), so this
+ *  banner is purely about the private side-conversation and its two
+ *  resolutions. Identical in both presentations, same as everything else in
+ *  this file. */
+function ConsultBanner({
+  consultName,
+  onCancel,
+  onMerge,
+}: {
+  consultName: string;
+  onCancel?: () => void;
+  onMerge?: () => void;
+}) {
+  return (
+    <div className="mb-2.5 flex items-center gap-2 rounded-lyra-md border border-lyra-border-subtle bg-lyra-bg-surface-container-subtle px-3 py-2">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-lyra-bg-surface-base lyra-body-xs-emphasis text-lyra-fg-secondary" aria-hidden="true">
+        {getInitials(consultName)}
+      </span>
+      <span className="lyra-body-sm text-lyra-fg-secondary truncate">Consulting with {consultName}…</span>
+      <div className="ml-auto flex shrink-0 items-center gap-1.5">
+        <Button variant="outline" size="sm" onClick={onCancel}>Cancel consult</Button>
+        <Button variant="default" size="sm" onClick={onMerge}>Merge call</Button>
+      </div>
+    </div>
+  );
+}
+
+/** Shared by both presentations' Participants menu (see each component's own
+ *  Popover+Menu) — the primary party's row reuses the exact same
+ *  `isOnHold`/`onToggleHold` this bar already threads everywhere else (its
+ *  hold state is one and the same fact whether toggled from the main Hold
+ *  button, this menu, or the bulk "hold all" it doubles as once colleagues
+ *  exist — see `AgentNextGenPage`'s own `toggleVoiceCallHold`). No entry for
+ *  "self" — an agent can't hold or transfer to themselves. Each colleague
+ *  gets two rows (hold/resume, then transfer) rather than one row with two
+ *  actions, since `Menu`'s own `MenuEntry` shape is a single icon+label+
+ *  description+onClick per row — matches this file's existing menu (the
+ *  call switcher) rather than reaching for a custom row layout. */
+function buildParticipantMenuItems({
+  primaryName,
+  primaryIsInternalAgent,
+  primaryIsOnHold,
+  primaryHeldSeconds,
+  onTogglePrimaryHold,
+  colleagues,
+  onToggleColleagueHold,
+  onTransferToColleague,
+}: {
+  primaryName: string;
+  primaryIsInternalAgent?: boolean;
+  primaryIsOnHold: boolean;
+  primaryHeldSeconds?: number;
+  onTogglePrimaryHold: () => void;
+  colleagues: CallColleague[];
+  onToggleColleagueHold: (id: string) => void;
+  onTransferToColleague: (id: string) => void;
+}): MenuEntry[] {
+  const rowIcon = (isInternalAgent?: boolean, name?: string) => (
+    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-lyra-bg-surface-container-subtle lyra-body-xs-emphasis text-lyra-fg-secondary" aria-hidden="true">
+      {isInternalAgent ? <Headset className="h-3 w-3" strokeWidth={1.5} /> : getInitials(name)}
+    </span>
+  );
+  const items: MenuEntry[] = [
+    {
+      id: "primary-hold",
+      icon: rowIcon(primaryIsInternalAgent, primaryName),
+      label: `${primaryIsOnHold ? "Resume" : "Hold"} ${primaryName}`,
+      description: primaryIsOnHold ? `On hold ${formatElapsed(primaryHeldSeconds ?? 0)}` : "Connected",
+      descriptionCritical: primaryIsOnHold,
+      onClick: onTogglePrimaryHold,
+    },
+  ];
+  for (const colleague of colleagues) {
+    items.push({
+      id: `${colleague.id}-hold`,
+      icon: rowIcon(true, colleague.name),
+      label: `${colleague.isOnHold ? "Resume" : "Hold"} ${colleague.name}`,
+      description: colleague.isOnHold
+        ? `On hold ${formatElapsed(Math.floor((Date.now() - (colleague.heldSince ?? Date.now())) / 1000))}`
+        : "Connected",
+      descriptionCritical: colleague.isOnHold,
+      onClick: () => onToggleColleagueHold(colleague.id),
+    });
+    items.push({
+      id: `${colleague.id}-transfer`,
+      icon: <ArrowRightLeft className="h-4 w-4 text-lyra-fg-secondary" strokeWidth={1.5} aria-hidden="true" />,
+      label: `Transfer call to ${colleague.name}`,
+      onClick: () => onTransferToColleague(colleague.id),
+    });
+  }
+  return items;
+}
+
+/** Shown above the control row in both presentations once video is on (see
+ *  `isVideoOn` on both prop interfaces below): the equal-weight agent/
+ *  customer video tiles, extended to one additional tile per merged
+ *  colleague. This app has no real camera feed to render, so tiles are
+ *  placeholders using the same accent-tinted circle treatment the bar's own
+ *  leading avatar already uses. Identical in both the floating bar and the
+ *  docked bar — per the same "read as the same bar" convention already
+ *  governing the rest of this file's controls — except the resize handle,
+ *  which only renders when `resizable` (see below).
  *
  *  Resizing (per an explicit follow-up, after two earlier attempts):
  *  dragging only ever GROWS the panel, never shrinks it below whatever size
@@ -98,7 +253,9 @@ function clamp(value: number, min: number, max: number): number {
 function CallMediaArea({
   customerName,
   isInternalAgentCall,
-  isScreenSharing,
+  colleagues = [],
+  isSelfCameraOff = false,
+  onToggleSelfCamera,
   size,
   onSizeChange,
   resizable = false,
@@ -106,7 +263,26 @@ function CallMediaArea({
 }: {
   customerName?: string;
   isInternalAgentCall?: boolean;
-  isScreenSharing: boolean;
+  /** Colleagues merged into this call via consult (see `CallColleague`) —
+   *  each renders as its own additional tile, same size/shape as the
+   *  existing two (`flex-1` in the same row), matching the "flex-1 tiles,
+   *  extended to N" approach picked over a fixed grid. Always shown as
+   *  camera-on: this app has no session for the colleague's own client to
+   *  toggle their real camera from, and per an explicit product decision
+   *  only the participant themselves can turn their own camera off — there
+   *  is deliberately no control anywhere in this UI that could do it on
+   *  their behalf. */
+  colleagues?: CallColleague[];
+  /** Self's own camera, independent of `isInternalAgentCall`'s tile below —
+   *  only ever toggleable once `colleagues.length > 0` (see the in-tile
+   *  button rendered below): for a plain two-party call, the existing
+   *  `isVideoOn` control on the button row already covers "my camera," and
+   *  turning it off there hides this whole component same as always.
+   *  Once merged into a conference, the agent needs to hide just their own
+   *  tile without taking the other participants' tiles down with it — this
+   *  is that. */
+  isSelfCameraOff?: boolean;
+  onToggleSelfCamera?: () => void;
   /** Explicit width/height once the agent drags the resize handle below —
    *  `null`/omitted uses the natural intrinsic size (132px tall, full bar
    *  width via the `w-full` fallback below). Lifted to `AgentNextGenPage` —
@@ -175,31 +351,48 @@ function CallMediaArea({
       style={size ? { height: size.height } : undefined}
       className={cn("relative mb-2.5 w-full", !size && "h-[132px]")}
     >
-      {isScreenSharing ? (
-        <div className="flex h-full w-full items-center justify-center rounded-lyra-md border border-lyra-border-subtle bg-lyra-bg-surface-container-subtle">
-          <ScreenShare className="h-7 w-7 text-lyra-fg-disabled" strokeWidth={1.5} aria-hidden="true" />
-          {/* Bottom-LEFT (not right) so it never collides with the resize
-           *  handle in the opposite corner below. */}
-          <span className="absolute bottom-2 left-2 flex h-7 w-7 items-center justify-center rounded-full border border-lyra-border-subtle bg-lyra-bg-surface-base lyra-body-xs-emphasis text-lyra-fg-secondary">
-            {isInternalAgentCall ? <Headset className="h-3.5 w-3.5" strokeWidth={1.5} /> : getInitials(customerName)}
-          </span>
-        </div>
-      ) : (
-        <div className="flex h-full w-full gap-2">
-          <div className={cn("flex flex-1 flex-col items-center justify-center gap-1.5 rounded-lyra-md", accent.bg)}>
+      <div className="flex h-full w-full gap-2">
+        <div className={cn("relative flex flex-1 flex-col items-center justify-center gap-1.5 rounded-lyra-md", !isSelfCameraOff ? accent.bg : "border border-lyra-border-subtle bg-lyra-bg-surface-container-subtle")}>
+          {!isSelfCameraOff ? (
             <span className={cn("flex h-10 w-10 items-center justify-center rounded-full bg-lyra-bg-surface-base lyra-body-md-emphasis", accent.text)}>
               You
             </span>
-            <span className={cn("lyra-body-xs-emphasis", accent.text)}>Agent</span>
-          </div>
-          <div className="flex flex-1 flex-col items-center justify-center gap-1.5 rounded-lyra-md border border-lyra-border-subtle bg-lyra-bg-surface-container-subtle">
+          ) : (
             <span className="flex h-10 w-10 items-center justify-center rounded-full bg-lyra-bg-surface-base lyra-body-md-emphasis text-lyra-fg-secondary">
-              {isInternalAgentCall ? <Headset className="h-5 w-5" strokeWidth={1.5} /> : getInitials(customerName)}
+              You
             </span>
-            <span className="lyra-body-xs-emphasis text-lyra-fg-secondary truncate max-w-[90%]">{customerDisplayName}</span>
-          </div>
+          )}
+          <span className={cn("lyra-body-xs-emphasis", !isSelfCameraOff ? accent.text : "text-lyra-fg-secondary")}>Agent</span>
+          {/* Only once this is an actual conference — see this prop's own
+           *  doc comment above for why a plain two-party call still just
+           *  uses the button row's own Video toggle. */}
+          {colleagues.length > 0 && onToggleSelfCamera && (
+            <button
+              type="button"
+              onClick={onToggleSelfCamera}
+              title={isSelfCameraOff ? "Turn on my camera" : "Turn off my camera"}
+              aria-pressed={isSelfCameraOff}
+              className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-lyra-bg-surface-base text-lyra-fg-secondary hover:text-lyra-fg-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus"
+            >
+              {isSelfCameraOff ? <VideoOff className="h-3.5 w-3.5" strokeWidth={1.5} /> : <Video className="h-3.5 w-3.5" strokeWidth={1.5} />}
+            </button>
+          )}
         </div>
-      )}
+        <div className="flex flex-1 flex-col items-center justify-center gap-1.5 rounded-lyra-md border border-lyra-border-subtle bg-lyra-bg-surface-container-subtle">
+          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-lyra-bg-surface-base lyra-body-md-emphasis text-lyra-fg-secondary">
+            {isInternalAgentCall ? <Headset className="h-5 w-5" strokeWidth={1.5} /> : getInitials(customerName)}
+          </span>
+          <span className="lyra-body-xs-emphasis text-lyra-fg-secondary truncate max-w-[90%]">{customerDisplayName}</span>
+        </div>
+        {colleagues.map((colleague) => (
+          <div key={colleague.id} className={cn("flex flex-1 flex-col items-center justify-center gap-1.5 rounded-lyra-md", accent.bg)}>
+            <span className={cn("flex h-10 w-10 items-center justify-center rounded-full bg-lyra-bg-surface-base lyra-body-md-emphasis", accent.text)}>
+              <Headset className="h-5 w-5" strokeWidth={1.5} />
+            </span>
+            <span className={cn("lyra-body-xs-emphasis truncate max-w-[90%]", accent.text)}>{colleague.name}</span>
+          </div>
+        ))}
+      </div>
       {resizable && onSizeChange && (
         <div
           onPointerDown={handleResizePointerDown}
@@ -277,24 +470,53 @@ export interface LiveVoiceCallBarProps {
    *  taller. */
   isVideoOn: boolean;
   onToggleVideo: () => void;
-  /** Independent of `isVideoOn` — an agent can share a screen with or
-   *  without their own camera on, same as Slack/Meet. `CallMediaArea` shows
-   *  the share placeholder over the video tiles whenever this is true,
-   *  regardless of `isVideoOn`. */
-  isScreenSharing: boolean;
-  onToggleScreenShare: () => void;
   /** The floating media area's explicit size once dragged via its resize
    *  handle — lifted to `AgentNextGenPage`'s own `videoPanelSize` for the
    *  same "survive this component remounting on a hold-swap" reason
    *  `position` is. `null` uses the default intrinsic size. */
   videoPanelSize?: { width: number; height: number } | null;
   onVideoPanelSizeChange?: (size: { width: number; height: number }) => void;
-  /** Only passed while this bar is floating *because the agent manually hit
-   *  Undock while still viewing this call's own interaction* (see
-   *  `AgentNextGenPage`'s own `voiceCallManuallyUndocked`) — omitted (not
-   *  just falsy) hides the Dock button entirely otherwise, e.g. while
-   *  floating because the agent is genuinely looking at something else,
-   *  where there's nothing sensible to "dock back" to on screen right now. */
+  /** Colleagues currently merged into this call (see `CallColleague`) —
+   *  `[]` for a plain two-party call, which keeps every new affordance below
+   *  (participant strip, Participants menu, self-camera tile toggle) hidden
+   *  and this bar behaving exactly as it always has. */
+  colleagues: CallColleague[];
+  /** A private, pre-merge consult in progress — see `VoiceCallConsult`.
+   *  `undefined` (not just falsy) hides the consult banner entirely. */
+  consult?: VoiceCallConsult;
+  /** Backs out of `consult` without merging — resumes the primary party the
+   *  same way a manual Resume would (see `AgentNextGenPage`'s own
+   *  `cancelVoiceCallConsult`). Only meaningful (and only rendered) while
+   *  `consult` is set. */
+  onCancelConsult?: () => void;
+  /** Brings `consult`'s colleague into `colleagues` as a full participant
+   *  and resumes the primary party — the conference actually begins here. */
+  onMergeConsult?: () => void;
+  /** Row-level hold for one specific colleague, independent of the primary
+   *  party's own `isOnHold`/`onToggleHold` and of `onToggleHold`'s own
+   *  "hold everyone at once" behavior once colleagues exist — see
+   *  `AgentNextGenPage`'s own `toggleVoiceCallHold`. */
+  onToggleColleagueHold: (colleagueId: string) => void;
+  /** Original agent leaves the call, handing it fully to this colleague —
+   *  same end effect as `onHangUp` (this interaction leaves the rail the
+   *  same way a hang-up does), just reached from a specific colleague's row
+   *  in the Participants menu instead of the Hang Up button. */
+  onTransferToColleague: (colleagueId: string) => void;
+  /** Self's own camera within the video tiles, independent of `isVideoOn`
+   *  once `colleagues.length > 0` — see `CallMediaArea`'s own doc comment
+   *  for why a plain two-party call doesn't need this at all. */
+  isSelfCameraOff: boolean;
+  onToggleSelfCamera: () => void;
+  /** Only passed while this bar is floating for a reason the agent could
+   *  actually undo right now — they're still looking at this call's own
+   *  interaction, but it's floating anyway because they hit Undock, because
+   *  they just switched focus here from a different live/held call (docking
+   *  is user-selected, not automatic — see `AgentNextGenPage`'s own
+   *  `voiceCallManuallyUndocked`), or because the squeeze check kicked in.
+   *  Omitted (not just falsy) hides the Dock button entirely otherwise, e.g.
+   *  while floating because the agent is genuinely looking at something
+   *  else, where there's nothing sensible to "dock back" to on screen right
+   *  now. */
   onDock?: () => void;
   onHangUp: () => void;
   /** Every other switchable voice call (never includes the one this bar is
@@ -402,10 +624,16 @@ export function LiveVoiceCallBar({
   onToggleRecording,
   isVideoOn,
   onToggleVideo,
-  isScreenSharing,
-  onToggleScreenShare,
   videoPanelSize,
   onVideoPanelSizeChange,
+  colleagues,
+  consult,
+  onCancelConsult,
+  onMergeConsult,
+  onToggleColleagueHold,
+  onTransferToColleague,
+  isSelfCameraOff,
+  onToggleSelfCamera,
   onDock,
   onHangUp,
   otherVoiceCalls,
@@ -417,6 +645,7 @@ export function LiveVoiceCallBar({
   const [elapsedSeconds, setElapsedSeconds] = useState(() => Math.floor((Date.now() - startedAt) / 1000));
   const [isDragging, setIsDragging] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [participantsOpen, setParticipantsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragOrigin = useRef<{ pointerX: number; pointerY: number; top: number; left: number } | null>(null);
 
@@ -490,6 +719,17 @@ export function LiveVoiceCallBar({
   return (
     <div
       ref={containerRef}
+      // Forced reverse/dark chrome — per an explicit follow-up, this bar
+      // should read as visually distinct from the rest of the (normally
+      // light) app UI at a glance, not just another light card floating on
+      // top of it. `data-theme="dark"` re-scopes every lyra token used below
+      // (surface, text, border, hover/pressed state layers, and the
+      // SELECTED_RED/SELECTED_SLATE fills) to their dark-theme values for
+      // free, with no per-class overrides — see lyra-tokens.css's own
+      // `[data-theme="dark"]` block. Popovers/menus opened from here (the
+      // call switcher, Participants menu) are portaled and so still follow
+      // the app's real theme, same as any dropdown spawned from a toolbar.
+      data-theme="dark"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={stopDragging}
@@ -530,13 +770,27 @@ export function LiveVoiceCallBar({
         isDragging ? "cursor-grabbing" : "cursor-grab"
       )}
       role="region"
-      aria-label={`Live call with ${displayName}, ${formatElapsed(elapsedSeconds)} elapsed${isVideoOn ? ", video on" : ""}${isScreenSharing ? ", screen sharing" : ""}`}
+      aria-label={`Live call with ${displayName}, ${formatElapsed(elapsedSeconds)} elapsed${isVideoOn ? ", video on" : ""}`}
     >
-      {(isVideoOn || isScreenSharing) && (
+      {consult && (
+        <ConsultBanner consultName={consult.name} onCancel={onCancelConsult} onMerge={onMergeConsult} />
+      )}
+      {colleagues.length > 0 && !consult && (
+        <div className="mb-2.5 flex items-center gap-1.5 overflow-x-auto">
+          <ParticipantChip label="You" isSelf isOnHold={false} />
+          <ParticipantChip label={displayName} isInternalAgent={isInternalAgentCall} isOnHold={isOnHold} />
+          {colleagues.map((colleague) => (
+            <ParticipantChip key={colleague.id} label={colleague.name} isInternalAgent isOnHold={colleague.isOnHold} />
+          ))}
+        </div>
+      )}
+      {isVideoOn && (
         <CallMediaArea
           customerName={customerName}
           isInternalAgentCall={isInternalAgentCall}
-          isScreenSharing={isScreenSharing}
+          colleagues={colleagues}
+          isSelfCameraOff={isSelfCameraOff}
+          onToggleSelfCamera={onToggleSelfCamera}
           size={videoPanelSize}
           onSizeChange={onVideoPanelSizeChange}
           resizable
@@ -620,6 +874,44 @@ export function LiveVoiceCallBar({
           {nameAndTimer}
         </>
       )}
+      {colleagues.length > 0 && (
+        // Deliberately its own Popover/Menu, not merged into the switcher
+        // above — per an explicit follow-up, "who's on this call" and
+        // "which other call could I switch to" read as two different
+        // questions once conferencing exists, so they get two separate
+        // menus rather than one combined list.
+        <Popover
+          open={participantsOpen}
+          onOpenChange={setParticipantsOpen}
+          placement="top"
+          align="start"
+          content={
+            <Menu
+              aria-label="Call participants"
+              className="min-w-[220px]"
+              items={buildParticipantMenuItems({
+                primaryName: displayName,
+                primaryIsInternalAgent: isInternalAgentCall,
+                primaryIsOnHold: isOnHold,
+                primaryHeldSeconds: heldSeconds,
+                onTogglePrimaryHold: () => { onToggleHold(); setParticipantsOpen(false); },
+                colleagues,
+                onToggleColleagueHold: (id) => { onToggleColleagueHold(id); setParticipantsOpen(false); },
+                onTransferToColleague: (id) => { onTransferToColleague(id); setParticipantsOpen(false); },
+              })}
+            />
+          }
+        >
+          <ActionIconButton
+            size="xl"
+            title={`Participants (${colleagues.length + 2})`}
+            aria-expanded={participantsOpen}
+            className={cn(participantsOpen && "bg-lyra-state-hover")}
+          >
+            <Users className="h-6 w-6" strokeWidth={2} />
+          </ActionIconButton>
+        </Popover>
+      )}
       <div className="mx-0.5 h-7 w-px bg-lyra-border-subtle" />
       <ActionIconButton
         size="xl"
@@ -668,12 +960,12 @@ export function LiveVoiceCallBar({
       <ActionIconButton size="xl" title="Keypad">
         <Grip className="h-6 w-6" strokeWidth={2} />
       </ActionIconButton>
-      {/* Video/Share/Dock form their own group, separated from the call
-       *  controls above by this divider — per an explicit follow-up, these
-       *  three read as "how this call is being presented" (audio-only vs.
-       *  video/share, floating vs. docked) rather than "in-call actions"
-       *  like Hold/Mute/Mask/Record, so they're visually set apart instead
-       *  of interleaved among them. */}
+      {/* Video/Dock form their own group, separated from the call controls
+       *  above by this divider — per an explicit follow-up, these read as
+       *  "how this call is being presented" (audio-only vs. video, floating
+       *  vs. docked) rather than "in-call actions" like Hold/Mute/Mask/
+       *  Record, so they're visually set apart instead of interleaved among
+       *  them. */}
       <div className="mx-0.5 h-7 w-px bg-lyra-border-subtle" />
       <ActionIconButton
         size="xl"
@@ -686,19 +978,6 @@ export function LiveVoiceCallBar({
           <Video className="h-6 w-6 text-lyra-fg-on-primary" strokeWidth={2} />
         ) : (
           <VideoOff className="h-6 w-6" strokeWidth={2} />
-        )}
-      </ActionIconButton>
-      <ActionIconButton
-        size="xl"
-        title={isScreenSharing ? "Stop sharing" : "Share screen"}
-        aria-pressed={isScreenSharing}
-        onClick={onToggleScreenShare}
-        className={cn(isScreenSharing && SELECTED_SLATE)}
-      >
-        {isScreenSharing ? (
-          <ScreenShare className="h-6 w-6 text-lyra-fg-on-primary" strokeWidth={2} />
-        ) : (
-          <ScreenShareOff className="h-6 w-6" strokeWidth={2} />
         )}
       </ActionIconButton>
       {onDock && (
@@ -795,8 +1074,6 @@ export interface DockedVoiceControlBarProps {
    *  prop's own doc comment. */
   isVideoOn: boolean;
   onToggleVideo: () => void;
-  isScreenSharing: boolean;
-  onToggleScreenShare: () => void;
   /** Explicit width/height once the agent drags the docked media area's
    *  own resize handle — a separate piece of state from the floating bar's
    *  `videoPanelSize` since the two remount independently, but the same
@@ -804,13 +1081,25 @@ export interface DockedVoiceControlBarProps {
    *  panel-width size. */
   videoPanelSize?: { width: number; height: number } | null;
   onVideoPanelSizeChange?: (size: { width: number; height: number }) => void;
+  /** Same conference state/actions as `LiveVoiceCallBarProps` — see those
+   *  doc comments, identical meaning in both presentations. */
+  colleagues: CallColleague[];
+  consult?: VoiceCallConsult;
+  onCancelConsult?: () => void;
+  onMergeConsult?: () => void;
+  onToggleColleagueHold: (colleagueId: string) => void;
+  onTransferToColleague: (colleagueId: string) => void;
+  isSelfCameraOff: boolean;
+  onToggleSelfCamera: () => void;
   /** Pops this call's controls out to the floating `LiveVoiceCallBar`
-   *  without leaving this interaction — omitted (not just falsy) hides the
-   *  Undock button entirely, since the parent only passes this while
-   *  there's video or a share on (an audio-only call has nothing extra to
-   *  gain from floating it manually; it already floats automatically the
-   *  moment the agent looks elsewhere). See `AgentNextGenPage`'s own
-   *  `voiceCallManuallyUndocked`. */
+   *  without leaving this interaction — always available now that docking
+   *  is a deliberate, user-selected state rather than something that just
+   *  happens whenever the agent glances away (see `AgentNextGenPage`'s own
+   *  `voiceCallManuallyUndocked` and `handleSelectAssignment`'s hold-swap
+   *  branch for the other half of that: switching straight to a different
+   *  live/held voice call no longer auto-docks it either). Kept optional
+   *  for type-compat with existing callers, but every current call site
+   *  always passes it. */
   onUndock?: () => void;
   /** Reports this bar's own current rendered width (in px) every time it
    *  changes — `AgentNextGenPage` caches the latest value (see its own
@@ -860,16 +1149,23 @@ export function DockedVoiceControlBar({
   onToggleRecording,
   isVideoOn,
   onToggleVideo,
-  isScreenSharing,
-  onToggleScreenShare,
   videoPanelSize,
   onVideoPanelSizeChange,
+  colleagues,
+  consult,
+  onCancelConsult,
+  onMergeConsult,
+  onToggleColleagueHold,
+  onTransferToColleague,
+  isSelfCameraOff,
+  onToggleSelfCamera,
   onUndock,
   onNeededWidthChange,
   onHangUp,
 }: DockedVoiceControlBarProps) {
   const accent = CHANNEL_ACCENT.voice;
   const displayName = isInternalAgentCall ? customerName ?? "Colleague" : customerName || "Customer";
+  const [participantsOpen, setParticipantsOpen] = useState(false);
   // Same continuous 1s tick `LiveVoiceCallBar` runs off its own `startedAt`
   // — kept local to whichever presentation is actually mounted rather than
   // lifted, since `startedAt`/`heldSince` (the only real state) already
@@ -904,19 +1200,41 @@ export function DockedVoiceControlBar({
        *  not two different designs. The one difference: no `shadow-md`
        *  (in-flow at the bottom of the panel, not floating on top of other
        *  content, so a drop shadow would look out of place until it
-       *  actually pops out). */}
+       *  actually pops out).
+       *  Forced reverse/dark chrome, same as the floating `LiveVoiceCallBar`
+       *  — see that component's own `data-theme` doc comment for why. Scoped
+       *  to just this inner rounded card (not the full-width strip around
+       *  it), so the dark treatment reads as a contained, elevated pill
+       *  rather than a dark band spanning the whole panel width; the
+       *  Participants menu below is portaled and still follows the app's
+       *  real theme instead. */}
       <div
         ref={pillRef}
+        data-theme="dark"
         className="flex flex-col rounded-lyra-lg border border-lyra-border-subtle bg-lyra-bg-surface-base px-6 py-3"
         // Same "resize sets width on the outer bar" as the floating bar —
         // see `CallMediaArea`'s own top doc comment for why.
         style={videoPanelSize ? { width: videoPanelSize.width } : undefined}
       >
-        {(isVideoOn || isScreenSharing) && (
+        {consult && (
+          <ConsultBanner consultName={consult.name} onCancel={onCancelConsult} onMerge={onMergeConsult} />
+        )}
+        {colleagues.length > 0 && !consult && (
+          <div className="mb-2.5 flex items-center gap-1.5 overflow-x-auto">
+            <ParticipantChip label="You" isSelf isOnHold={false} />
+            <ParticipantChip label={displayName} isInternalAgent={isInternalAgentCall} isOnHold={isOnHold} />
+            {colleagues.map((colleague) => (
+              <ParticipantChip key={colleague.id} label={colleague.name} isInternalAgent isOnHold={colleague.isOnHold} />
+            ))}
+          </div>
+        )}
+        {isVideoOn && (
           <CallMediaArea
             customerName={customerName}
             isInternalAgentCall={isInternalAgentCall}
-            isScreenSharing={isScreenSharing}
+            colleagues={colleagues}
+            isSelfCameraOff={isSelfCameraOff}
+            onToggleSelfCamera={onToggleSelfCamera}
             size={videoPanelSize}
             onSizeChange={onVideoPanelSizeChange}
             resizable={!!onVideoPanelSizeChange}
@@ -939,6 +1257,52 @@ export function DockedVoiceControlBar({
             )}
           </span>
         </span>
+        {colleagues.length > 0 && (
+          // Same "separate from the switcher" reasoning as the floating
+          // bar's identical button — see that one's own comment. Wraps a
+          // bare `ActionIconButton` (not `DockedControlButton`) as the
+          // Popover trigger, matching `ConsultTransferButton`'s own
+          // Popover+ActionIconButton pairing: `DockedControlButton` is a
+          // plain, non-forwardRef component, and Radix's `Trigger asChild`
+          // needs its child to actually forward a ref/extra props down to a
+          // real DOM node — the caption span is added manually alongside
+          // instead, to keep this reading as one of the row's icon+caption
+          // buttons like every other one here.
+          <div className="flex flex-col items-center gap-0.5">
+            <Popover
+              open={participantsOpen}
+              onOpenChange={setParticipantsOpen}
+              placement="top"
+              align="start"
+              content={
+                <Menu
+                  aria-label="Call participants"
+                  className="min-w-[220px]"
+                  items={buildParticipantMenuItems({
+                    primaryName: displayName,
+                    primaryIsInternalAgent: isInternalAgentCall,
+                    primaryIsOnHold: isOnHold,
+                    primaryHeldSeconds: heldSeconds,
+                    onTogglePrimaryHold: () => { onToggleHold(); setParticipantsOpen(false); },
+                    colleagues,
+                    onToggleColleagueHold: (id) => { onToggleColleagueHold(id); setParticipantsOpen(false); },
+                    onTransferToColleague: (id) => { onTransferToColleague(id); setParticipantsOpen(false); },
+                  })}
+                />
+              }
+            >
+              <ActionIconButton
+                size="xl"
+                title="Participants"
+                aria-expanded={participantsOpen}
+                className={cn(participantsOpen && SELECTED_SLATE)}
+              >
+                <Users className={cn("h-6 w-6", participantsOpen && "text-lyra-fg-on-primary")} strokeWidth={2} />
+              </ActionIconButton>
+            </Popover>
+            <span className="lyra-body-xs text-lyra-fg-secondary">Participants</span>
+          </div>
+        )}
         <div className="mx-0.5 h-7 w-px bg-lyra-border-subtle" />
         <DockedControlButton title={isOnHold ? "Resume" : "Hold"} selected={isOnHold} tone="red" onClick={onToggleHold}>
           <Pause className={cn("h-6 w-6", isOnHold && "text-lyra-fg-on-primary")} strokeWidth={2} />
@@ -966,7 +1330,7 @@ export function DockedVoiceControlBar({
         <DockedControlButton title="Keypad">
           <Grip className="h-6 w-6" strokeWidth={2} />
         </DockedControlButton>
-        {/* Video/Share/Undock form their own group, separated from the call
+        {/* Video/Undock form their own group, separated from the call
          *  controls above — see the floating bar's identical divider for
          *  why (same "how this call is presented" vs. "in-call action"
          *  distinction). */}
@@ -976,18 +1340,6 @@ export function DockedVoiceControlBar({
             <Video className="h-6 w-6 text-lyra-fg-on-primary" strokeWidth={2} />
           ) : (
             <VideoOff className="h-6 w-6" strokeWidth={2} />
-          )}
-        </DockedControlButton>
-        <DockedControlButton
-          title={isScreenSharing ? "Stop sharing" : "Share screen"}
-          selected={isScreenSharing}
-          tone="slate"
-          onClick={onToggleScreenShare}
-        >
-          {isScreenSharing ? (
-            <ScreenShare className="h-6 w-6 text-lyra-fg-on-primary" strokeWidth={2} />
-          ) : (
-            <ScreenShareOff className="h-6 w-6" strokeWidth={2} />
           )}
         </DockedControlButton>
         {onUndock && (

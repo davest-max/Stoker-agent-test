@@ -44,7 +44,7 @@ import {
 import { SlideInPage, SlideInPlaceholder } from "@/components/SlideInPage";
 import { NewOutboundPopover, AddOutboundButton, type NewOutboundConfig } from "@/components/NewOutboundPopover";
 import { InternalChatTrigger, InternalChatDockedPanel, InternalChatFloatPanel, InternalChatMaximizedPanel, type ChatView } from "@/components/InternalChatPopover";
-import { LiveVoiceCallBar, DockedVoiceControlBar } from "@/components/LiveVoiceCallBar";
+import { LiveVoiceCallBar, DockedVoiceControlBar, type CallColleague, type VoiceCallConsult } from "@/components/LiveVoiceCallBar";
 import { INITIAL_FAVORITE_EMPLOYEE_IDS, INITIAL_CHAT_THREADS, type InternalChatMessage } from "@/data/internalChat";
 import { DirectoryPage } from "@/components/DirectoryPage";
 import { SearchContactsPage } from "@/components/SearchContactsPage";
@@ -55,6 +55,7 @@ import {
   DIRECTORY_SKILLS,
   DIRECTORY_TEAMS,
   OUTBOUND_GROUPS,
+  OUTBOUND_SKILL_MEMBER_CONTACTS,
   type DirectoryCustomer,
   type DirectoryAgent,
   type CustomerNote,
@@ -184,6 +185,7 @@ function RailNavButton({
 
 const OUTBOUND_CONFIG: NewOutboundConfig = {
   groups: OUTBOUND_GROUPS,
+  skillMembers: OUTBOUND_SKILL_MEMBER_CONTACTS,
   channelOptions: [
     { id: "voice",    label: "Call",     selectLabel: "Voice", icon: <Phone         className="h-5 w-5" strokeWidth={1.5} /> },
     { id: "sms",      label: "SMS",                            icon: <MessageSquare className="h-5 w-5" strokeWidth={1.5} /> },
@@ -769,14 +771,7 @@ export function AgentNextGenPage({
   // `LiveVoiceCallBar`/`DockedVoiceControlBar` just render their own
   // `VideoTiles` above the existing control row while this is true.
   const [isVideoCallOn, setIsVideoCallOn] = useState(false);
-  // Screen share — independent of video (a real product lets an agent share
-  // a screen with or without their own camera on, same as Slack/Meet), so
-  // this is its own toggle rather than a mode of `isVideoCallOn`. Both
-  // `LiveVoiceCallBar`/`DockedVoiceControlBar` treat "is there visual media
-  // to show" as `isVideoCallOn || isScreenSharing` — see `CallMediaArea` in
-  // LiveVoiceCallBar.tsx.
-  const [isScreenSharing, setIsScreenSharing] = useState(false);
-  // The floating video/screen-share area's explicit size once the agent
+  // The floating video area's explicit size once the agent
   // drags its resize handle — `null` until then, using the natural intrinsic
   // size. Lifted here (not local to `LiveVoiceCallBar`) for the same reason
   // `voiceBarPosition` is: that component remounts via `key={assignmentId}`
@@ -784,26 +779,26 @@ export function AgentNextGenPage({
   // reset in `goLiveWithVoiceCall` either, matching `voiceBarPosition`'s own
   // "a dragged/resized preference sticks around" behavior.
   const [videoPanelSize, setVideoPanelSize] = useState<{ width: number; height: number } | null>(null);
-  // Manual "pop this out to float while I'm still looking at this call's
-  // own interaction" — distinct from the fully automatic float that already
-  // happens the instant the agent looks at something else (`isVoiceCallDocked`
-  // below). Only reachable via the docked bar's own Undock button, which
-  // only renders while there's video or a share on (see that button's own
-  // doc comment in LiveVoiceCallBar.tsx) — an audio-only call already floats
-  // automatically the moment it's not the active card, so manually floating
-  // it while still looking at it wouldn't do anything useful. Reset by both
-  // effects below: leaving this call's own card entirely should hand control
-  // back to the ordinary automatic float/dock behavior next time the agent
-  // returns, not silently resume floating for a reason that's no longer true.
+  // Whether the agent has deliberately popped this call's controls out to
+  // float, either by hitting the docked bar's own Undock button (always
+  // available now, audio-only calls included — see that prop's own doc
+  // comment in LiveVoiceCallBar.tsx) or by switching focus straight to a
+  // DIFFERENT live/held voice call (see `handleSelectAssignment`'s hold-swap
+  // branch, which now starts the newly-focused call floating instead of
+  // silently pulling it inline). Per an explicit follow-up, docking is a
+  // user-selected state, not something that happens automatically just
+  // because the agent's eyes land on the right card — so unlike the earlier
+  // design, this is NOT reset just by looking away and back; it only clears
+  // via the docked bar's own explicit Dock button, or when a genuinely new
+  // call goes live (`goLiveWithVoiceCall`'s own `dockOnLive` default).
   const [voiceCallManuallyUndocked, setVoiceCallManuallyUndocked] = useState(false);
   // Automatic counterpart to the manual toggle above — set when the docked
   // bar itself no longer fits the room the center column actually has (the
   // Customer Profile side panel opening/widening is the common cause),
-  // rather than the agent asking for it. One-way, same as
-  // `customerProfileMaximized`'s own squeeze check right below (see its
-  // doc comment for why: flipping back the instant space frees up would
-  // flicker right at the threshold) — the docked bar's own Dock button is
-  // still there to force it back manually once there's room again.
+  // rather than the agent asking for it. Same one-way, never-auto-reverses
+  // policy as the manual toggle above (see its own doc comment) — the docked
+  // bar's own Dock button is still there to force it back manually once
+  // there's room again.
   const [voiceCallAutoUndocked, setVoiceCallAutoUndocked] = useState(false);
   // The docked bar's own last-reported rendered width (see
   // `DockedVoiceControlBar`'s `onNeededWidthChange`) — cached here (not just
@@ -817,6 +812,23 @@ export function AgentNextGenPage({
   // height). Not reset in `goLiveWithVoiceCall`, matching every other
   // dragged/resized preference in this file.
   const [dockedVideoPanelSize, setDockedVideoPanelSize] = useState<{ width: number; height: number } | null>(null);
+  // Colleagues merged into a call via consult (see `startVoiceCallConsult`/
+  // `mergeVoiceCallConsult` below) — keyed by assignment id, same as
+  // `heldVoiceCallAssignmentIds`/`voiceCallHeldSince`, so an added colleague
+  // survives a hold-swap away from this call and back rather than resetting.
+  // Only cleaned up in `handleHangUpLiveCall`, once the call itself is truly
+  // over — NOT in `goLiveWithVoiceCall`, since resuming a backgrounded call
+  // that already had a colleague on it shouldn't silently drop them.
+  const [voiceCallColleagues, setVoiceCallColleagues] = useState<Record<string, CallColleague[]>>({});
+  // A private, pre-merge consult in progress for a given assignment — see
+  // `VoiceCallConsult`'s own doc comment in LiveVoiceCallBar.tsx. Same
+  // per-assignment/cleaned-up-on-hangup lifecycle as `voiceCallColleagues`.
+  const [voiceCallConsult, setVoiceCallConsult] = useState<Record<string, VoiceCallConsult | undefined>>({});
+  // Self's own camera within the video tiles once merged into a conference —
+  // see `CallMediaArea`'s own doc comment for why this is separate from
+  // `isVideoCallOn`. Call-scoped like `isVoiceCallMuted`/`isVideoCallOn`
+  // themselves, so it resets with them in `goLiveWithVoiceCall`.
+  const [isSelfCameraOff, setIsSelfCameraOff] = useState(false);
   // The bar's own dragged position — lifted here (not local to
   // LiveVoiceCallBar) since that component remounts via `key={assignmentId}`
   // on every hold-swap; keeping this here means dragging the bar once keeps
@@ -1336,36 +1348,25 @@ export function AgentNextGenPage({
   const activeChannel = activeAssignment?.channels.find((c) => channelKey(c) === activeCurrentChannelKey);
   const activeChannelType = activeChannel?.type;
   const isActiveAssignmentVoiceCall = activeChannelType === "voice";
-  // Whether the live call's controls should render docked in-flow at the
-  // bottom of the center panel (`DockedVoiceControlBar`, via
-  // `CustomerInteractionPanel`'s `voiceControls` slot) rather than floating
-  // (`LiveVoiceCallBar`) — fully derived, not its own tracked state, per an
-  // explicit follow-up ("re-dock when a voice call is selected"): the agent
-  // never manually docks/undocks, it's simply true whenever the card
-  // currently open IS the live call's own card, and false the instant the
-  // agent looks at anything else (including a different voice call, which
-  // auto-holds this one — see the hold-swap logic below).
+  // Whether the card currently on screen IS the live call's own card — true
+  // whenever the agent is looking at that interaction, false the instant
+  // they look at anything else (including a different voice call). This is
+  // necessary but no longer sufficient for the docked bar to actually
+  // render: docking itself is a user-selected state (see
+  // `voiceCallManuallyUndocked`'s own doc comment) — `isVoiceCallDocked`
+  // just answers "is there even a card to dock into right now," which Dock/
+  // Undock's own availability, and the squeeze check below, both still need
+  // on their own.
   const isVoiceCallDocked = liveVoiceCall !== null && activeAssignmentId === liveVoiceCall.assignmentId;
-  // Whether the docked bar should actually render right now — same as
-  // `isVoiceCallDocked` except also false while the agent has manually
-  // popped this same call out via Undock (see `voiceCallManuallyUndocked`'s
-  // own doc comment above). Everything that used to gate on
-  // `isVoiceCallDocked` to decide docked-vs-floating now gates on this
-  // instead; `isVoiceCallDocked` itself is still read on its own where code
-  // genuinely means "is this call's own card the one on screen" regardless
-  // of the manual override (e.g. deciding whether Dock/Undock even apply).
+  // Whether the docked bar should actually render right now — `isVoiceCallDocked`
+  // (there's a card to dock into) AND the agent hasn't (deliberately or via
+  // the squeeze check) chosen to float it instead. Everything that used to
+  // gate on `isVoiceCallDocked` alone to decide docked-vs-floating now gates
+  // on this instead; `isVoiceCallDocked` itself is still read on its own
+  // where code genuinely means "is this call's own card the one on screen"
+  // regardless of the float override (e.g. deciding whether Dock even
+  // applies below).
   const isVoiceCallActuallyDocked = isVoiceCallDocked && !voiceCallManuallyUndocked && !voiceCallAutoUndocked;
-  // Leaving this call's own card entirely (not just toggling Undock, or the
-  // auto-undock squeeze check kicking in) drops both overrides — see
-  // `voiceCallManuallyUndocked`'s own doc comment for why: coming back
-  // later should start from the ordinary automatic dock/float behavior, not
-  // silently resume floating for a reason no longer in effect.
-  useEffect(() => {
-    if (!isVoiceCallDocked) {
-      setVoiceCallManuallyUndocked(false);
-      setVoiceCallAutoUndocked(false);
-    }
-  }, [isVoiceCallDocked]);
   // Squeeze check for the docked bar itself — same idea, and same one-way
   // "only ever forces the takeover/undock, never reverses it automatically"
   // policy, as `checkSqueezeRef` below for the Customer Profile panel (see
@@ -1543,7 +1544,15 @@ export function AgentNextGenPage({
   // caller stamp its own `Date.now()`, which is what let a resumed call's
   // timer silently reset. Every `setLiveVoiceCall(...)` in this file should
   // go through this instead of constructing the object directly.
-  const goLiveWithVoiceCall = (assignmentId: string) => {
+  // `dockOnLive` (default true) — a genuinely new call (accepted/placed via
+  // one of the dedicated outbound/internal-call handlers below) still docks
+  // inline automatically the first time it goes live, per an explicit
+  // follow-up. `handleSelectAssignment`'s hold-swap branch passes `false`
+  // instead: switching focus straight from one live/held voice call to a
+  // DIFFERENT one is no longer treated as "go dock this," since docking is
+  // now a deliberate, user-selected state — the agent has to hit the
+  // floating bar's own Dock button once they're looking at that call's card.
+  const goLiveWithVoiceCall = (assignmentId: string, dockOnLive = true) => {
     setVoiceCallStartedAt((prev) => (prev[assignmentId] !== undefined ? prev : { ...prev, [assignmentId]: Date.now() }));
     setLiveVoiceCall({ assignmentId });
     // Fresh call, fresh controls — a new/resumed live call doesn't inherit
@@ -1553,8 +1562,8 @@ export function AgentNextGenPage({
     setIsVoiceCallMasked(false);
     setIsVoiceCallRecording(false);
     setIsVideoCallOn(false);
-    setIsScreenSharing(false);
-    setVoiceCallManuallyUndocked(false);
+    setIsSelfCameraOff(false);
+    setVoiceCallManuallyUndocked(!dockOnLive);
     setVoiceCallAutoUndocked(false);
     setDockedBarNeededWidth(null);
   };
@@ -1579,6 +1588,97 @@ export function AgentNextGenPage({
       }
       return { ...prev, [assignmentId]: Date.now() };
     });
+    // "Hold" is the whole-call action once colleagues exist — per an
+    // explicit follow-up, this same button puts every added colleague on
+    // hold (or resumes them) right along with the primary party, in one
+    // click. A no-op for a plain two-party call (`colleagues` is just
+    // empty). A colleague can still be held/resumed individually afterward
+    // via their own row in the Participants menu — see
+    // `toggleVoiceCallColleagueHold` below, which this doesn't touch again
+    // until this button is used a second time.
+    const now = Date.now();
+    setVoiceCallColleagues((prev) => {
+      const colleagues = prev[assignmentId];
+      if (!colleagues || colleagues.length === 0) return prev;
+      return {
+        ...prev,
+        [assignmentId]: colleagues.map((c) =>
+          isCurrentlyHeld ? { ...c, isOnHold: false, heldSince: undefined } : { ...c, isOnHold: true, heldSince: now }
+        ),
+      };
+    });
+  };
+
+  // Resumes just the primary party, WITHOUT touching any already-merged
+  // colleague's own independent hold state — unlike `toggleVoiceCallHold`
+  // above (the main Hold button's own "resume everyone at once" behavior),
+  // consult cancel/merge below only ever need to undo the one hold THEY
+  // caused when the consult started. Using the bulk toggle here instead
+  // would incorrectly resume a colleague from an earlier, unrelated merge
+  // who the agent had deliberately put on hold via their own Participants
+  // menu row.
+  const resumePrimaryOnly = (assignmentId: string) => {
+    setHeldVoiceCallAssignmentIds((held) => {
+      if (!held.has(assignmentId)) return held;
+      const next = new Set(held);
+      next.delete(assignmentId);
+      return next;
+    });
+    setVoiceCallHeldSince((prev) => {
+      if (!(assignmentId in prev)) return prev;
+      const { [assignmentId]: _removed, ...rest } = prev;
+      return rest;
+    });
+  };
+
+  // Starts a private consult with a colleague on this call — the primary
+  // party goes on hold automatically (same as picking up a different line)
+  // until the agent explicitly cancels or merges. Wired from
+  // `ConsultTransferPopover`'s existing "Add to interaction" action — see
+  // that component's own `onAddToCall` prop.
+  const startVoiceCallConsult = (assignmentId: string, colleague: VoiceCallConsult) => {
+    setVoiceCallConsult((prev) => ({ ...prev, [assignmentId]: colleague }));
+    if (!heldVoiceCallAssignmentIds.has(assignmentId)) {
+      setHeldVoiceCallAssignmentIds((held) => new Set(held).add(assignmentId));
+      setVoiceCallHeldSince((prev) => ({ ...prev, [assignmentId]: prev[assignmentId] ?? Date.now() }));
+    }
+  };
+
+  // Backs out of a consult without merging — resumes the primary party the
+  // same way a manual Resume would, since starting the consult held them
+  // the exact same way.
+  const cancelVoiceCallConsult = (assignmentId: string) => {
+    setVoiceCallConsult((prev) => ({ ...prev, [assignmentId]: undefined }));
+    resumePrimaryOnly(assignmentId);
+  };
+
+  // Brings the consulted colleague into the call as a full participant and
+  // resumes the primary party — the conference actually begins here.
+  const mergeVoiceCallConsult = (assignmentId: string) => {
+    const consult = voiceCallConsult[assignmentId];
+    if (!consult) return;
+    setVoiceCallColleagues((prev) => ({
+      ...prev,
+      [assignmentId]: [...(prev[assignmentId] ?? []), { id: consult.id, name: consult.name, isOnHold: false }],
+    }));
+    setVoiceCallConsult((prev) => ({ ...prev, [assignmentId]: undefined }));
+    resumePrimaryOnly(assignmentId);
+  };
+
+  // Row-level hold for one specific added colleague — independent of the
+  // primary party's own hold and of `toggleVoiceCallHold`'s own "hold
+  // everyone at once" behavior above.
+  const toggleVoiceCallColleagueHold = (assignmentId: string, colleagueId: string) => {
+    setVoiceCallColleagues((prev) => ({
+      ...prev,
+      [assignmentId]: (prev[assignmentId] ?? []).map((c) =>
+        c.id !== colleagueId
+          ? c
+          : c.isOnHold
+            ? { ...c, isOnHold: false, heldSince: undefined }
+            : { ...c, isOnHold: true, heldSince: Date.now() }
+      ),
+    }));
   };
 
   // Switching interactions always lands back on the Chat tab — seeing a
@@ -1624,7 +1724,12 @@ export function AgentNextGenPage({
         }));
       }
       if (!liveVoiceCall || liveVoiceCall.assignmentId !== id) {
-        goLiveWithVoiceCall(id);
+        // `dockOnLive: false` — focusing a different existing voice call
+        // tile is a focus switch, not "starting a new call," so per an
+        // explicit follow-up it must not silently pull the bar inline; the
+        // agent has to hit Dock themselves once they're looking at it. See
+        // `goLiveWithVoiceCall`'s own doc comment.
+        goLiveWithVoiceCall(id, false);
       }
       // Deliberately NOT clearing `id` from `heldVoiceCallAssignmentIds`
       // here — per an explicit follow-up, returning to a call that was put
@@ -1749,7 +1854,31 @@ export function AgentNextGenPage({
       const { [liveVoiceCall.assignmentId]: _removed, ...rest } = prev;
       return rest;
     });
+    // Same cleanup as the hold state above — a conference/consult is a fact
+    // about a specific live call, not something a now-ended call needs to
+    // remember.
+    setVoiceCallColleagues((prev) => {
+      if (!(liveVoiceCall.assignmentId in prev)) return prev;
+      const { [liveVoiceCall.assignmentId]: _removed, ...rest } = prev;
+      return rest;
+    });
+    setVoiceCallConsult((prev) => {
+      if (!(liveVoiceCall.assignmentId in prev)) return prev;
+      const { [liveVoiceCall.assignmentId]: _removed, ...rest } = prev;
+      return rest;
+    });
     setLiveVoiceCall(null);
+  };
+
+  // Original agent leaves the call, handing it fully to the added colleague
+  // — per an explicit follow-up, this has the exact same end effect as
+  // Hang Up (the interaction leaves this agent's rail the same way), just
+  // reached from a specific colleague's row in the Participants menu instead
+  // of the Hang Up button. `colleagueId` isn't needed by the shared handler
+  // itself (there's no other agent's session in this app to hand the call
+  // to) but is threaded through so a future real backend has it to act on.
+  const handleTransferVoiceCallToColleague = (_colleagueId: string) => {
+    handleHangUpLiveCall();
   };
 
   // Shared by `InteractionNavItem`'s own `onCurrentChannelChange` (clicking
@@ -2672,6 +2801,15 @@ export function AgentNextGenPage({
                       currentChannelType={activeChannelType}
                       customerName={activeAssignment.customerName}
                       issueSummary={activeAssignment.issueSummary}
+                      // Only while THIS interaction's own call is the live
+                      // one — consulting-in someone only means something in
+                      // the context of an actual ongoing call. See
+                      // `startVoiceCallConsult`'s own doc comment.
+                      onAddColleagueToCall={
+                        liveVoiceCall?.assignmentId === activeAssignmentId
+                          ? (colleague) => startVoiceCallConsult(activeAssignmentId!, colleague)
+                          : undefined
+                      }
                       outcomeOpen={outcomeButtonOpen}
                       onOutcomeOpenChange={setOutcomeButtonOpen}
                       // Same "dismiss just this channel vs. the whole card"
@@ -2720,13 +2858,17 @@ export function AgentNextGenPage({
                         onToggleRecording={() => setIsVoiceCallRecording((v) => !v)}
                         isVideoOn={isVideoCallOn}
                         onToggleVideo={() => setIsVideoCallOn((v) => !v)}
-                        isScreenSharing={isScreenSharing}
-                        onToggleScreenShare={() => setIsScreenSharing((v) => !v)}
                         videoPanelSize={dockedVideoPanelSize}
                         onVideoPanelSizeChange={setDockedVideoPanelSize}
-                        onUndock={
-                          isVideoCallOn || isScreenSharing ? () => setVoiceCallManuallyUndocked(true) : undefined
-                        }
+                        colleagues={voiceCallColleagues[liveVoiceCall!.assignmentId] ?? []}
+                        consult={voiceCallConsult[liveVoiceCall!.assignmentId]}
+                        onCancelConsult={() => cancelVoiceCallConsult(liveVoiceCall!.assignmentId)}
+                        onMergeConsult={() => mergeVoiceCallConsult(liveVoiceCall!.assignmentId)}
+                        onToggleColleagueHold={(colleagueId) => toggleVoiceCallColleagueHold(liveVoiceCall!.assignmentId, colleagueId)}
+                        onTransferToColleague={handleTransferVoiceCallToColleague}
+                        isSelfCameraOff={isSelfCameraOff}
+                        onToggleSelfCamera={() => setIsSelfCameraOff((v) => !v)}
+                        onUndock={() => setVoiceCallManuallyUndocked(true)}
                         onNeededWidthChange={setDockedBarNeededWidth}
                         onHangUp={handleHangUpLiveCall}
                       />
@@ -3096,10 +3238,16 @@ export function AgentNextGenPage({
             onToggleRecording={() => setIsVoiceCallRecording((v) => !v)}
             isVideoOn={isVideoCallOn}
             onToggleVideo={() => setIsVideoCallOn((v) => !v)}
-            isScreenSharing={isScreenSharing}
-            onToggleScreenShare={() => setIsScreenSharing((v) => !v)}
             videoPanelSize={videoPanelSize}
             onVideoPanelSizeChange={setVideoPanelSize}
+            colleagues={voiceCallColleagues[liveVoiceCall.assignmentId] ?? []}
+            consult={voiceCallConsult[liveVoiceCall.assignmentId]}
+            onCancelConsult={() => cancelVoiceCallConsult(liveVoiceCall.assignmentId)}
+            onMergeConsult={() => mergeVoiceCallConsult(liveVoiceCall.assignmentId)}
+            onToggleColleagueHold={(colleagueId) => toggleVoiceCallColleagueHold(liveVoiceCall.assignmentId, colleagueId)}
+            onTransferToColleague={handleTransferVoiceCallToColleague}
+            isSelfCameraOff={isSelfCameraOff}
+            onToggleSelfCamera={() => setIsSelfCameraOff((v) => !v)}
             onDock={
               isVoiceCallDocked && (voiceCallManuallyUndocked || voiceCallAutoUndocked)
                 ? () => {

@@ -857,6 +857,10 @@ export interface InteractionInfoBarProps {
    *  fall back to generic phrasing when omitted. */
   customerName?: string;
   issueSummary?: string;
+  /** Passed straight through to `ConsultTransferButton`'s own `onAddToCall`
+   *  — see that prop's doc comment. Only provided by `AgentNextGenPage`
+   *  while this interaction's own call is the live one. */
+  onAddColleagueToCall?: (colleague: { id: string; name: string }) => void;
   /** Controlled (lifted to `AgentNextGenPage`) rather than left as
    *  `OutcomeButton`'s own internal state — see that component's own
    *  `open`/`onOpenChange` doc comment. */
@@ -883,6 +887,7 @@ export function InteractionInfoBar({
   onDismissCurrentChannel,
   customerName,
   issueSummary,
+  onAddColleagueToCall,
   outcomeOpen,
   onOutcomeOpenChange,
   onApproveOutcome,
@@ -896,7 +901,7 @@ export function InteractionInfoBar({
       <EscalationStatusPill status={escalationStatus} onStatusChange={onEscalationStatusChange} />
       <div className="h-4 w-px bg-lyra-border-subtle" />
       <div className="flex items-center gap-1">
-        <ConsultTransferButton customerName={customerName} issueSummary={issueSummary} />
+        <ConsultTransferButton customerName={customerName} issueSummary={issueSummary} onAddToCall={onAddColleagueToCall} />
         <OutcomeButton
           customerName={customerName ?? "this customer"}
           open={outcomeOpen}

@@ -4,12 +4,15 @@ import {
   Menu,
   Select,
   Input,
+  SearchInput,
   Button,
   ListItem,
   FavoriteButton,
   Label,
   Tooltip,
-  CHANNEL_ACCENT,
+  RadioGroup,
+  RadioGroupItem,
+  StatusBadge,
   PhoneInput,
   PHONE_COUNTRIES,
   isPhoneNumberComplete,
@@ -19,6 +22,7 @@ import {
   type CreateNewChannelOption,
   type PhoneValue,
   type MenuEntry,
+  type AgentStatus,
 } from "@nicecxone/lyra-ui";
 import { Plus, ChevronLeft, ChevronRight, X, User, Headset, Route, UsersRound, Building2, Grid3x3 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -38,15 +42,21 @@ import { contactMatchesQuery } from "@/data/directory";
  * `lyra-ui/create-new.tsx` itself is untouched — see this repo's CLAUDE.md
  * ("never modify a lyra-ui core component from here"). */
 
-/* Hidden for user testing only — re-enable by flipping this back to true.
- * Skill selection stays fully wired underneath (state, onStart signature,
- * recent-skills tracking) so this is a pure visibility toggle, not a removal. */
-const SHOW_SKILL_SELECTION = false;
+/* Re-enabled per an explicit follow-up: an outbound skill is now required
+ * before starting any interaction — this flag was only ever a visibility
+ * toggle (see `canStart` below, which already gates on `skillId` whenever
+ * this is true), so flipping it back on both shows the field again AND
+ * enforces the requirement, with no other logic changes needed. */
+const SHOW_SKILL_SELECTION = true;
 
 /* ── Types ── */
 
 export interface NewOutboundConfig {
   groups: CreateNewOutboundGroup[];
+  /** Skill id → the real agents staffing it — backs the "view agents in
+   *  this skill" screen (see `Screen`'s own `skillAgents` variant above).
+   *  Omitted/missing entries just show an empty roster rather than erroring. */
+  skillMembers?: Record<string, CreateNewOutboundContact[]>;
   channelOptions: CreateNewChannelOption[];
   phoneOptions: { value: string; label: string }[];
   skillOptions: { value: string; label: string }[];
@@ -87,7 +97,13 @@ export interface NewOutboundPopoverProps {
  *  selected rather than landing on "pick a channel first". */
 type Screen =
   | { kind: "browse" }
-  | { kind: "detail"; contact: CreateNewOutboundContact | null; query: string; initialChannel?: ChannelType };
+  | { kind: "detail"; contact: CreateNewOutboundContact | null; query: string; initialChannel?: ChannelType }
+  // A skill row's own chevron (see `ContactRow`'s `onViewSkillAgents`) opens
+  // this instead of the generic channel-flyout every other contact kind's
+  // chevron shows — a roster of the real agents staffing that skill, each
+  // callable/chattable exactly like an Agents-group row (see `outbound.
+  // skillMembers` and this screen's own render branch below).
+  | { kind: "skillAgents"; skillId: string; skillName: string };
 
 /** Digits typed before the dial pad bothers checking for a directory match
  *  — below this, almost every number would substring-match something and
@@ -169,7 +185,25 @@ const CONTACT_KIND_ICON: Record<NonNullable<CreateNewOutboundContact["kind"]>, t
   external: Building2,
 };
 
-function ContactAvatar({ contact }: { contact: CreateNewOutboundContact }) {
+/** Availability dot's semantic color — reuses lyra-ui's own `AgentStatus`
+ *  (the same type/labels its `AgentProfile` status menu already uses)
+ *  mapped onto `StatusBadge`'s own `dot` mode, rather than hand-rolling
+ *  status colors here. Per an explicit follow-up: agents AND skills both
+ *  get this now (see `DirectoryAgent.availability`/`DirectorySkill.
+ *  availability` in directory.ts), so it lives on the shared `ContactAvatar`
+ *  both kinds render through. */
+const AVAILABILITY_BADGE_VARIANT: Record<AgentStatus, "success" | "critical" | "neutral"> = {
+  available: "success",
+  unavailable: "critical",
+  offline: "neutral",
+};
+const AVAILABILITY_LABEL: Record<AgentStatus, string> = {
+  available: "Available",
+  unavailable: "Unavailable",
+  offline: "Offline",
+};
+
+function ContactAvatar({ contact }: { contact: CreateNewOutboundContact & { availability?: AgentStatus } }) {
   const KindIcon = contact.kind ? CONTACT_KIND_ICON[contact.kind] : null;
   return (
     <div className="flex shrink-0 items-center gap-1">
@@ -180,8 +214,23 @@ function ContactAvatar({ contact }: { contact: CreateNewOutboundContact }) {
           strokeWidth={1.5}
         />
       )}
-      <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-full lyra-body-sm-emphasis", contact.avatarClassName)}>
-        {contact.initials}
+      <div className="relative shrink-0">
+        <div className={cn("flex h-9 w-9 items-center justify-center rounded-full lyra-body-sm-emphasis", contact.avatarClassName)}>
+          {contact.initials}
+        </div>
+        {/* Same bottom-right corner placement lyra-ui's own `AgentProfile`
+         *  avatar uses for the exact same idea (see that component's own
+         *  `Avatar`/`StatusIcon`) — a thin surface-colored border keeps the
+         *  dot readable against an avatar background of the same color. */}
+        {contact.availability && (
+          <StatusBadge
+            variant={AVAILABILITY_BADGE_VARIANT[contact.availability]}
+            size="sm"
+            dot
+            aria-label={AVAILABILITY_LABEL[contact.availability]}
+            className="absolute bottom-[-1px] right-[-1px] border border-lyra-bg-surface-base"
+          />
+        )}
       </div>
     </div>
   );
@@ -193,6 +242,7 @@ function ContactRow({
   onToggleFavorite,
   onClick,
   onSelectChannel,
+  onViewSkillAgents,
 }: {
   contact: CreateNewOutboundContact;
   favorited: boolean;
@@ -222,7 +272,21 @@ function ContactRow({
   // width.
   const [channelMenuOpen, setChannelMenuOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const visibleChannels = CONTACT_CHANNEL_ORDER.filter((type) => contact.channels.includes(type));
+  // Skills only ever offer a phone call from this hover flyout — same
+  // Popover+Menu shape the Agents rows use (per an explicit follow-up,
+  // "like the Agents dropdown"), just narrowed to a single "Call" entry
+  // rather than every channel the underlying skill contact happens to
+  // support (every skill's own `channels` still lists its native routing
+  // channel too, for the detail screen this "Call" entry lands on — this
+  // filter only affects what shows in THIS quick-action flyout). Clicking
+  // a skill's ROW ITSELF (not this flyout) does something different — see
+  // `renderContactRow`'s own `onClick` for why.
+  const visibleChannels =
+    contact.kind === "skill"
+      ? contact.channels.includes("voice")
+        ? (["voice"] as ChannelType[])
+        : []
+      : CONTACT_CHANNEL_ORDER.filter((type) => contact.channels.includes(type));
 
   const channelMenuItems: MenuEntry[] = visibleChannels.map((type) => {
     const Icon = CONTACT_CHANNEL_ICON[type];
@@ -276,6 +340,27 @@ function ContactRow({
                 <button
                   ref={triggerRef}
                   type="button"
+                  onClick={(e) => {
+                    // Radix's own `Popover.Trigger` (which this button is,
+                    // via `asChild`) attaches its own click handler that
+                    // TOGGLES the controlled `open` state — harmless for a
+                    // click-to-open trigger, but this one is already opened
+                    // by hover (see the row's own `onMouseEnter` above), so
+                    // clicking the chevron while it's already open from
+                    // hovering would immediately toggle it CLOSED again
+                    // before the click could ever land on a menu item
+                    // inside — reading as "nothing happens" when clicking a
+                    // row's chevron. `preventDefault` here stops Radix's own
+                    // handler from firing at all (it checks
+                    // `defaultPrevented` before toggling); forcing `true`
+                    // instead of leaving it alone makes a direct click also
+                    // reliably open the menu even without a hover first
+                    // (e.g. keyboard/touch). `stopPropagation` keeps this
+                    // click from also reaching the row's own `onClick`.
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setChannelMenuOpen(true);
+                  }}
                   aria-label={`Channels for ${contact.name}`}
                   aria-haspopup="menu"
                   aria-expanded={channelMenuOpen}
@@ -292,73 +377,46 @@ function ContactRow({
   );
 }
 
-/* ── Channel icon button — unselected stays in its own soft accent tint
- *  (per CHANNEL_ACCENT) at ~70% opacity. Selected used to only add a ring on
- *  top of that same soft tint — user testing found agents weren't reliably
- *  noticing which channel was picked, so selected now flips to a solid,
- *  "strong" fill in that channel's own accent color with a white icon (same
- *  solid-fill treatment as LiveVoiceCallBar's Hold/Record selected states —
- *  see that file), plus the ring on top as reinforcement, not the whole
- *  signal. Disabled (channel not offered for this contact/value) drops
- *  further and blocks interaction. The `label` prop is also rendered as a
- *  small caption underneath — color alone still isn't enough to tell
- *  channels apart at a glance, per an earlier follow-up request. ── */
-
-// No "strong" background token exists on `CHANNEL_ACCENT` itself (only
-// text/border) — this is the one place that needs solid fills, so it's its
-// own small map rather than adding a rarely-used field to that shared type.
-const CHANNEL_SELECTED_BG: Record<ChannelType, string> = {
-  voice: "bg-lyra-accent-purple-strong",
-  sms: "bg-lyra-accent-lime-strong",
-  whatsapp: "bg-lyra-accent-green-strong",
-  email: "bg-lyra-accent-pink-strong",
-  chat: "bg-lyra-accent-teal-strong",
-};
-
-function ChannelIconButton({
-  channel,
+/* ── Channel radio list — per an explicit follow-up, replaces the previous
+ *  row of colored icon buttons with a plain radio-button list (composed
+ *  from lyra-ui's own `RadioGroup`/`RadioGroupItem` primitives rather than
+ *  hand-rolled selectable buttons — composition over reimplementation).
+ *  Each option still shows its `channelOptions` icon next to the label
+ *  (Voice/SMS/WhatsApp/Email) for quick identification, just neutrally
+ *  colored now rather than each channel's own accent tint — a plain radio
+ *  list reads as one unified control, not a row of separately-styled
+ *  buttons. `RadioGroupItem` only renders the circle when given no `label`
+ *  prop; the icon+text alongside it is a second, sibling `<label>` pointing
+ *  at the same input id (valid HTML — two labels can share one `htmlFor`),
+ *  which is what lets an icon sit inside the label instead of the plain
+ *  string `RadioGroupItem.label` supports. ── */
+function ChannelRadioOption({
+  id,
   icon,
   label,
-  selected,
   disabled,
-  onClick,
 }: {
-  channel: ChannelType;
+  id: string;
   icon: React.ReactNode;
   label: string;
-  selected: boolean;
   disabled: boolean;
-  onClick: () => void;
 }) {
-  const accent = CHANNEL_ACCENT[channel];
+  const inputId = `channel-radio-${id}`;
   return (
-    <div className="flex flex-col items-center gap-1">
-      <button
-        type="button"
-        aria-label={label}
-        aria-pressed={selected}
-        disabled={disabled}
-        onClick={onClick}
-        title={label}
+    <div className="flex items-center gap-2.5">
+      <RadioGroupItem value={id} id={inputId} disabled={disabled} />
+      <label
+        htmlFor={inputId}
         className={cn(
-          "flex h-9 w-9 shrink-0 items-center justify-center rounded-lyra-md border transition-all",
-          selected
-            ? cn(CHANNEL_SELECTED_BG[channel], "border-transparent text-lyra-fg-on-primary opacity-100 ring-2 ring-lyra-border-active ring-offset-2")
-            : cn(accent.bg, accent.border, accent.text, "opacity-70 hover:opacity-100"),
-          disabled && "opacity-30 pointer-events-none"
+          "flex items-center gap-1.5 lyra-body-md",
+          disabled ? "cursor-not-allowed text-lyra-fg-disabled" : "cursor-pointer text-lyra-fg-default"
         )}
       >
-        {icon}
-      </button>
-      <span
-        aria-hidden="true"
-        className={cn(
-          selected ? "lyra-body-xs-emphasis text-lyra-fg-default" : "lyra-body-xs text-lyra-fg-secondary",
-          disabled && "text-lyra-fg-disabled"
-        )}
-      >
+        <span className="flex items-center text-lyra-fg-secondary" aria-hidden="true">
+          {icon}
+        </span>
         {label}
-      </span>
+      </label>
     </div>
   );
 }
@@ -485,22 +543,21 @@ function OutboundDetailScreen({
         <p className="lyra-body-sm text-lyra-fg-secondary text-center">No match found in directory</p>
       )}
 
-      <div className="flex flex-col gap-2">
-        <Label label="Select Channel" />
-        <div className="flex items-center justify-center gap-6 px-6">
-          {channelOptions.map((option) => (
-            <ChannelIconButton
-              key={option.id}
-              channel={option.id}
-              icon={option.icon}
-              label={option.label}
-              selected={selectedChannel === option.id}
-              disabled={!enabledChannels.includes(option.id)}
-              onClick={() => handlePickChannel(option.id)}
-            />
-          ))}
-        </div>
-      </div>
+      <RadioGroup
+        label="Select Channel"
+        value={selectedChannel ?? undefined}
+        onValueChange={(value) => handlePickChannel(value as ChannelType)}
+      >
+        {channelOptions.map((option) => (
+          <ChannelRadioOption
+            key={option.id}
+            id={option.id}
+            icon={option.icon}
+            label={option.label}
+            disabled={!enabledChannels.includes(option.id)}
+          />
+        ))}
+      </RadioGroup>
 
       {contact ? (
         <Select
@@ -668,19 +725,15 @@ export function AddOutboundButton({
 /* ── Root ── */
 
 // Seeded so the popover never opens to an empty, unconvincing "Favorites"
-// screen during a demo — a couple of agents, an outbound skill, and a
-// customer, favorited from the start. Real favoriting is still fully
-// agent-driven from here on (see `toggleFavorite` below); this is just the
-// starting state, not a pinned/can't-remove list. IDs match `directory.ts`
-// seed data (`DIRECTORY_AGENTS`/`DIRECTORY_SKILLS`/`DIRECTORY_CUSTOMERS`).
-// Trimmed to just two agents per an explicit follow-up (was five). "sofia"
-// and "jordan" are the two customers here — per that same follow-up (and a
-// later one adding "jordan"), both have every channel type the flyout can
-// show (see their `channels` in directory.ts), and "jordan" is seeded right
-// after "sofia" in DIRECTORY_CUSTOMERS specifically so she lands directly
-// under Sofia in this Favorites list too (`allContacts`, and therefore this
-// filtered view, follows that array's own order).
-const DEFAULT_FAVORITE_IDS = ["john-smith", "amara", "vip-support", "sofia", "jordan"];
+// screen during a demo — a couple of agents and an outbound skill, favorited
+// from the start. Real favoriting is still fully agent-driven from here on
+// (see `toggleFavorite` below); this is just the starting state, not a
+// pinned/can't-remove list. IDs match `directory.ts` seed data
+// (`DIRECTORY_AGENTS`/`DIRECTORY_SKILLS`). No customers here anymore — per
+// an explicit follow-up, Customers were removed from New Outbound entirely
+// (not just hidden from the category dropdown), so "sofia"/"jordan" no
+// longer belong in this list either.
+const DEFAULT_FAVORITE_IDS = ["john-smith", "amara", "vip-support"];
 
 export function NewOutboundPopover({ title = "New Outbound", expanded = false, outbound }: NewOutboundPopoverProps) {
   const [open, setOpen] = useState(false);
@@ -716,6 +769,15 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
     countryCode: PHONE_COUNTRIES[0].code,
     number: "",
   });
+  // Dial Pad's own outbound skill — same requirement as the unified detail
+  // screen's "Select outbound skill" field (see `SHOW_SKILL_SELECTION`),
+  // just kept as its own piece of state since the Dial Pad flow never
+  // touches `OutboundDetailScreen` at all (see `handleQuickDial` below).
+  const [dialpadSkillId, setDialpadSkillId] = useState("");
+  // Filter text for the skill-agents drill-in screen's own roster — reset
+  // whenever a new skill is opened so leftover text from a previously
+  // viewed skill doesn't leak in (see `renderContactRow`'s onClick below).
+  const [skillAgentSearch, setSkillAgentSearch] = useState("");
 
   const recordRecentSkill = (skillId: string) => {
     if (!skillId) return;
@@ -729,10 +791,25 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
   const singleSelectedGroup =
     selectedCategoryIds.length === 1 ? outbound.groups.find((g) => g.id === selectedCategoryIds[0]) ?? null : null;
 
-  const allContacts = useMemo(
-    () => outbound.groups.filter((g) => (g.kind ?? "contacts") === "contacts").flatMap((g) => g.contacts ?? []),
-    [outbound.groups]
-  );
+  // Deduped by id — "My Team" now lists real `DIRECTORY_AGENTS` records that
+  // also appear in the "Agents" group (see directory.ts's own
+  // `OUTBOUND_MY_TEAM_CONTACTS`), so the same person can legitimately show
+  // up in more than one group's `contacts` array. Without deduping here, a
+  // favorited teammate (e.g. Amara, favorited by default) would render
+  // TWICE in the Favorites list — once per group that happens to include
+  // them. A `Map` keyed by id keeps whichever occurrence is encountered
+  // first, which is fine since every occurrence of the same id is the exact
+  // same contact object.
+  const allContacts = useMemo(() => {
+    const byId = new Map<string, CreateNewOutboundContact>();
+    for (const group of outbound.groups) {
+      if ((group.kind ?? "contacts") !== "contacts") continue;
+      for (const contact of group.contacts ?? []) {
+        if (!byId.has(contact.id)) byId.set(contact.id, contact);
+      }
+    }
+    return Array.from(byId.values());
+  }, [outbound.groups]);
 
   // Dial Pad — same `isPhoneNumberComplete` per-country digit-count check
   // PhoneInput uses internally for its own validation error, reused here to
@@ -744,13 +821,16 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
   // surfaces as a tappable suggestion below the field (see `content` below).
   const dialpadCountry = PHONE_COUNTRIES.find((c) => c.code === dialpadPhone.countryCode) ?? PHONE_COUNTRIES[0];
   const isDialpadNumberValid = isPhoneNumberComplete(dialpadPhone.number, dialpadCountry);
+  // Same requirement as the unified detail screen's own `canStart` — a
+  // skill is required before dialing too, once `SHOW_SKILL_SELECTION` is on.
+  const canQuickDial = isDialpadNumberValid && (!SHOW_SKILL_SELECTION || !!dialpadSkillId);
   const dialpadMatch =
     dialpadPhone.number.length >= DIAL_PAD_MATCH_MIN_DIGITS
       ? allContacts.find((c) => contactMatchesQuery(c, dialpadPhone.number))
       : undefined;
 
   const handleQuickDial = () => {
-    if (!isDialpadNumberValid) return;
+    if (!canQuickDial) return;
     const fullNumber = `${dialpadCountry.dial}${dialpadPhone.number}`;
     // Same match `dialpadMatch`'s own suggestion row would route to
     // deliberately — pressing "Dial Number" directly while a match is
@@ -761,10 +841,11 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
     // callback fires, so the resulting interaction is attributed to that
     // real customer/agent instead of showing up as a bare phone number.
     if (dialpadMatch) {
-      outbound.onStartCall({ contact: dialpadMatch, channel: "voice", phone: fullNumber, skillId: "" });
+      outbound.onStartCall({ contact: dialpadMatch, channel: "voice", phone: fullNumber, skillId: dialpadSkillId });
     } else {
-      outbound.onStartUnmatchedOutbound?.({ channel: "voice", value: fullNumber, skillId: "" });
+      outbound.onStartUnmatchedOutbound?.({ channel: "voice", value: fullNumber, skillId: dialpadSkillId });
     }
+    recordRecentSkill(dialpadSkillId);
     resetAndClose();
   };
 
@@ -838,6 +919,7 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
     // "clear the transient text, keep the preference" split `search`
     // above gets, just for the Dial Pad group's own field.
     setDialpadPhone((prev) => ({ ...prev, number: "" }));
+    setDialpadSkillId("");
   };
 
   const toggleFavorite = (contactId: string) =>
@@ -854,7 +936,20 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
       contact={contact}
       favorited={favoriteIds.has(contact.id)}
       onToggleFavorite={() => toggleFavorite(contact.id)}
-      onClick={() => setScreen({ kind: "detail", contact, query: "" })}
+      // Per an explicit follow-up: opening a Skill (clicking its row body,
+      // not the hover flyout above) now shows the roster of agents staffing
+      // it instead of the channel/Start Call detail screen — calling the
+      // skill directly lives in the hover flyout's single "Call" entry now
+      // (see `visibleChannels` above), reached via `onSelectChannel` below
+      // exactly like every other kind's quick action.
+      onClick={() => {
+        if (contact.kind === "skill") {
+          setSkillAgentSearch("");
+          setScreen({ kind: "skillAgents", skillId: contact.id, skillName: contact.name });
+        } else {
+          setScreen({ kind: "detail", contact, query: "" });
+        }
+      }}
       onSelectChannel={(channel, position) => {
         if (channel === "chat" && contact.kind === "agent" && outbound.onOpenInternalChat) {
           outbound.onOpenInternalChat(contact.id, position);
@@ -894,9 +989,61 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
     </button>
   );
 
+  // Last 3 outbound skills, resolved to full {value, label} options —
+  // shared by the unified detail screen's own "Select outbound skill"
+  // field AND the Dial Pad flow's identical field below, so "Recent" means
+  // the same thing (and shows the same skills) in both places.
+  const recentSkillOptions = recentSkillIds
+    .map((id) => outbound.skillOptions.find((o) => o.value === id))
+    .filter((o): o is { value: string; label: string } => !!o);
+  // Same "Recent up top, everything else beneath" shape `OutboundDetailScreen`
+  // builds internally for its own skill dropdown — duplicated here (rather
+  // than exported/shared) since it's a small, one-line-per-field
+  // computation and this is the only other place that needs it (the Dial
+  // Pad flow's own skill dropdown, which never touches that component).
+  const recentSkillIdSet = new Set(recentSkillOptions.map((o) => o.value));
+  const dialpadSkillOptionGroups = recentSkillOptions.length
+    ? [
+        { label: "Recent", options: recentSkillOptions },
+        { label: "All Skills", options: outbound.skillOptions.filter((o) => !recentSkillIdSet.has(o.value)) },
+      ]
+    : undefined;
+
   /* ── Body content ── */
   let content: React.ReactNode;
-  if (screen.kind === "detail") {
+  if (screen.kind === "skillAgents") {
+    // Real agent rows, reused as-is via `renderContactRow` — each one
+    // already supports a direct call (row click → detail screen) and
+    // internal chat (the channel flyout's "Chat" entry already routes
+    // `kind === "agent"` through `onOpenInternalChat`, same as the Agents
+    // group), so nothing skill-specific is needed here beyond the roster
+    // itself.
+    const members = outbound.skillMembers?.[screen.skillId] ?? [];
+    const filteredMembers = skillAgentSearch
+      ? members.filter((member) => contactMatchesQuery(member, skillAgentSearch))
+      : members;
+    content = (
+      <div className="flex flex-col pb-2">
+        {members.length > 0 && (
+          <div className="px-4 pb-2 pt-1">
+            <SearchInput
+              value={skillAgentSearch}
+              onValueChange={setSkillAgentSearch}
+              placeholder="Search agents"
+              aria-label="Search agents in this skill"
+            />
+          </div>
+        )}
+        {members.length === 0 ? (
+          <p className="px-4 py-8 text-center lyra-body-sm text-lyra-fg-secondary">No agents staff this skill yet.</p>
+        ) : filteredMembers.length === 0 ? (
+          <p className="px-4 py-8 text-center lyra-body-sm text-lyra-fg-secondary">No agents match your search.</p>
+        ) : (
+          filteredMembers.map(renderContactRow)
+        )}
+      </div>
+    );
+  } else if (screen.kind === "detail") {
     content = (
       <OutboundDetailScreen
         contact={screen.contact}
@@ -905,9 +1052,7 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
         channelOptions={outbound.channelOptions}
         phoneOptions={outbound.phoneOptions}
         skillOptions={outbound.skillOptions}
-        recentSkillOptions={recentSkillIds
-          .map((id) => outbound.skillOptions.find((o) => o.value === id))
-          .filter((o): o is { value: string; label: string } => !!o)}
+        recentSkillOptions={recentSkillOptions}
         onStart={(channel, addressValue, skillId) => {
           if (screen.contact) {
             outbound.onStartCall({ contact: screen.contact, channel, phone: addressValue, skillId });
@@ -966,7 +1111,19 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
             />
           </div>
         )}
-        <Button variant="default" className="w-full" disabled={!isDialpadNumberValid} onClick={handleQuickDial}>
+        {SHOW_SKILL_SELECTION && (
+          <Select
+            label="Select outbound skill"
+            placeholder="Select outbound skill"
+            value={dialpadSkillId}
+            onValueChange={setDialpadSkillId}
+            options={outbound.skillOptions}
+            optionGroups={dialpadSkillOptionGroups}
+            searchable
+            portalDropdown
+          />
+        )}
+        <Button variant="default" className="w-full" disabled={!canQuickDial} onClick={handleQuickDial}>
           Dial Number
         </Button>
       </div>
@@ -1024,14 +1181,14 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
     <div className="border-b border-lyra-border-subtle">
       <div className="flex items-center justify-between px-4 py-4">
         <div className="flex min-w-0 items-center gap-2">
-          {/* Detail screen backs out to browse; Dial Pad (still technically
-           *  the browse screen, just with `dialPadActive` on — see that
-           *  state's own doc comment) backs out to whatever category
-           *  selection/search was already in place, not a reset. */}
-          {(screen.kind === "detail" || dialPadActive) && (
+          {/* Detail/skill-agents screens back out to browse; Dial Pad (still
+           *  technically the browse screen, just with `dialPadActive` on —
+           *  see that state's own doc comment) backs out to whatever
+           *  category selection/search was already in place, not a reset. */}
+          {(screen.kind === "detail" || screen.kind === "skillAgents" || dialPadActive) && (
             <button
               type="button"
-              onClick={() => (screen.kind === "detail" ? setScreen({ kind: "browse" }) : setDialPadActive(false))}
+              onClick={() => (screen.kind === "browse" ? setDialPadActive(false) : setScreen({ kind: "browse" }))}
               aria-label="Back"
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary transition-colors hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus"
             >
@@ -1045,7 +1202,13 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
             </>
           ) : (
             <p className="lyra-heading-sm text-lyra-fg-default truncate">
-              {screen.kind === "detail" ? "Outbound Call" : dialPadActive ? "Dial Pad" : title}
+              {screen.kind === "detail"
+                ? "Outbound Call"
+                : screen.kind === "skillAgents"
+                  ? `${screen.skillName} Agents`
+                  : dialPadActive
+                    ? "Dial Pad"
+                    : title}
             </p>
           )}
         </div>
@@ -1062,13 +1225,16 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
         <div className="flex flex-col gap-3 px-4 pb-4">
           {/* Phone/email/search-term entry leads — it's the primary action
            *  (type a number/address, or a name to filter the group below),
-           *  so it sits above the group picker rather than under it. */}
+           *  so it sits above the group picker rather than under it. Per
+           *  the reference design, the help text is now a plain label ABOVE
+           *  the field (was a `helperText` caption underneath it). */}
           {showSearchInput && (
-            <>
+            <div className="flex flex-col gap-1.5">
+              <Label label={`${singleSelectedGroup?.searchPlaceholder ?? "Enter phone, email or search term"}`} labelFor="new-outbound-search" />
               <Input
+                id="new-outbound-search"
                 type="text"
                 placeholder="Enter"
-                helperText={`${singleSelectedGroup?.searchPlaceholder ?? "Enter phone, email or search term"}.`}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={handleSearchKeyDown}
@@ -1085,18 +1251,7 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
                   ) : undefined
                 }
               />
-              {/* Quick-access shortcut into the Dial Pad screen — one click
-               *  instead of a Select interaction, for what's meant to be a
-               *  fast "just dial a number" path. */}
-              <button
-                type="button"
-                onClick={() => setDialPadActive(true)}
-                className="flex items-center gap-1.5 self-start lyra-body-sm text-lyra-fg-link underline underline-offset-2 hover:text-lyra-fg-link"
-              >
-                <Grid3x3 className="h-3.5 w-3.5" strokeWidth={1.5} aria-hidden="true" />
-                Dial Pad
-              </button>
-            </>
+            </div>
           )}
           <Select
             multiple
@@ -1108,10 +1263,53 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
             placeholder="Select a category to search"
             portalDropdown
           />
+          {/* Quick-access shortcut into the Dial Pad screen — moved below
+           *  the category dropdown and restyled as a plain (not link-blue/
+           *  underlined) row per the reference design; still one click
+           *  instead of a Select interaction, for what's meant to be a fast
+           *  "just dial a number" path. Sized up (icon + text) and given
+           *  extra top margin per an explicit follow-up, so it reads as its
+           *  own distinct row rather than crowding the category dropdown
+           *  right above it. */}
+          {showSearchInput && (
+            <button
+              type="button"
+              onClick={() => setDialPadActive(true)}
+              className="mt-2 flex items-center gap-2 self-start lyra-body-md text-lyra-fg-secondary hover:text-lyra-fg-default transition-colors"
+            >
+              <Grid3x3 className="h-5 w-5" strokeWidth={1.5} aria-hidden="true" />
+              Dial Pad
+            </button>
+          )}
         </div>
       )}
     </div>
   );
+
+  // Simple "opening a deeper screen" vs. "returning to the list" animation —
+  // per an explicit follow-up asking for some sense of motion between
+  // screens. `isBrowseRoot` is the shallow, top-level view (the plain
+  // contact list/category picker); everything else (Dial Pad, the detail
+  // screen, a skill's agent roster) counts as "deeper," so a transition
+  // between the two directions is really just a two-level stack, not a
+  // full navigation history — enough to read as forward/back without
+  // needing to track every possible screen-to-screen hop. `screenKey`
+  // identifies which VIEW is showing (not full screen state) so typing in
+  // the search box or picking categories — which re-renders `content`
+  // constantly while still on the browse screen — never re-keys/re-
+  // triggers the animation; only an actual navigation does.
+  const isBrowseRoot = screen.kind === "browse" && !dialPadActive;
+  const screenKey = screen.kind === "browse" ? (dialPadActive ? "dialpad" : "browse") : screen.kind;
+  // Comparing against (then updating) a ref during render — not in an
+  // effect — is the documented React pattern for "remember the previous
+  // render's value to detect a change happening THIS render" (see react.dev
+  // on refs), which is exactly what deciding a direction needs: by the time
+  // an effect would run, the animation classes below would already have
+  // missed this render entirely.
+  const wasBrowseRootRef = useRef(isBrowseRoot);
+  const direction: "forward" | "backward" | null =
+    isBrowseRoot === wasBrowseRootRef.current ? null : isBrowseRoot ? "backward" : "forward";
+  wasBrowseRootRef.current = isBrowseRoot;
 
   return (
     <Popover
@@ -1121,10 +1319,24 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
       align="start"
       sideOffset={4}
       maxWidth="320px"
-      maxHeight="520px"
+      // +2 rows' worth of height per an explicit follow-up (was 520px) —
+      // each contact row runs ~56-60px, so +120px comfortably covers two
+      // more without the popover starting to crowd the viewport.
+      maxHeight="640px"
       className="w-[320px]"
       header={header}
-      content={content}
+      content={
+        <div
+          key={screenKey}
+          className={cn(
+            "animate-in fade-in-0 duration-200",
+            direction === "forward" && "slide-in-from-right-4",
+            direction === "backward" && "slide-in-from-left-4"
+          )}
+        >
+          {content}
+        </div>
+      }
     >
       {trigger}
     </Popover>
