@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ChevronDown, Moon, Sun, Activity, LogOut, Link2Off, Link2, Loader2, Search, CircleHelp, Check, Minus } from "lucide-react";
+import { ChevronDown, Moon, Sun, Activity, LogOut, Link2Off, Link2, Loader2, Search, CircleHelp, Check, Minus, CircleX } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Menu, type MenuEntry } from "./menu";
 import { ConnectedAppsPanel, type ConnectedApp } from "./connected-apps";
@@ -40,40 +40,98 @@ export interface AgentProfileProps {
 }
 
 /* ── Status config ──
-   `badgeVariant`/`icon` are only set for statuses that get a real icon
-   badge in the status menu (ADA — color alone isn't an accessible signal).
-   "offline" has neither and falls back to `StatusBadge`'s own `dot` mode
-   in `StatusIcon` below — a solid gray circle doesn't read as "which
-   status" the way a check/minus glyph does, so there's no icon metaphor
-   worth forcing there. */
+   `badgeVariant`/`icon` drive the real icon badge `available`/`unavailable`
+   get in the status menu (ADA — color alone isn't an accessible signal): a
+   check/minus glyph reads as "which status" even to colorblind users, where
+   a color-only dot wouldn't. "offline" also gets a real glyph (`CircleX`)
+   but renders differently in `StatusIcon` below — see that component's own
+   doc comment for why it has no `badgeVariant` fill. */
 
 type StatusBadgeVariant = NonNullable<StatusBadgeProps["variant"]>;
 
 const statusConfig: Record<AgentStatus, { label: string; color: string; textColor: string; icon?: typeof Check; badgeVariant?: StatusBadgeVariant }> = {
-  available:   { label: "Available",   color: "bg-lyra-status-success-strong",  textColor: "text-lyra-status-success-strong",  icon: Check, badgeVariant: "success" },
-  unavailable: { label: "Unavailable", color: "bg-lyra-status-critical-strong", textColor: "text-lyra-status-critical-strong", icon: Minus, badgeVariant: "critical" },
-  offline:     { label: "Offline",     color: "bg-lyra-accent-slate-strong",    textColor: "text-lyra-accent-slate-strong" },
+  available:   { label: "Available",   color: "bg-lyra-status-success-strong",  textColor: "text-lyra-status-success-strong",  icon: Check,   badgeVariant: "success" },
+  unavailable: { label: "Unavailable", color: "bg-lyra-status-critical-strong", textColor: "text-lyra-status-critical-strong", icon: Minus,   badgeVariant: "critical" },
+  offline:     { label: "Offline",     color: "bg-lyra-accent-slate-strong",    textColor: "text-lyra-accent-slate-strong",    icon: CircleX },
 };
 
-/** Status menu row icon — `StatusBadge` with the status glyph as its
- *  content (same badge used for the Connected Apps count, just an icon
- *  instead of a number) for statuses that have one, `StatusBadge`'s own
- *  `dot` mode for "offline". */
-function StatusIcon({ status, className }: { status: AgentStatus; className?: string }) {
-  const { icon: StatusGlyph, badgeVariant } = statusConfig[status];
-  if (StatusGlyph && badgeVariant) {
+export interface StatusIconProps extends React.HTMLAttributes<HTMLSpanElement> {
+  status: AgentStatus;
+}
+
+/** Status glyph, `AgentStatus`-dependent presentation — this is what drives
+ *  the status menu row icons and the avatar corner dot below.
+ *  `available`/`unavailable` render as a `StatusBadge` with a small
+ *  check/minus glyph centered in a colored fill circle (same badge used for
+ *  the Connected Apps count, just an icon instead of a number) — the fill
+ *  color itself is the primary signal there, the glyph a secondary
+ *  ADA-motivated reinforcement of it.
+ *  `offline` renders differently, per an explicit follow-up against a
+ *  reference image: no colored fill circle behind it at all — `CircleX`'s
+ *  own outline ring already reads as "the circle," so wrapping it in a
+ *  second, bigger `StatusBadge` circle just added a redundant ring and
+ *  shrank the glyph down to a tiny 8px mark inside it. Rendered instead as
+ *  the bare icon at the full badge footprint (16px, matching
+ *  `StatusBadge`'s own "sm" size) so it reads as one shape, not two nested
+ *  circles.
+ *  Originally private to this file; exported per an explicit follow-up from
+ *  `agent-next-gen-v1`, which needed this same "small icon, not just a
+ *  color dot" treatment for agent/skill availability shown in its own New
+ *  Outbound directory rows, rather than approximating it locally with a
+ *  plain colored `StatusBadge dot`. */
+const StatusIcon = React.forwardRef<HTMLSpanElement, StatusIconProps>(
+  ({ status, className, ...props }, ref) => {
+    const { icon: StatusGlyph, badgeVariant } = statusConfig[status];
+    if (StatusGlyph && badgeVariant) {
+      return (
+        <StatusBadge
+          ref={ref}
+          variant={badgeVariant}
+          size="sm"
+          className={className}
+          aria-label={statusConfig[status].label}
+          {...props}
+        >
+          <StatusGlyph className="h-2 w-2" strokeWidth={3} aria-hidden="true" />
+        </StatusBadge>
+      );
+    }
+    if (StatusGlyph) {
+      // "offline" — see this component's own doc comment for why this
+      // skips `StatusBadge` (no colored fill) rather than joining the
+      // branch above.
+      return (
+        <span
+          ref={ref}
+          // `bg-lyra-bg-surface-base` (not `transparent`) so this still
+          // reads as a solid badge — not a hole showing whatever's behind
+          // it — when it sits on a colored avatar/tile, same as the
+          // reference image's white disc behind the gray glyph.
+          className={cn("inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-lyra-bg-surface-base", className)}
+          aria-label={statusConfig[status].label}
+          {...props}
+        >
+          <StatusGlyph className="h-4 w-4 text-lyra-fg-secondary" strokeWidth={1.75} aria-hidden="true" />
+        </span>
+      );
+    }
+    // Defensive fallback for a status with no `statusConfig` icon entry at
+    // all — none currently exists, every `AgentStatus` has one.
     return (
-      <StatusBadge variant={badgeVariant} size="sm" className={className}>
-        <StatusGlyph className="h-2 w-2" strokeWidth={3} aria-hidden="true" />
+      <StatusBadge
+        ref={ref}
+        variant="neutral"
+        size="sm"
+        className={className}
+        aria-label={statusConfig[status].label}
+        {...props}
+      >
+        <span className="block h-2 w-2 rounded-full bg-white" aria-hidden="true" />
       </StatusBadge>
     );
   }
-  return (
-    <StatusBadge variant="neutral" size="sm" className={className} aria-label={statusConfig[status].label}>
-      <span className="block h-2 w-2 rounded-full bg-white" aria-hidden="true" />
-    </StatusBadge>
-  );
-}
+);
+StatusIcon.displayName = "StatusIcon";
 
 function Avatar({ initials, src, status }: { initials?: string; src?: string; status: AgentStatus }) {
   return (
@@ -383,4 +441,4 @@ const AgentProfile = React.forwardRef<HTMLDivElement, AgentProfileProps>(
 );
 AgentProfile.displayName = "AgentProfile";
 
-export { AgentProfile };
+export { AgentProfile, StatusIcon };

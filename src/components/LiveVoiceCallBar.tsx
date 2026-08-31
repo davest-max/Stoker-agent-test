@@ -566,6 +566,16 @@ export interface LiveVoiceCallBarProps {
    *  bar's own generic bottom-left corner anchor below. Ignored entirely
    *  once `position` is set — dragging always wins. */
   defaultAnchor: { left: number; bottom: number } | null;
+  /** Forces this bar's own chrome to the opposite of the app's real theme —
+   *  per an explicit follow-up, the point is contrast with whatever's
+   *  around it, not a fixed "always dark" look: dark chrome on a light app,
+   *  light chrome on a dark app. `AgentNextGenPage` computes this from its
+   *  own `darkMode` state (`darkMode ? "light" : "dark"`) rather than this
+   *  component reading `document.documentElement` itself, keeping it a
+   *  plain controlled prop like everything else here. See this component's
+   *  own `data-theme` usage below for how one attribute re-scopes every
+   *  lyra token used in its render for free. */
+  theme: "light" | "dark";
 }
 
 /** Persistent, global "there's a live voice call somewhere" strip — survives
@@ -641,6 +651,7 @@ export function LiveVoiceCallBar({
   position,
   onPositionChange,
   defaultAnchor,
+  theme,
 }: LiveVoiceCallBarProps) {
   const [elapsedSeconds, setElapsedSeconds] = useState(() => Math.floor((Date.now() - startedAt) / 1000));
   const [isDragging, setIsDragging] = useState(false);
@@ -719,17 +730,18 @@ export function LiveVoiceCallBar({
   return (
     <div
       ref={containerRef}
-      // Forced reverse/dark chrome — per an explicit follow-up, this bar
-      // should read as visually distinct from the rest of the (normally
-      // light) app UI at a glance, not just another light card floating on
-      // top of it. `data-theme="dark"` re-scopes every lyra token used below
-      // (surface, text, border, hover/pressed state layers, and the
-      // SELECTED_RED/SELECTED_SLATE fills) to their dark-theme values for
-      // free, with no per-class overrides — see lyra-tokens.css's own
-      // `[data-theme="dark"]` block. Popovers/menus opened from here (the
-      // call switcher, Participants menu) are portaled and so still follow
-      // the app's real theme, same as any dropdown spawned from a toolbar.
-      data-theme="dark"
+      // Forced reverse chrome — per an explicit follow-up, this bar should
+      // read as visually distinct from whatever's around it, in either app
+      // theme: dark chrome on a light app, light chrome on a dark one (see
+      // `theme`'s own doc comment for how that's computed). `data-theme`
+      // re-scopes every lyra token used below (surface, text, border,
+      // hover/pressed state layers, and the SELECTED_RED/SELECTED_SLATE
+      // fills) to that theme's values for free, with no per-class overrides
+      // — see lyra-tokens.css's own `[data-theme="dark"]` block. Popovers/
+      // menus opened from here (the call switcher, Participants menu) are
+      // portaled and so still follow the app's real theme, same as any
+      // dropdown spawned from a toolbar.
+      data-theme={theme}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={stopDragging}
@@ -1112,6 +1124,12 @@ export interface DockedVoiceControlBarProps {
    *  notice the panel has closed and there's room to redock. */
   onNeededWidthChange?: (width: number) => void;
   onHangUp: () => void;
+  /** Same "opposite of the app's real theme" contract as
+   *  `LiveVoiceCallBarProps.theme` — see that prop's own doc comment.
+   *  `AgentNextGenPage` passes the identical `darkMode ? "light" : "dark"`
+   *  value to both bars so a call reads the same whichever presentation
+   *  it's currently in. */
+  theme: "light" | "dark";
 }
 
 /** Docked presentation of the exact same live call's controls
@@ -1162,6 +1180,7 @@ export function DockedVoiceControlBar({
   onUndock,
   onNeededWidthChange,
   onHangUp,
+  theme,
 }: DockedVoiceControlBarProps) {
   const accent = CHANNEL_ACCENT.voice;
   const displayName = isInternalAgentCall ? customerName ?? "Colleague" : customerName || "Customer";
@@ -1201,16 +1220,15 @@ export function DockedVoiceControlBar({
        *  (in-flow at the bottom of the panel, not floating on top of other
        *  content, so a drop shadow would look out of place until it
        *  actually pops out).
-       *  Forced reverse/dark chrome, same as the floating `LiveVoiceCallBar`
-       *  — see that component's own `data-theme` doc comment for why. Scoped
-       *  to just this inner rounded card (not the full-width strip around
-       *  it), so the dark treatment reads as a contained, elevated pill
-       *  rather than a dark band spanning the whole panel width; the
-       *  Participants menu below is portaled and still follows the app's
-       *  real theme instead. */}
+       *  Forced reverse chrome, same as the floating `LiveVoiceCallBar` — see
+       *  that component's own `data-theme` doc comment for why. Scoped to
+       *  just this inner rounded card (not the full-width strip around it),
+       *  so the reverse treatment reads as a contained, elevated pill rather
+       *  than a band spanning the whole panel width; the Participants menu
+       *  below is portaled and still follows the app's real theme instead. */}
       <div
         ref={pillRef}
-        data-theme="dark"
+        data-theme={theme}
         className="flex flex-col rounded-lyra-lg border border-lyra-border-subtle bg-lyra-bg-surface-base px-6 py-3"
         // Same "resize sets width on the outer bar" as the floating bar —
         // see `CallMediaArea`'s own top doc comment for why.

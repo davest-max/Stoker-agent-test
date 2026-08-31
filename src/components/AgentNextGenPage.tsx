@@ -2871,6 +2871,7 @@ export function AgentNextGenPage({
                         onUndock={() => setVoiceCallManuallyUndocked(true)}
                         onNeededWidthChange={setDockedBarNeededWidth}
                         onHangUp={handleHangUpLiveCall}
+                        theme={darkMode ? "light" : "dark"}
                       />
                     ) : undefined;
                     return (
@@ -3275,6 +3276,7 @@ export function AgentNextGenPage({
             // from switching by clicking the tile (same hold-swap, same
             // `activeAssignmentId` update, same tile highlight).
             onSwitchCall={handleSelectAssignment}
+            theme={darkMode ? "light" : "dark"}
           />
         );
       })()}

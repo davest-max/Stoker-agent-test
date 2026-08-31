@@ -13,6 +13,7 @@ import {
   Button,
   AiSparkleIcon,
   CHANNEL_ACCENT,
+  StatusIcon,
 } from "@nicecxone/lyra-ui";
 import { Route, Phone, UserPlus, ChevronLeft, ChevronRight, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -44,10 +45,20 @@ type View = { kind: "list" } | { kind: "chat"; agentId: string };
 
 const AVATAR_SIZE = "h-9 w-9";
 
+/** Same `StatusIcon` corner-badge treatment New Outbound's `ContactAvatar`
+ *  and the Directory page's `DirectoryAvatar` already use — per an explicit
+ *  follow-up, an agent's availability should read the same way everywhere
+ *  they show up, not just in the directory/outbound flows. */
 function AgentAvatar({ agent, size = AVATAR_SIZE }: { agent: DirectoryAgent; size?: string }) {
   return (
-    <div className={cn("flex shrink-0 items-center justify-center rounded-full lyra-body-sm-emphasis", size, agent.avatarClassName)}>
-      {agent.initials}
+    <div className="relative shrink-0">
+      <div className={cn("flex items-center justify-center rounded-full lyra-body-sm-emphasis", size, agent.avatarClassName)}>
+        {agent.initials}
+      </div>
+      <StatusIcon
+        status={agent.availability}
+        className="absolute bottom-[-2px] right-[-2px] px-0 border border-lyra-bg-surface-base"
+      />
     </div>
   );
 }
@@ -105,8 +116,18 @@ function SkillRow({
       static
       className="group/row"
       leading={
-        <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-lyra-sm", accent.bg)}>
-          <Route className={cn("h-4 w-4", accent.text)} strokeWidth={1.5} />
+        <div className="relative shrink-0">
+          <div className={cn("flex h-9 w-9 items-center justify-center rounded-lyra-sm", accent.bg)}>
+            <Route className={cn("h-4 w-4", accent.text)} strokeWidth={1.5} />
+          </div>
+          {/* Same `StatusIcon` corner-badge treatment agents get on this
+           *  same row style — per an explicit follow-up, a skill's own
+           *  availability should carry into the transfer popup too, not
+           *  just the directory/outbound flows. */}
+          <StatusIcon
+            status={skill.availability}
+            className="absolute bottom-[-2px] right-[-2px] px-0 border border-lyra-bg-surface-base"
+          />
         </div>
       }
       title={skill.name}
@@ -126,20 +147,21 @@ function SkillRow({
   );
 }
 
-/* ── Chat header — back / avatar+name / Phone, Transfer, Add-to-interaction ── */
+/* ── Chat header — back / avatar+name / Phone, Add-to-interaction ──
+ *  No standalone Transfer icon here — per an explicit follow-up, Transfer
+ *  is now the handoff draft's own primary button (see `HandoffSummaryDraft`
+ *  below) rather than a second, separate entry point next to it. */
 
 function ChatHeader({
   agent,
   onBack,
   onCall,
-  onTransfer,
   onAddToInteraction,
   addToCallLabel,
 }: {
   agent: DirectoryAgent;
   onBack: () => void;
   onCall: () => void;
-  onTransfer: () => void;
   onAddToInteraction: () => void;
   /** Overrides the trailing button's title/tooltip when it's actually
    *  wired to a live call (see `ConsultTransferButtonProps.onAddToCall`) —
@@ -165,9 +187,6 @@ function ChatHeader({
       <ActionIconButton title={`Call ${agent.name}`} onClick={onCall}>
         <Phone className="h-4 w-4" strokeWidth={1.5} />
       </ActionIconButton>
-      <ActionIconButton title={`Transfer to ${agent.name}`} onClick={onTransfer}>
-        <ConsultTransferIcon strokeWidth={1.5} />
-      </ActionIconButton>
       <ActionIconButton title={addToCallLabel ? `Add ${agent.name} to call` : `Add ${agent.name} to interaction`} onClick={onAddToInteraction}>
         <UserPlus className="h-4 w-4" strokeWidth={1.5} />
       </ActionIconButton>
@@ -182,17 +201,24 @@ function ChatHeader({
  *  before sending, same "AI Suggested" framing as OutcomePanel's summary
  *  field (reusing lyra-ui's shared `AiSparkleIcon`, not a duplicate). Once
  *  sent, it becomes a normal message in the thread and this block doesn't
- *  reappear — `ChatMessages` only shows it while `messages.length === 0`. */
+ *  reappear — `ChatMessages` only shows it while `messages.length === 0`.
+ *  The primary button is the transfer action itself (`ConsultTransferIcon`
+ *  + "Transfer to {name}") per an explicit follow-up — this is the one
+ *  Transfer entry point for an agent chat now that `ChatHeader`'s
+ *  standalone icon button has been removed; clicking it both posts this
+ *  drafted note into the thread and hands the case off (see
+ *  `onTransfer`'s own doc comment at the call site for why it's both, not
+ *  just one or the other). */
 function HandoffSummaryDraft({
   agent,
   value,
   onChange,
-  onSend,
+  onTransfer,
 }: {
   agent: DirectoryAgent;
   value: string;
   onChange: (value: string) => void;
-  onSend: () => void;
+  onTransfer: () => void;
 }) {
   return (
     <div className="flex flex-col gap-3 p-4">
@@ -203,8 +229,9 @@ function HandoffSummaryDraft({
         </p>
       </div>
       <Textarea value={value} onChange={(e) => onChange(e.target.value)} rows={5} />
-      <Button variant="default" className="w-full" disabled={!value.trim()} onClick={onSend}>
-        Send to {agent.name.split(" ")[0]}
+      <Button variant="default" className="w-full" disabled={!value.trim()} onClick={onTransfer}>
+        <ConsultTransferIcon strokeWidth={1.5} />
+        Transfer to {agent.name.split(" ")[0]}
       </Button>
     </div>
   );
@@ -215,17 +242,17 @@ function ChatMessages({
   messages,
   handoffSummary,
   onHandoffChange,
-  onSendHandoff,
+  onTransferHandoff,
 }: {
   agent: DirectoryAgent;
   messages: InternalChatMessage[];
   handoffSummary: string;
   onHandoffChange: (value: string) => void;
-  onSendHandoff: () => void;
+  onTransferHandoff: () => void;
 }) {
   if (messages.length === 0) {
     return (
-      <HandoffSummaryDraft agent={agent} value={handoffSummary} onChange={onHandoffChange} onSend={onSendHandoff} />
+      <HandoffSummaryDraft agent={agent} value={handoffSummary} onChange={onHandoffChange} onTransfer={onTransferHandoff} />
     );
   }
   return (
@@ -341,14 +368,30 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall 
       issueSummary: issueSummary ?? "reviewing the open issue.",
     });
 
-  const handleSendHandoff = (agent: DirectoryAgent) => {
+  const log = (action: string, name: string) => {
+    // eslint-disable-next-line no-console
+    console.log(`${action}:`, name);
+  };
+
+  /** The handoff draft's primary button now doubles as the chat's one
+   *  Transfer entry point (per an explicit follow-up — `ChatHeader`'s
+   *  former standalone Transfer icon is gone). Both halves of what used to
+   *  be two separate actions happen together: post the drafted note into
+   *  the thread as a real message (same as the old "Send" behavior), then
+   *  run the actual transfer (today a stub `log` + close, matching every
+   *  other transfer/consult trigger in this popover — see `SkillRow`'s
+   *  `onTransfer` and this same `log("Transfer to", ...)` pattern above). */
+  const handleTransferHandoff = (agent: DirectoryAgent) => {
     const text = handoffSummaryFor(agent).trim();
-    if (!text) return;
-    setThreads((prev) => ({
-      ...prev,
-      [agent.id]: [...(prev[agent.id] ?? []), { id: `m${(prev[agent.id]?.length ?? 0) + 1}`, fromMe: true, text, timestamp: "Just now" }],
-    }));
-    setHandoffDrafts((prev) => ({ ...prev, [agent.id]: "" }));
+    if (text) {
+      setThreads((prev) => ({
+        ...prev,
+        [agent.id]: [...(prev[agent.id] ?? []), { id: `m${(prev[agent.id]?.length ?? 0) + 1}`, fromMe: true, text, timestamp: "Just now" }],
+      }));
+      setHandoffDrafts((prev) => ({ ...prev, [agent.id]: "" }));
+    }
+    log("Transfer to", agent.name);
+    resetAndClose();
   };
 
   const toggleFavorite = (id: string) =>
@@ -358,11 +401,6 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall 
       else next.add(id);
       return next;
     });
-
-  const log = (action: string, name: string) => {
-    // eslint-disable-next-line no-console
-    console.log(`${action}:`, name);
-  };
 
   const handleSend = (agent: DirectoryAgent) => {
     if (!draft.trim()) return;
@@ -387,7 +425,6 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall 
         agent={activeAgent}
         onBack={() => setView({ kind: "list" })}
         onCall={() => log("Call", activeAgent.name)}
-        onTransfer={() => { log("Transfer to", activeAgent.name); resetAndClose(); }}
         onAddToInteraction={() => {
           if (onAddToCall) {
             onAddToCall({ id: activeAgent.id, name: activeAgent.name });
@@ -421,7 +458,7 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall 
         messages={threads[activeAgent.id] ?? []}
         handoffSummary={handoffSummaryFor(activeAgent)}
         onHandoffChange={(value) => setHandoffDrafts((prev) => ({ ...prev, [activeAgent.id]: value }))}
-        onSendHandoff={() => handleSendHandoff(activeAgent)}
+        onTransferHandoff={() => handleTransferHandoff(activeAgent)}
       />
     );
   } else if (tab === "agents") {

@@ -12,7 +12,7 @@ import {
   Tooltip,
   RadioGroup,
   RadioGroupItem,
-  StatusBadge,
+  StatusIcon,
   PhoneInput,
   PHONE_COUNTRIES,
   isPhoneNumberComplete,
@@ -24,7 +24,7 @@ import {
   type MenuEntry,
   type AgentStatus,
 } from "@nicecxone/lyra-ui";
-import { Plus, ChevronLeft, ChevronRight, X, User, Headset, Route, UsersRound, Building2, Grid3x3 } from "lucide-react";
+import { Plus, ChevronLeft, ChevronRight, X, User, Headset, Route, UsersRound, Building2, Grid3x3, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CONTACT_CHANNEL_ORDER, CONTACT_CHANNEL_ICON, CONTACT_CHANNEL_LABEL } from "@/components/DirectoryPage";
 import { contactMatchesQuery } from "@/data/directory";
@@ -98,9 +98,8 @@ export interface NewOutboundPopoverProps {
 type Screen =
   | { kind: "browse" }
   | { kind: "detail"; contact: CreateNewOutboundContact | null; query: string; initialChannel?: ChannelType }
-  // A skill row's own chevron (see `ContactRow`'s `onViewSkillAgents`) opens
-  // this instead of the generic channel-flyout every other contact kind's
-  // chevron shows — a roster of the real agents staffing that skill, each
+  // Clicking a skill row's own body (see `renderContactRow`'s onClick)
+  // opens this — a roster of the real agents staffing that skill, each
   // callable/chattable exactly like an Agents-group row (see `outbound.
   // skillMembers` and this screen's own render branch below).
   | { kind: "skillAgents"; skillId: string; skillName: string };
@@ -185,24 +184,6 @@ const CONTACT_KIND_ICON: Record<NonNullable<CreateNewOutboundContact["kind"]>, t
   external: Building2,
 };
 
-/** Availability dot's semantic color — reuses lyra-ui's own `AgentStatus`
- *  (the same type/labels its `AgentProfile` status menu already uses)
- *  mapped onto `StatusBadge`'s own `dot` mode, rather than hand-rolling
- *  status colors here. Per an explicit follow-up: agents AND skills both
- *  get this now (see `DirectoryAgent.availability`/`DirectorySkill.
- *  availability` in directory.ts), so it lives on the shared `ContactAvatar`
- *  both kinds render through. */
-const AVAILABILITY_BADGE_VARIANT: Record<AgentStatus, "success" | "critical" | "neutral"> = {
-  available: "success",
-  unavailable: "critical",
-  offline: "neutral",
-};
-const AVAILABILITY_LABEL: Record<AgentStatus, string> = {
-  available: "Available",
-  unavailable: "Unavailable",
-  offline: "Offline",
-};
-
 function ContactAvatar({ contact }: { contact: CreateNewOutboundContact & { availability?: AgentStatus } }) {
   const KindIcon = contact.kind ? CONTACT_KIND_ICON[contact.kind] : null;
   return (
@@ -218,17 +199,22 @@ function ContactAvatar({ contact }: { contact: CreateNewOutboundContact & { avai
         <div className={cn("flex h-9 w-9 items-center justify-center rounded-full lyra-body-sm-emphasis", contact.avatarClassName)}>
           {contact.initials}
         </div>
-        {/* Same bottom-right corner placement lyra-ui's own `AgentProfile`
-         *  avatar uses for the exact same idea (see that component's own
-         *  `Avatar`/`StatusIcon`) — a thin surface-colored border keeps the
-         *  dot readable against an avatar background of the same color. */}
+        {/* Same component, same corner placement, lyra-ui's own
+         *  `AgentProfile` avatar uses for the exact same idea (see that
+         *  component's own `Avatar`) — a small check/minus/neutral glyph in
+         *  a colored circle, not just a color-only dot (ADA: color alone
+         *  isn't an accessible signal), reused here per an explicit
+         *  follow-up rather than hand-rolled locally. `px-0` matches
+         *  `AgentProfile`'s own override, keeping the circle centered on
+         *  the glyph instead of `StatusBadge`'s default horizontal padding.
+         *  Per an explicit follow-up: agents AND skills both get this now
+         *  (see `DirectoryAgent.availability`/`DirectorySkill.availability`
+         *  in directory.ts), so it lives on the shared `ContactAvatar` both
+         *  kinds render through. */}
         {contact.availability && (
-          <StatusBadge
-            variant={AVAILABILITY_BADGE_VARIANT[contact.availability]}
-            size="sm"
-            dot
-            aria-label={AVAILABILITY_LABEL[contact.availability]}
-            className="absolute bottom-[-1px] right-[-1px] border border-lyra-bg-surface-base"
+          <StatusIcon
+            status={contact.availability}
+            className="absolute bottom-[-2px] right-[-2px] px-0 border border-lyra-bg-surface-base"
           />
         )}
       </div>
@@ -242,7 +228,6 @@ function ContactRow({
   onToggleFavorite,
   onClick,
   onSelectChannel,
-  onViewSkillAgents,
 }: {
   contact: CreateNewOutboundContact;
   favorited: boolean;
@@ -271,7 +256,10 @@ function ContactRow({
   // own layout so it can no longer compete with the name/subtitle for
   // width.
   const [channelMenuOpen, setChannelMenuOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
+  // Typed as the union since the trigger renders as a plain `<span>` for
+  // skill rows (see `chevronIsDecorative` below) and a real `<button>` for
+  // every other kind.
+  const triggerRef = useRef<HTMLButtonElement | HTMLSpanElement>(null);
   // Skills only ever offer a phone call from this hover flyout — same
   // Popover+Menu shape the Agents rows use (per an explicit follow-up,
   // "like the Agents dropdown"), just narrowed to a single "Call" entry
@@ -287,6 +275,16 @@ function ContactRow({
         ? (["voice"] as ChannelType[])
         : []
       : CONTACT_CHANNEL_ORDER.filter((type) => contact.channels.includes(type));
+
+  // Skill rows only: per an explicit follow-up, the chevron here is purely
+  // a visual "there's more behind this row" affordance (the agent roster),
+  // not its own separate clickable control — clicking anywhere in that
+  // area, chevron included, should do exactly what clicking the rest of
+  // the row does (open the agent list). Every other kind keeps the chevron
+  // as its own real trigger (see the button branch below) since its flyout
+  // offers several distinct channels worth a dedicated click, not just a
+  // single duplicate of what the row itself already does.
+  const chevronIsDecorative = contact.kind === "skill";
 
   const channelMenuItems: MenuEntry[] = visibleChannels.map((type) => {
     const Icon = CONTACT_CHANNEL_ICON[type];
@@ -317,7 +315,17 @@ function ContactRow({
             <FavoriteButton favorited={favorited} onClick={onToggleFavorite} label={contact.name} placement="left" />
           </div>
           {visibleChannels.length > 0 && (
-            <div onClick={(e) => e.stopPropagation()}>
+            <div
+              onClick={(e) => {
+                // For every kind except skills, this stops a click on the
+                // real chevron button from also reaching the row's own
+                // onClick (see that button's own comment). Skipped entirely
+                // for skill rows — there the chevron is decorative and a
+                // click here should reach the row exactly like clicking
+                // anywhere else on it (see `chevronIsDecorative` above).
+                if (!chevronIsDecorative) e.stopPropagation();
+              }}
+            >
               <Popover
                 open={channelMenuOpen}
                 onOpenChange={setChannelMenuOpen}
@@ -337,42 +345,110 @@ function ContactRow({
                   </div>
                 }
               >
-                <button
-                  ref={triggerRef}
-                  type="button"
-                  onClick={(e) => {
-                    // Radix's own `Popover.Trigger` (which this button is,
-                    // via `asChild`) attaches its own click handler that
-                    // TOGGLES the controlled `open` state — harmless for a
-                    // click-to-open trigger, but this one is already opened
-                    // by hover (see the row's own `onMouseEnter` above), so
-                    // clicking the chevron while it's already open from
-                    // hovering would immediately toggle it CLOSED again
-                    // before the click could ever land on a menu item
-                    // inside — reading as "nothing happens" when clicking a
-                    // row's chevron. `preventDefault` here stops Radix's own
-                    // handler from firing at all (it checks
-                    // `defaultPrevented` before toggling); forcing `true`
-                    // instead of leaving it alone makes a direct click also
-                    // reliably open the menu even without a hover first
-                    // (e.g. keyboard/touch). `stopPropagation` keeps this
-                    // click from also reaching the row's own `onClick`.
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setChannelMenuOpen(true);
-                  }}
-                  aria-label={`Channels for ${contact.name}`}
-                  aria-haspopup="menu"
-                  aria-expanded={channelMenuOpen}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary transition-colors hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus"
-                >
-                  <ChevronRight className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
-                </button>
+                {chevronIsDecorative ? (
+                  <span
+                    ref={triggerRef}
+                    onClick={(e) => {
+                      // Purely visual now — no separate click behavior of its
+                      // own, so a click here does exactly what clicking
+                      // anywhere else on the row does (open the agent list).
+                      // Radix's own `Popover.Trigger` (this is one, via
+                      // `asChild`) still attaches a click-to-toggle handler to
+                      // whatever child it wraps regardless of what's rendered;
+                      // `preventDefault` suppresses that (checked via
+                      // `event.defaultPrevented`) without `stopPropagation`,
+                      // so the click still bubbles up to `ListItem`'s own
+                      // `onClick`. The flyout still opens on hover of either
+                      // the row or this icon (unchanged) — this only changes
+                      // what a raw click on the icon itself does.
+                      e.preventDefault();
+                    }}
+                    aria-hidden="true"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary"
+                  >
+                    <ChevronRight className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
+                  </span>
+                ) : (
+                  <button
+                    ref={triggerRef as React.RefObject<HTMLButtonElement>}
+                    type="button"
+                    onClick={(e) => {
+                      // Radix's own `Popover.Trigger` (which this button is,
+                      // via `asChild`) attaches its own click handler that
+                      // TOGGLES the controlled `open` state — harmless for a
+                      // click-to-open trigger, but this one is already opened
+                      // by hover (see the row's own `onMouseEnter` above), so
+                      // clicking the chevron while it's already open from
+                      // hovering would immediately toggle it CLOSED again
+                      // before the click could ever land on a menu item
+                      // inside — reading as "nothing happens" when clicking a
+                      // row's chevron. `preventDefault` here stops Radix's own
+                      // handler from firing at all (it checks
+                      // `defaultPrevented` before toggling); forcing `true`
+                      // instead of leaving it alone makes a direct click also
+                      // reliably open the menu even without a hover first
+                      // (e.g. keyboard/touch). `stopPropagation` keeps this
+                      // click from also reaching the row's own `onClick`.
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setChannelMenuOpen(true);
+                    }}
+                    aria-label={`Channels for ${contact.name}`}
+                    aria-haspopup="menu"
+                    aria-expanded={channelMenuOpen}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary transition-colors hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus"
+                  >
+                    <ChevronRight className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
+                  </button>
+                )}
               </Popover>
             </div>
           )}
         </div>
       }
+    />
+  );
+}
+
+/** Skill-agents screen's own top row (see `renderCallSkillRow` at this
+ *  file's root component) — deliberately NOT `ContactRow` above: per an
+ *  explicit follow-up, this row has exactly one action (call the skill),
+ *  so it skips that component's whole hover-to-reveal channel flyout
+ *  entirely rather than cramming a single-item version of it in. A plain,
+ *  static phone icon replaces the chevron — nothing to reveal on hover,
+ *  nothing hidden behind a click on the icon itself; the row's own
+ *  `onClick` (call skill) fires no matter where on the row it's clicked,
+ *  icon included.
+ *
+ *  Per a further explicit follow-up: this row isn't really "a contact" the
+ *  way every other row is — it's a one-off action ("call the skill you just
+ *  opened"), so the usual avatar/name/subtitle/favorite treatment is more
+ *  than it needs. Shows just the skill's own icon tile (same
+ *  `avatarClassName` accent every skill contact already carries, reused
+ *  as-is rather than re-deriving a color), the literal instruction "Call
+ *  this skill", and the phone icon — no initials, no name, no
+ *  description, no star. Availability still shows on the icon tile's
+ *  corner, same as everywhere else this skill's status appears. */
+function CallSkillRow({ contact, onCall }: { contact: CreateNewOutboundContact & { availability?: AgentStatus }; onCall: () => void }) {
+  const PhoneIcon = CONTACT_CHANNEL_ICON.voice;
+  return (
+    <ListItem
+      onClick={onCall}
+      leading={
+        <div className="relative shrink-0">
+          <div className={cn("flex h-9 w-9 items-center justify-center rounded-lyra-sm", contact.avatarClassName)}>
+            <Route className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
+          </div>
+          {contact.availability && (
+            <StatusIcon
+              status={contact.availability}
+              className="absolute bottom-[-2px] right-[-2px] px-0 border border-lyra-bg-surface-base"
+            />
+          )}
+        </div>
+      }
+      title="Call this skill"
+      trailing={<PhoneIcon className="h-4 w-4 shrink-0 text-lyra-fg-secondary" strokeWidth={1.5} aria-hidden="true" />}
     />
   );
 }
@@ -961,6 +1037,22 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
     />
   );
 
+  // Skill-agents screen's own top row — per an explicit follow-up, opening
+  // a skill's roster still needs its own one-tap way to call the skill
+  // directly, for whenever the browse screen's hover-to-call flyout either
+  // wasn't used (the agent clicked the row instead) or can't be (no hover
+  // on touch/mobile). Deliberately NOT `renderContactRow` above — that
+  // function's own onClick sends a skill BACK to this same screen (a no-op
+  // here, since we're already on it); this row instead goes straight to the
+  // same channel/Start Call destination the flyout's "Call" entry uses.
+  const renderCallSkillRow = (skillContact: CreateNewOutboundContact) => (
+    <CallSkillRow
+      key={skillContact.id}
+      contact={skillContact}
+      onCall={() => setScreen({ kind: "detail", contact: skillContact, query: "", initialChannel: "voice" })}
+    />
+  );
+
   const trigger = (
     <button
       type="button"
@@ -1022,8 +1114,17 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
     const filteredMembers = skillAgentSearch
       ? members.filter((member) => contactMatchesQuery(member, skillAgentSearch))
       : members;
+    // The skill contact itself, for the "call this skill directly" row
+    // above the search field — per an explicit follow-up, opening the
+    // roster shouldn't be the only way to reach it once here; the browse
+    // screen's own hover-to-call flyout doesn't help an agent who clicked
+    // the row instead, or on a touch device with no hover at all.
+    const skillContact = allContacts.find((c) => c.id === screen.skillId);
     content = (
       <div className="flex flex-col pb-2">
+        {skillContact && (
+          <div className="border-b border-lyra-border-subtle pb-1">{renderCallSkillRow(skillContact)}</div>
+        )}
         {members.length > 0 && (
           <div className="px-4 pb-2 pt-1">
             <SearchInput
@@ -1234,10 +1335,10 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
               <Input
                 id="new-outbound-search"
                 type="text"
-                placeholder="Enter"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={handleSearchKeyDown}
+                startIcon={<Search className="h-4 w-4 text-lyra-fg-secondary" strokeWidth={1.5} aria-hidden="true" />}
                 endIcon={
                   search ? (
                     <button

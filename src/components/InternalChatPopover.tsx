@@ -8,6 +8,7 @@ import {
   ContainerHeader,
   Tooltip,
   Draggable,
+  StatusIcon,
   type DraggableVariant,
   type DraggableHeaderControls,
 } from "@nicecxone/lyra-ui";
@@ -69,10 +70,20 @@ export interface InternalChatSharedProps {
 
 const AVATAR_SIZE = "h-9 w-9";
 
+/** Same `StatusIcon` corner-badge treatment New Outbound's `ContactAvatar`
+ *  and the Directory page's `DirectoryAvatar` already use — per an explicit
+ *  follow-up, an agent's availability should read the same way everywhere
+ *  they show up, not just in the directory/outbound flows. */
 function EmployeeAvatar({ employee, size = AVATAR_SIZE }: { employee: DirectoryAgent; size?: string }) {
   return (
-    <div className={cn("flex shrink-0 items-center justify-center rounded-full lyra-body-sm-emphasis", size, employee.avatarClassName)}>
-      {employee.initials}
+    <div className="relative shrink-0">
+      <div className={cn("flex items-center justify-center rounded-full lyra-body-sm-emphasis", size, employee.avatarClassName)}>
+        {employee.initials}
+      </div>
+      <StatusIcon
+        status={employee.availability}
+        className="absolute bottom-[-2px] right-[-2px] px-0 border border-lyra-bg-surface-base"
+      />
     </div>
   );
 }

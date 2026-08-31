@@ -6,7 +6,9 @@ import {
   ListItem,
   ActionIconButton,
   CHANNEL_ACCENT,
+  StatusIcon,
   type ChannelType,
+  type AgentStatus,
 } from "@nicecxone/lyra-ui";
 import { User, Headset, Route, UsersRound, ChevronLeft, Phone, Mail, MessageSquare, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -66,10 +68,23 @@ export function ContactActionButtons({
  *  established elsewhere in this app (CustomerInteractionPanel's
  *  MessageAvatar). ── */
 
-function DirectoryAvatar({ initials, className }: { initials: string; className?: string }) {
+/** `availability` is only ever set for agent rows (`DirectoryCustomer` has
+ *  no such concept) — same `StatusIcon` corner-badge treatment New
+ *  Outbound's own `ContactAvatar` uses (see that component's own doc
+ *  comment), reused here per an explicit follow-up rather than a second,
+ *  slightly different copy. */
+function DirectoryAvatar({ initials, className, availability }: { initials: string; className?: string; availability?: AgentStatus }) {
   return (
-    <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-full lyra-body-sm-emphasis", className)}>
-      {initials}
+    <div className="relative shrink-0">
+      <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-full lyra-body-sm-emphasis", className)}>
+        {initials}
+      </div>
+      {availability && (
+        <StatusIcon
+          status={availability}
+          className="absolute bottom-[-2px] right-[-2px] px-0 border border-lyra-bg-surface-base"
+        />
+      )}
     </div>
   );
 }
@@ -111,7 +126,13 @@ export function DirectoryPage({ customers, agents, skills, teams, onContactActio
     return (
       <ListItem
         key={contact.id}
-        leading={<DirectoryAvatar initials={contact.initials} className={contact.avatarClassName} />}
+        leading={
+          <DirectoryAvatar
+            initials={contact.initials}
+            className={contact.avatarClassName}
+            availability={"availability" in contact ? contact.availability : undefined}
+          />
+        }
         title={contact.name}
         subtitle={contact.subtitle}
         trailing={<ContactActionButtons channels={contact.channels} onAction={(channel) => onContactAction(contact, channel)} />}
@@ -196,8 +217,14 @@ export function DirectoryPage({ customers, agents, skills, teams, onContactActio
               key={skill.id}
               onClick={() => setDrillDown({ kind: "skill", id: skill.id })}
               leading={
-                <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-lyra-sm", accent.bg)}>
-                  <Route className={cn("h-4 w-4", accent.text)} strokeWidth={1.5} />
+                <div className="relative shrink-0">
+                  <div className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-lyra-sm", accent.bg)}>
+                    <Route className={cn("h-4 w-4", accent.text)} strokeWidth={1.5} />
+                  </div>
+                  <StatusIcon
+                    status={skill.availability}
+                    className="absolute bottom-[-2px] right-[-2px] px-0 border border-lyra-bg-surface-base"
+                  />
                 </div>
               }
               title={skill.name}
