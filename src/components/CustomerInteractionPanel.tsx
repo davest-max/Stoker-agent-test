@@ -52,6 +52,7 @@ import {
 import { cn } from "@/lib/utils";
 import { OutcomeButton } from "@/components/OutcomePanel";
 import { ConsultTransferButton } from "@/components/ConsultTransferPopover";
+import type { DirectoryAgent } from "@/data/directory";
 
 /* ── Shared types ── */
 
@@ -859,8 +860,23 @@ export interface InteractionInfoBarProps {
   issueSummary?: string;
   /** Passed straight through to `ConsultTransferButton`'s own `onAddToCall`
    *  — see that prop's doc comment. Only provided by `AgentNextGenPage`
-   *  while this interaction's own call is the live one. */
-  onAddColleagueToCall?: (colleague: { id: string; name: string }) => void;
+   *  while this interaction's own call is the live one. `sourceSkillName`
+   *  is set only when the colleague came from a skill consult rather than
+   *  a directly-picked agent — see `CallColleague.sourceSkillName`'s own
+   *  doc comment in `LiveVoiceCallBar.tsx`. */
+  onAddColleagueToCall?: (colleague: { id: string; name: string; sourceSkillName?: string }) => void;
+  /** Passed straight through to `ConsultTransferButton`'s own
+   *  `onStartAgentCall` — see that prop's doc comment. Always provided
+   *  (unlike `onAddColleagueToCall`, which only applies while this
+   *  interaction's own call is live), since calling an agent when there's
+   *  nothing to consult into just starts a new call instead. */
+  onStartAgentCall?: (agent: DirectoryAgent) => void;
+  /** Passed straight through to `ConsultTransferButton`'s own
+   *  `activeCallAgentIds` — see that prop's own doc comment. Same gating as
+   *  `onAddColleagueToCall` (only meaningful while this interaction's own
+   *  call is live), computed once in `AgentNextGenPage` from
+   *  `voiceCallConsult`/`voiceCallColleagues` rather than re-derived here. */
+  activeCallAgentIds?: Set<string>;
   /** Controlled (lifted to `AgentNextGenPage`) rather than left as
    *  `OutcomeButton`'s own internal state — see that component's own
    *  `open`/`onOpenChange` doc comment. */
@@ -888,6 +904,8 @@ export function InteractionInfoBar({
   customerName,
   issueSummary,
   onAddColleagueToCall,
+  onStartAgentCall,
+  activeCallAgentIds,
   outcomeOpen,
   onOutcomeOpenChange,
   onApproveOutcome,
@@ -901,7 +919,14 @@ export function InteractionInfoBar({
       <EscalationStatusPill status={escalationStatus} onStatusChange={onEscalationStatusChange} />
       <div className="h-4 w-px bg-lyra-border-subtle" />
       <div className="flex items-center gap-1">
-        <ConsultTransferButton customerName={customerName} issueSummary={issueSummary} onAddToCall={onAddColleagueToCall} />
+        <ConsultTransferButton
+          customerName={customerName}
+          issueSummary={issueSummary}
+          onAddToCall={onAddColleagueToCall}
+          activeChannelType={currentChannelType}
+          onStartAgentCall={onStartAgentCall}
+          activeCallAgentIds={activeCallAgentIds}
+        />
         <OutcomeButton
           customerName={customerName ?? "this customer"}
           open={outcomeOpen}

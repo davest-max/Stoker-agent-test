@@ -1132,6 +1132,15 @@ export function AgentNextGenPage({
             skills={DIRECTORY_SKILLS}
             teams={DIRECTORY_TEAMS}
             onContactAction={handleDirectoryContactAction}
+            // Customer rows' own channel icons start a real outbound
+            // interaction (see `CustomerOutboundActionButtons`'s own doc
+            // comment in DirectoryPage.tsx) — same config/handler the main
+            // "+ New Outbound" flow and `AddOutboundButton` already use, not
+            // a second copy.
+            onStartOutbound={handleStartOutboundCall}
+            outboundChannelOptions={OUTBOUND_CONFIG.channelOptions}
+            outboundPhoneOptions={OUTBOUND_CONFIG.phoneOptions}
+            outboundSkillOptions={OUTBOUND_CONFIG.skillOptions}
           />
         );
       case "customWorkspace":
@@ -1410,6 +1419,22 @@ export function AgentNextGenPage({
   const activeSubject = activeChannel?.subject ?? activeAssignment?.subject ?? "";
   const activeCaseId = activeChannel?.caseId ?? activeAssignment?.caseId ?? "";
   const activeEscalationStatus = activeChannel?.escalationStatus ?? activeAssignment?.escalationStatus;
+  // Agent ids already on THIS assignment's live call — a pending consult
+  // plus any already-merged colleagues — passed down to
+  // `ConsultTransferButton` so its Phone icon can show a persistent
+  // "on this call" state instead of going back to looking like a plain
+  // call button the moment the popup stays open (see that popover's own
+  // `onCall` doc comment for why it now stays open through a consult).
+  // Same gating as `onAddColleagueToCall` below: only while this
+  // interaction's own call is the live one, otherwise `undefined` — there's
+  // no "on this call" to show for a call that isn't this assignment's.
+  const activeCallAgentIds =
+    liveVoiceCall?.assignmentId === activeAssignmentId
+      ? new Set<string>([
+          ...(voiceCallConsult[activeAssignmentId!] ? [voiceCallConsult[activeAssignmentId!]!.id] : []),
+          ...(voiceCallColleagues[activeAssignmentId!] ?? []).map((c) => c.id),
+        ])
+      : undefined;
   // Merges any saved Overview-tab edits (see `customerFieldOverrides` above)
   // onto the seed record — the panel itself only ever sees this merged
   // view, never DIRECTORY_CUSTOMERS directly, so an edited field survives
@@ -1659,7 +1684,14 @@ export function AgentNextGenPage({
     if (!consult) return;
     setVoiceCallColleagues((prev) => ({
       ...prev,
-      [assignmentId]: [...(prev[assignmentId] ?? []), { id: consult.id, name: consult.name, isOnHold: false }],
+      [assignmentId]: [
+        ...(prev[assignmentId] ?? []),
+        // `sourceSkillName` carried over from the consult (see that field's
+        // own doc comment) so a skill-routed colleague keeps their
+        // attribution after merging into a full participant, not just
+        // while the pre-merge consult banner is showing.
+        { id: consult.id, name: consult.name, isOnHold: false, sourceSkillName: consult.sourceSkillName },
+      ],
     }));
     setVoiceCallConsult((prev) => ({ ...prev, [assignmentId]: undefined }));
     resumePrimaryOnly(assignmentId);
@@ -2810,6 +2842,18 @@ export function AgentNextGenPage({
                           ? (colleague) => startVoiceCallConsult(activeAssignmentId!, colleague)
                           : undefined
                       }
+                      // Calling an agent when there's nothing live to
+                      // consult into (any non-voice interaction, or a voice
+                      // one with no live call right now) just starts a
+                      // brand-new internal call instead — same
+                      // agent-kind branch `handleStartOutboundCall` already
+                      // uses for New Outbound's own agent rows, reused
+                      // as-is rather than re-derived here. Always provided
+                      // (not gated like `onAddColleagueToCall` above),
+                      // since this is the fallback for every case that one
+                      // doesn't cover.
+                      onStartAgentCall={(agent) => handleStartOutboundCall({ contact: agent, channel: "voice", phone: "", skillId: "" })}
+                      activeCallAgentIds={activeCallAgentIds}
                       outcomeOpen={outcomeButtonOpen}
                       onOutcomeOpenChange={setOutcomeButtonOpen}
                       // Same "dismiss just this channel vs. the whole card"

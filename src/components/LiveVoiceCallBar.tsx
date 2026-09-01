@@ -84,6 +84,13 @@ export interface CallColleague {
   name: string;
   isOnHold: boolean;
   heldSince?: number;
+  /** Set only when this colleague came from a skill consult rather than a
+   *  directly-picked agent (see `ConsultTransferPopover`'s own skill-call
+   *  flow) — nobody explicitly chose this person, a skill routed the call
+   *  to whoever was available, so it's worth keeping visible context on
+   *  where they came from. Purely cosmetic (see `formatParticipantLabel`
+   *  below); absent for a normal direct-agent consult. */
+  sourceSkillName?: string;
 }
 
 /** A private, pre-merge consult in progress — the primary party is
@@ -95,6 +102,21 @@ export interface CallColleague {
 export interface VoiceCallConsult {
   id: string;
   name: string;
+  /** See `CallColleague.sourceSkillName`'s own doc comment — carried over
+   *  onto the `CallColleague` this consult becomes on merge, so the
+   *  attribution survives past the consult banner into the Participants
+   *  menu/strip. */
+  sourceSkillName?: string;
+}
+
+/** Shared by `ConsultBanner`, `ParticipantChip`, and the Participants menu
+ *  below — appends "(Skill Name)" only when `sourceSkillName` is actually
+ *  set, so a directly-picked colleague's label is untouched. Kept separate
+ *  from the plain `name` field itself (rather than baking the skill name
+ *  into `name` at the source) so anything that still needs the bare name —
+ *  `getInitials`, tooltips elsewhere — doesn't have to parse it back out. */
+function formatParticipantLabel(name: string, sourceSkillName?: string): string {
+  return sourceSkillName ? `${name} (${sourceSkillName})` : name;
 }
 
 /** Small avatar+name pill used by the participant strip shown under the
@@ -209,10 +231,11 @@ function buildParticipantMenuItems({
     },
   ];
   for (const colleague of colleagues) {
+    const colleagueLabel = formatParticipantLabel(colleague.name, colleague.sourceSkillName);
     items.push({
       id: `${colleague.id}-hold`,
       icon: rowIcon(true, colleague.name),
-      label: `${colleague.isOnHold ? "Resume" : "Hold"} ${colleague.name}`,
+      label: `${colleague.isOnHold ? "Resume" : "Hold"} ${colleagueLabel}`,
       description: colleague.isOnHold
         ? `On hold ${formatElapsed(Math.floor((Date.now() - (colleague.heldSince ?? Date.now())) / 1000))}`
         : "Connected",
@@ -222,7 +245,7 @@ function buildParticipantMenuItems({
     items.push({
       id: `${colleague.id}-transfer`,
       icon: <ArrowRightLeft className="h-4 w-4 text-lyra-fg-secondary" strokeWidth={1.5} aria-hidden="true" />,
-      label: `Transfer call to ${colleague.name}`,
+      label: `Transfer call to ${colleagueLabel}`,
       onClick: () => onTransferToColleague(colleague.id),
     });
   }
@@ -785,14 +808,14 @@ export function LiveVoiceCallBar({
       aria-label={`Live call with ${displayName}, ${formatElapsed(elapsedSeconds)} elapsed${isVideoOn ? ", video on" : ""}`}
     >
       {consult && (
-        <ConsultBanner consultName={consult.name} onCancel={onCancelConsult} onMerge={onMergeConsult} />
+        <ConsultBanner consultName={formatParticipantLabel(consult.name, consult.sourceSkillName)} onCancel={onCancelConsult} onMerge={onMergeConsult} />
       )}
       {colleagues.length > 0 && !consult && (
         <div className="mb-2.5 flex items-center gap-1.5 overflow-x-auto">
           <ParticipantChip label="You" isSelf isOnHold={false} />
           <ParticipantChip label={displayName} isInternalAgent={isInternalAgentCall} isOnHold={isOnHold} />
           {colleagues.map((colleague) => (
-            <ParticipantChip key={colleague.id} label={colleague.name} isInternalAgent isOnHold={colleague.isOnHold} />
+            <ParticipantChip key={colleague.id} label={formatParticipantLabel(colleague.name, colleague.sourceSkillName)} isInternalAgent isOnHold={colleague.isOnHold} />
           ))}
         </div>
       )}
@@ -1235,14 +1258,14 @@ export function DockedVoiceControlBar({
         style={videoPanelSize ? { width: videoPanelSize.width } : undefined}
       >
         {consult && (
-          <ConsultBanner consultName={consult.name} onCancel={onCancelConsult} onMerge={onMergeConsult} />
+          <ConsultBanner consultName={formatParticipantLabel(consult.name, consult.sourceSkillName)} onCancel={onCancelConsult} onMerge={onMergeConsult} />
         )}
         {colleagues.length > 0 && !consult && (
           <div className="mb-2.5 flex items-center gap-1.5 overflow-x-auto">
             <ParticipantChip label="You" isSelf isOnHold={false} />
             <ParticipantChip label={displayName} isInternalAgent={isInternalAgentCall} isOnHold={isOnHold} />
             {colleagues.map((colleague) => (
-              <ParticipantChip key={colleague.id} label={colleague.name} isInternalAgent isOnHold={colleague.isOnHold} />
+              <ParticipantChip key={colleague.id} label={formatParticipantLabel(colleague.name, colleague.sourceSkillName)} isInternalAgent isOnHold={colleague.isOnHold} />
             ))}
           </div>
         )}

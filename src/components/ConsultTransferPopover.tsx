@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Popover,
   Tooltip,
@@ -14,6 +14,7 @@ import {
   AiSparkleIcon,
   CHANNEL_ACCENT,
   StatusIcon,
+  type ChannelType,
 } from "@nicecxone/lyra-ui";
 import { Route, Phone, UserPlus, ChevronLeft, ChevronRight, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -41,7 +42,15 @@ import { ConsultTransferIcon } from "@/components/CustomerInteractionPanel";
  * for InternalChatPopover's own onCall and OutcomePanel's onApprove. */
 
 type Tab = "favorites" | "agents" | "skills";
-type View = { kind: "list" } | { kind: "chat"; agentId: string };
+type View =
+  | { kind: "list" }
+  | { kind: "chat"; agentId: string }
+  // Selecting Call on a SkillRow (see that component's own onCall) opens
+  // this instead of the old console.log stub, per an explicit follow-up:
+  // a skill has no single person to consult, so this drills into its own
+  // ring→answer screen (see `SkillCallHeader`/`SkillCallContent`) rather
+  // than reusing the agent chat view.
+  | { kind: "callingSkill"; skillId: string };
 
 const AVATAR_SIZE = "h-9 w-9";
 
@@ -147,28 +156,78 @@ function SkillRow({
   );
 }
 
-/* ── Chat header — back / avatar+name / Phone, Add-to-interaction ──
- *  No standalone Transfer icon here — per an explicit follow-up, Transfer
- *  is now the handoff draft's own primary button (see `HandoffSummaryDraft`
- *  below) rather than a second, separate entry point next to it. */
+/** Channels "Add to interaction" actually makes sense for — deliberately
+ *  just web chat, per an explicit follow-up. SMS and WhatsApp were
+ *  considered and dropped: neither has a native multi-party concept (both
+ *  are a 1:1 thread between the customer's number and the business
+ *  number), so "adding" someone there wouldn't be visible to the customer
+ *  at all without sending them a real message, raises message-window/
+ *  template constraints (WhatsApp's 24-hour session rule), and introduces
+ *  send-collision risk between two agents with no protocol-level signal to
+ *  prevent it — real complexity with no matching payoff yet. Voice is
+ *  excluded even without a live call: Phone already covers the voice case
+ *  end to end (plain call with nothing live, consult/merge once there is —
+ *  see `hasLiveCall` below), so a separate Add button next to it would
+ *  just be a second way to do the same thing. Email is excluded because
+ *  there's no "add a third party to this email" concept at all — unlike a
+ *  call or a chat thread, an email has no live, join-able session to add
+ *  anyone to. */
+const CHANNELS_SUPPORTING_ADD_PERSON: ChannelType[] = ["chat"];
+
+/* ── Chat header — back / avatar+name / Phone, Transfer, Add-to-interaction ──
+ *  Transfer restored as its own standalone icon per an explicit follow-up
+ *  reverting an intermediate design (it had briefly moved onto the handoff
+ *  draft's own primary button — see that component's doc comment). Phone
+ *  now does double duty depending on the ACTIVE INTERACTION (not this
+ *  chat's own channel, which is always internal voice/text between
+ *  agents): with a live voice call to consult into, it starts/continues
+ *  the same consult-then-merge flow "Add to call" already does (see
+ *  `hasLiveCall` below); otherwise it starts a brand-new internal
+ *  agent-to-agent call as its own left-nav tile (see
+ *  `ConsultTransferButtonProps.onStartAgentCall`) — either way, calling an
+ *  agent always does *something* real now, never just a stub log. */
 
 function ChatHeader({
   agent,
   onBack,
   onCall,
+  onTransfer,
   onAddToInteraction,
-  addToCallLabel,
+  hasLiveCall,
+  activeChannelType,
+  isOnCall,
 }: {
   agent: DirectoryAgent;
   onBack: () => void;
   onCall: () => void;
+  onTransfer: () => void;
   onAddToInteraction: () => void;
-  /** Overrides the trailing button's title/tooltip when it's actually
-   *  wired to a live call (see `ConsultTransferButtonProps.onAddToCall`) —
-   *  "Add to call" reads more accurately than "Add to interaction" once
-   *  this really does drop the agent into an in-progress consult. */
-  addToCallLabel?: boolean;
+  /** True when the active interaction has a live voice call Phone can
+   *  actually consult into (see `ConsultTransferButtonProps.onAddToCall`'s
+   *  own gating — same condition, passed straight through rather than
+   *  re-derived here). Drives Phone's tooltip only now ("Call {name}" vs
+   *  "Consult with {name}") — Add-to-interaction's own visibility is
+   *  channel-based instead (see `activeChannelType` below), not derived
+   *  from this. */
+  hasLiveCall?: boolean;
+  /** The active interaction's current channel — determines whether
+   *  Add-to-interaction (UserPlus) renders at all. See
+   *  `CHANNELS_SUPPORTING_ADD_PERSON`'s own doc comment for which channels
+   *  qualify and why. */
+  activeChannelType?: ChannelType;
+  /** True once this agent is actually on the live call already — a pending
+   *  consult or a merged colleague, see `ConsultTransferButtonProps`'s own
+   *  `activeCallAgentIds` doc comment. Only meaningful now that the popup
+   *  stays open through a consult instead of closing immediately: this is
+   *  the "persistent on-a-call state" that gives the agent something to
+   *  look at while it stays open, rather than the button just silently
+   *  going back to its normal look. Swaps the subtitle line and gives
+   *  Phone a persistent (not just hover) tint — clicking it again is still
+   *  harmless (re-consulting the same colleague is a no-op), so it's left
+   *  enabled rather than disabled. */
+  isOnCall?: boolean;
 }) {
+  const canAddPerson = !!activeChannelType && CHANNELS_SUPPORTING_ADD_PERSON.includes(activeChannelType);
   return (
     <div className="flex items-center gap-2 border-b border-lyra-border-subtle px-3 py-2.5">
       <button
@@ -182,14 +241,27 @@ function ChatHeader({
       <AgentAvatar agent={agent} size="h-8 w-8" />
       <div className="min-w-0 flex-1">
         <p className="lyra-body-sm-emphasis truncate text-lyra-fg-default">{agent.name}</p>
-        {agent.subtitle && <p className="lyra-body-xs truncate text-lyra-fg-secondary">{agent.subtitle}</p>}
+        {isOnCall ? (
+          <p className="lyra-body-xs truncate text-lyra-fg-active-strong">On this call</p>
+        ) : (
+          agent.subtitle && <p className="lyra-body-xs truncate text-lyra-fg-secondary">{agent.subtitle}</p>
+        )}
       </div>
-      <ActionIconButton title={`Call ${agent.name}`} onClick={onCall}>
+      <ActionIconButton
+        title={isOnCall ? `On this call — ${agent.name}` : hasLiveCall ? `Consult with ${agent.name}` : `Call ${agent.name}`}
+        onClick={onCall}
+        className={cn(isOnCall && "bg-lyra-bg-active-subtle text-lyra-fg-active-strong hover:bg-lyra-bg-active-subtle")}
+      >
         <Phone className="h-4 w-4" strokeWidth={1.5} />
       </ActionIconButton>
-      <ActionIconButton title={addToCallLabel ? `Add ${agent.name} to call` : `Add ${agent.name} to interaction`} onClick={onAddToInteraction}>
-        <UserPlus className="h-4 w-4" strokeWidth={1.5} />
+      <ActionIconButton title={`Transfer to ${agent.name}`} onClick={onTransfer}>
+        <ConsultTransferIcon strokeWidth={1.5} />
       </ActionIconButton>
+      {canAddPerson && (
+        <ActionIconButton title={`Add ${agent.name} to interaction`} onClick={onAddToInteraction}>
+          <UserPlus className="h-4 w-4" strokeWidth={1.5} />
+        </ActionIconButton>
+      )}
     </div>
   );
 }
@@ -202,23 +274,21 @@ function ChatHeader({
  *  field (reusing lyra-ui's shared `AiSparkleIcon`, not a duplicate). Once
  *  sent, it becomes a normal message in the thread and this block doesn't
  *  reappear — `ChatMessages` only shows it while `messages.length === 0`.
- *  The primary button is the transfer action itself (`ConsultTransferIcon`
- *  + "Transfer to {name}") per an explicit follow-up — this is the one
- *  Transfer entry point for an agent chat now that `ChatHeader`'s
- *  standalone icon button has been removed; clicking it both posts this
- *  drafted note into the thread and hands the case off (see
- *  `onTransfer`'s own doc comment at the call site for why it's both, not
- *  just one or the other). */
+ *  Back to its original intent, per an explicit follow-up reverting an
+ *  intermediate design: this button only sends the drafted note as a
+ *  message — it has no transfer side effect. Transfer is its own
+ *  standalone action again, back in `ChatHeader` (see that component's own
+ *  doc comment). */
 function HandoffSummaryDraft({
   agent,
   value,
   onChange,
-  onTransfer,
+  onSend,
 }: {
   agent: DirectoryAgent;
   value: string;
   onChange: (value: string) => void;
-  onTransfer: () => void;
+  onSend: () => void;
 }) {
   return (
     <div className="flex flex-col gap-3 p-4">
@@ -229,9 +299,8 @@ function HandoffSummaryDraft({
         </p>
       </div>
       <Textarea value={value} onChange={(e) => onChange(e.target.value)} rows={5} />
-      <Button variant="default" className="w-full" disabled={!value.trim()} onClick={onTransfer}>
-        <ConsultTransferIcon strokeWidth={1.5} />
-        Transfer to {agent.name.split(" ")[0]}
+      <Button variant="default" className="w-full" disabled={!value.trim()} onClick={onSend}>
+        Send to {agent.name.split(" ")[0]}
       </Button>
     </div>
   );
@@ -242,17 +311,17 @@ function ChatMessages({
   messages,
   handoffSummary,
   onHandoffChange,
-  onTransferHandoff,
+  onSendHandoff,
 }: {
   agent: DirectoryAgent;
   messages: InternalChatMessage[];
   handoffSummary: string;
   onHandoffChange: (value: string) => void;
-  onTransferHandoff: () => void;
+  onSendHandoff: () => void;
 }) {
   if (messages.length === 0) {
     return (
-      <HandoffSummaryDraft agent={agent} value={handoffSummary} onChange={onHandoffChange} onTransfer={onTransferHandoff} />
+      <HandoffSummaryDraft agent={agent} value={handoffSummary} onChange={onHandoffChange} onSend={onSendHandoff} />
     );
   }
   return (
@@ -290,6 +359,117 @@ function ChatComposer({ draft, onDraftChange, onSend }: { draft: string; onDraft
       >
         <Send className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
       </button>
+    </div>
+  );
+}
+
+/* ── Calling a skill — consult/merge into a skill's queue ──
+ * Per an explicit follow-up: calling a skill (rather than a specific named
+ * agent) rings that skill's queue, and whichever available member of it
+ * "answers" becomes the consult — same cancel/merge resolution an agent
+ * consult already has (that part lives entirely in `LiveVoiceCallBar`'s
+ * existing Cancel/Merge, untouched here), plus a Transfer icon once
+ * connected that hands the customer straight to that specific agent
+ * instead of blind-transferring to the skill itself (see `SkillRow`'s own
+ * Transfer, which is unrelated/unchanged). The one new wrinkle a skill
+ * introduces that a named agent doesn't: you don't know who you're
+ * consulting until someone actually picks up, so this needs its own
+ * ringing sub-state first — see the `phase` prop both pieces share. */
+
+/** Header for the "calling a skill" screen — same back/leading/trailing
+ *  row shape as `ChatHeader`, but the trailing action swaps between Cancel
+ *  (while ringing, nothing live yet, so backing out is free) and Transfer
+ *  (once connected, mirroring `ChatHeader`'s own Transfer icon but aimed at
+ *  the specific agent who answered rather than the skill/agent this
+ *  header's for). */
+function SkillCallHeader({
+  skill,
+  phase,
+  agent,
+  onBack,
+  onCancelRinging,
+  onTransfer,
+}: {
+  skill: DirectorySkill;
+  phase: "ringing" | "connected";
+  agent?: DirectoryAgent;
+  onBack: () => void;
+  onCancelRinging: () => void;
+  onTransfer: () => void;
+}) {
+  const accent = CHANNEL_ACCENT[skill.channelType];
+  return (
+    <div className="flex items-center gap-2 border-b border-lyra-border-subtle px-3 py-2.5">
+      <button
+        type="button"
+        onClick={onBack}
+        aria-label="Back to list"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary transition-colors hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus"
+      >
+        <ChevronLeft className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
+      </button>
+      <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lyra-sm", accent.bg)}>
+        <Route className={cn("h-4 w-4", accent.text)} strokeWidth={1.5} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="lyra-body-sm-emphasis truncate text-lyra-fg-default">{skill.name}</p>
+        {phase === "connected" ? (
+          <p className="lyra-body-xs truncate text-lyra-fg-active-strong">On this call{agent ? ` — ${agent.name}` : ""}</p>
+        ) : (
+          <p className="lyra-body-xs truncate text-lyra-fg-secondary">Calling…</p>
+        )}
+      </div>
+      {phase === "ringing" ? (
+        <Button variant="outline" size="sm" onClick={onCancelRinging}>Cancel</Button>
+      ) : (
+        <ActionIconButton
+          title={agent ? `Transfer to ${agent.name}` : "Transfer"}
+          onClick={onTransfer}
+          className="bg-lyra-bg-active-subtle text-lyra-fg-active-strong hover:bg-lyra-bg-active-subtle"
+        >
+          <ConsultTransferIcon strokeWidth={1.5} />
+        </ActionIconButton>
+      )}
+    </div>
+  );
+}
+
+/** Body for the "calling a skill" screen — no message thread here (this is
+ *  a phone call, not a chat), just a centered status card: the skill's own
+ *  accent-colored glyph while ringing (nobody to show an avatar for yet),
+ *  swapped for the answered agent's real `AgentAvatar` once connected —
+ *  reusing that component rather than a one-off initials treatment, same
+ *  reuse-over-reinvention as everywhere else in this file. */
+function SkillCallContent({
+  skill,
+  phase,
+  agent,
+}: {
+  skill: DirectorySkill;
+  phase: "ringing" | "connected";
+  agent?: DirectoryAgent;
+}) {
+  const accent = CHANNEL_ACCENT[skill.channelType];
+  return (
+    <div className="flex min-h-[220px] flex-col items-center justify-center gap-3 px-6 py-10 text-center">
+      {phase === "connected" && agent ? (
+        <AgentAvatar agent={agent} size="h-14 w-14" />
+      ) : (
+        <div className={cn("flex h-14 w-14 items-center justify-center rounded-full", accent.bg)}>
+          <Route className={cn("h-6 w-6 animate-pulse", accent.text)} strokeWidth={1.5} aria-hidden="true" />
+        </div>
+      )}
+      {phase === "connected" && agent ? (
+        <div>
+          <p className="lyra-body-md-emphasis text-lyra-fg-default">Consulting with {agent.name}</p>
+          <p className="lyra-body-sm text-lyra-fg-secondary">Routed from {skill.name}</p>
+        </div>
+      ) : (
+        <div>
+          <p className="lyra-body-md-emphasis text-lyra-fg-default">Calling {skill.name}…</p>
+          <p className="lyra-body-sm text-lyra-fg-secondary">Waiting for an available agent to answer.</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -337,10 +517,33 @@ export interface ConsultTransferButtonProps {
    *  (not just undefined-checked at the call site) leaves the original stub
    *  behavior untouched for every other case — a digital interaction, or a
    *  voice interaction with no live call right now. */
-  onAddToCall?: (colleague: { id: string; name: string }) => void;
+  onAddToCall?: (colleague: { id: string; name: string; sourceSkillName?: string }) => void;
+  /** The active interaction's current channel — passed straight through to
+   *  `ChatHeader`'s own `activeChannelType` to gate Add-to-interaction's
+   *  visibility (see `CHANNELS_SUPPORTING_ADD_PERSON`). */
+  activeChannelType?: ChannelType;
+  /** Fired from Phone when there's no live call to consult into (see
+   *  `ChatHeader`'s own doc comment) — starts a brand-new internal
+   *  agent-to-agent voice call as its own left-nav tile. Same shape/
+   *  behavior as `AgentNextGenPage`'s own `handleStartOutboundCall`
+   *  agent-kind branch; passed straight through rather than re-derived
+   *  here. Optional with a console-log fallback, matching `onAddToCall`'s
+   *  own tolerance for a caller that hasn't wired it up. */
+  onStartAgentCall?: (agent: DirectoryAgent) => void;
+  /** Agent ids currently on THIS assignment's live call — a pending consult
+   *  (`voiceCallConsult[id]`) or an already-merged colleague
+   *  (`voiceCallColleagues[id]`), computed together since both mean the
+   *  same thing from this popup's point of view: "already on the call,
+   *  don't offer to call them again." Only meaningful (and only ever
+   *  passed) while this interaction's own call is live — same gating as
+   *  `onAddToCall` — so `ChatHeader` never has to re-derive that condition
+   *  itself, just check membership. Drives the persistent "on this call"
+   *  treatment on Phone once the popup stays open after a consult (see
+   *  `onCall`'s own doc comment below for why it stays open now). */
+  activeCallAgentIds?: Set<string>;
 }
 
-export function ConsultTransferButton({ customerName, issueSummary, onAddToCall }: ConsultTransferButtonProps) {
+export function ConsultTransferButton({ customerName, issueSummary, onAddToCall, activeChannelType, onStartAgentCall, activeCallAgentIds }: ConsultTransferButtonProps) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("agents");
   const [view, setView] = useState<View>({ kind: "list" });
@@ -353,12 +556,42 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall 
   // agent's chat opens — see `handoffSummaryFor` below, which computes the
   // AI-suggested default lazily instead of pre-seeding every agent up front.
   const [handoffDrafts, setHandoffDrafts] = useState<Record<string, string>>({});
+  // Who (if anyone) has "answered" the current skill call — undefined means
+  // still ringing. Reset by the effect below every time a *new* callingSkill
+  // view opens (including re-calling the same skill after backing out), not
+  // just on mount, since `view` gets a fresh object identity each time
+  // `SkillRow`'s onCall fires.
+  const [skillCallAgent, setSkillCallAgent] = useState<DirectoryAgent | undefined>(undefined);
 
   const resetAndClose = () => {
     setOpen(false);
     setView({ kind: "list" });
     setSearch("");
   };
+
+  // Simulates a skill's ring→answer routing: picks a random currently-
+  // available member of the skill (there's no real routing engine here —
+  // see `DirectorySkill.memberAgentIds`' own doc comment) after a short
+  // delay, then starts the exact same consult `onAddToCall` already runs
+  // for a directly-picked agent, just with `sourceSkillName` set so the
+  // Participants menu/strip can show where they came from. Staying ringing
+  // forever if nobody on the skill is available is a deliberate (if rough)
+  // edge case — Cancel is still reachable from `SkillCallHeader` either way.
+  useEffect(() => {
+    if (view.kind !== "callingSkill") return;
+    setSkillCallAgent(undefined);
+    const skill = DIRECTORY_SKILLS.find((s) => s.id === view.skillId);
+    if (!skill) return;
+    const available = DIRECTORY_AGENTS.filter((a) => skill.memberAgentIds.includes(a.id) && a.availability === "available");
+    if (available.length === 0) return;
+    const picked = available[Math.floor(Math.random() * available.length)];
+    const timer = setTimeout(() => {
+      setSkillCallAgent(picked);
+      onAddToCall?.({ id: picked.id, name: picked.name, sourceSkillName: skill.name });
+    }, 1200);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
 
   const handoffSummaryFor = (agent: DirectoryAgent): string =>
     handoffDrafts[agent.id] ??
@@ -373,25 +606,19 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall 
     console.log(`${action}:`, name);
   };
 
-  /** The handoff draft's primary button now doubles as the chat's one
-   *  Transfer entry point (per an explicit follow-up — `ChatHeader`'s
-   *  former standalone Transfer icon is gone). Both halves of what used to
-   *  be two separate actions happen together: post the drafted note into
-   *  the thread as a real message (same as the old "Send" behavior), then
-   *  run the actual transfer (today a stub `log` + close, matching every
-   *  other transfer/consult trigger in this popover — see `SkillRow`'s
-   *  `onTransfer` and this same `log("Transfer to", ...)` pattern above). */
-  const handleTransferHandoff = (agent: DirectoryAgent) => {
+  /** Back to its original, single-purpose behavior — per an explicit
+   *  follow-up reverting an intermediate design where this also ran the
+   *  transfer action. Just posts the drafted handoff note into the thread
+   *  as a normal message; Transfer is its own separate trigger again (see
+   *  `ChatHeader`'s own `onTransfer`, restored below). */
+  const handleSendHandoff = (agent: DirectoryAgent) => {
     const text = handoffSummaryFor(agent).trim();
-    if (text) {
-      setThreads((prev) => ({
-        ...prev,
-        [agent.id]: [...(prev[agent.id] ?? []), { id: `m${(prev[agent.id]?.length ?? 0) + 1}`, fromMe: true, text, timestamp: "Just now" }],
-      }));
-      setHandoffDrafts((prev) => ({ ...prev, [agent.id]: "" }));
-    }
-    log("Transfer to", agent.name);
-    resetAndClose();
+    if (!text) return;
+    setThreads((prev) => ({
+      ...prev,
+      [agent.id]: [...(prev[agent.id] ?? []), { id: `m${(prev[agent.id]?.length ?? 0) + 1}`, fromMe: true, text, timestamp: "Just now" }],
+    }));
+    setHandoffDrafts((prev) => ({ ...prev, [agent.id]: "" }));
   };
 
   const toggleFavorite = (id: string) =>
@@ -412,6 +639,7 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall 
   };
 
   const activeAgent = view.kind === "chat" ? DIRECTORY_AGENTS.find((a) => a.id === view.agentId) : undefined;
+  const activeSkillCall = view.kind === "callingSkill" ? DIRECTORY_SKILLS.find((s) => s.id === view.skillId) : undefined;
 
   const filteredAgents = DIRECTORY_AGENTS.filter((a) => contactMatchesQuery(a, search));
 
@@ -420,20 +648,65 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall 
 
   /* ── Header (fixed) ── */
   const header =
-    view.kind === "chat" && activeAgent ? (
+    view.kind === "callingSkill" && activeSkillCall ? (
+      <SkillCallHeader
+        skill={activeSkillCall}
+        phase={skillCallAgent ? "connected" : "ringing"}
+        agent={skillCallAgent}
+        onBack={() => setView({ kind: "list" })}
+        // Ringing hasn't started any real consult yet (see the effect
+        // above — `onAddToCall` only fires once someone "answers"), so
+        // backing out here is free, same as Back.
+        onCancelRinging={() => setView({ kind: "list" })}
+        // Full transfer to whichever agent the skill routed to — distinct
+        // from `SkillRow`'s own Transfer (a blind transfer to the skill
+        // queue itself, unrelated to who's currently being consulted).
+        // Same stub-log pattern as every other transfer action in this
+        // file — there's no real transfer backend to wire into yet.
+        onTransfer={() => {
+          if (skillCallAgent) {
+            log("Transfer to", skillCallAgent.name);
+            resetAndClose();
+          }
+        }}
+      />
+    ) : view.kind === "chat" && activeAgent ? (
       <ChatHeader
         agent={activeAgent}
         onBack={() => setView({ kind: "list" })}
-        onCall={() => log("Call", activeAgent.name)}
-        onAddToInteraction={() => {
+        // With a live call to consult into, Phone starts/joins that same
+        // consult-then-merge flow "Add to call" already runs (identical
+        // `onAddToCall` call+close). Otherwise — any non-voice active
+        // interaction, or a voice one with no live call right now — it
+        // starts a brand-new internal agent-to-agent call instead (see
+        // `onStartAgentCall`'s own doc comment): calling an agent from here
+        // always does something real, never just a stub log.
+        onCall={() => {
           if (onAddToCall) {
+            // Consulting into a call that's already live: per an explicit
+            // follow-up, the popup stays open (and focus stays put on
+            // whichever assignment card this was opened from) until the
+            // agent closes it themselves — the whole point is to let them
+            // watch the consult connect/merge without losing this chat.
+            // Deliberately NOT calling `resetAndClose()` here, unlike the
+            // `onStartAgentCall` branch right below, which still does.
             onAddToCall({ id: activeAgent.id, name: activeAgent.name });
+          } else if (onStartAgentCall) {
+            onStartAgentCall(activeAgent);
             resetAndClose();
           } else {
-            log("Add to interaction", activeAgent.name);
+            log("Call", activeAgent.name);
           }
         }}
-        addToCallLabel={!!onAddToCall}
+        onTransfer={() => { log("Transfer to", activeAgent.name); resetAndClose(); }}
+        // Only ever rendered/reachable when `activeChannelType` doesn't
+        // qualify for it (see `ChatHeader`'s own `canAddPerson`) — still
+        // just a stub log, per the earlier critique that a real "group
+        // chat" merge is its own separate, not-yet-built feature.
+        onAddToInteraction={() => log("Add to interaction", activeAgent.name)}
+        hasLiveCall={!!onAddToCall}
+        activeChannelType={activeChannelType}
+        isOnCall={!!activeCallAgentIds?.has(activeAgent.id)}
       />
     ) : (
       <div className="flex flex-col gap-2 px-3 pb-2 pt-3">
@@ -451,14 +724,18 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall 
 
   /* ── Content (scrollable) ── */
   let content: React.ReactNode;
-  if (view.kind === "chat" && activeAgent) {
+  if (view.kind === "callingSkill" && activeSkillCall) {
+    content = (
+      <SkillCallContent skill={activeSkillCall} phase={skillCallAgent ? "connected" : "ringing"} agent={skillCallAgent} />
+    );
+  } else if (view.kind === "chat" && activeAgent) {
     content = (
       <ChatMessages
         agent={activeAgent}
         messages={threads[activeAgent.id] ?? []}
         handoffSummary={handoffSummaryFor(activeAgent)}
         onHandoffChange={(value) => setHandoffDrafts((prev) => ({ ...prev, [activeAgent.id]: value }))}
-        onTransferHandoff={() => handleTransferHandoff(activeAgent)}
+        onSendHandoff={() => handleSendHandoff(activeAgent)}
       />
     );
   } else if (tab === "agents") {
@@ -488,7 +765,7 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall 
             skill={skill}
             favorited={favoriteIds.has(skill.id)}
             onToggleFavorite={() => toggleFavorite(skill.id)}
-            onCall={() => log("Call skill", skill.name)}
+            onCall={() => setView({ kind: "callingSkill", skillId: skill.id })}
             onTransfer={() => { log("Transfer to skill", skill.name); resetAndClose(); }}
           />
         ))}
@@ -530,7 +807,7 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall 
                 skill={skill}
                 favorited
                 onToggleFavorite={() => toggleFavorite(skill.id)}
-                onCall={() => log("Call skill", skill.name)}
+                onCall={() => setView({ kind: "callingSkill", skillId: skill.id })}
                 onTransfer={() => { log("Transfer to skill", skill.name); resetAndClose(); }}
               />
             ))}

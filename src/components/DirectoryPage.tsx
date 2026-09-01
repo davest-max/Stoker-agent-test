@@ -9,10 +9,13 @@ import {
   StatusIcon,
   type ChannelType,
   type AgentStatus,
+  type CreateNewOutboundContact,
+  type CreateNewChannelOption,
 } from "@nicecxone/lyra-ui";
 import { User, Headset, Route, UsersRound, ChevronLeft, Phone, Mail, MessageSquare, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { contactMatchesQuery, type DirectoryCustomer, type DirectoryAgent, type DirectorySkill, type DirectoryTeam } from "@/data/directory";
+import { AddOutboundButton } from "@/components/NewOutboundPopover";
 
 /* ── Contact action buttons — one icon button per channel the record
  *  supports, colored via `CHANNEL_ACCENT` (the same lyra-ui map the
@@ -64,6 +67,60 @@ export function ContactActionButtons({
   );
 }
 
+/** Customer rows' own trailing actions — per an explicit follow-up
+ *  ("allow the user to start a voice call, email, chat, whatsapp with a
+ *  customer [from the directory]. This would be an outbound interaction"),
+ *  each icon now actually starts a real outbound interaction instead of
+ *  firing the generic `onContactAction` stub `ContactActionButtons` above
+ *  still uses for agent rows. Reuses `AddOutboundButton` (the interaction
+ *  header's own "+" control) rather than a second, parallel "start an
+ *  outbound thing" implementation — its `renderTrigger`/`preselectedChannel`
+ *  props exist specifically for this caller, so each channel icon opens the
+ *  exact same skill-selection screen New Outbound itself uses, just
+ *  pre-selected to the channel that was clicked (the agent can still switch
+ *  channels from that screen). Scoped to customers only, per the request's
+ *  own wording — agent rows keep `ContactActionButtons`/`onContactAction`
+ *  unchanged. */
+function CustomerOutboundActionButtons({
+  contact,
+  channelOptions,
+  phoneOptions,
+  skillOptions,
+  onStartOutbound,
+}: {
+  contact: DirectoryCustomer;
+  channelOptions: CreateNewChannelOption[];
+  phoneOptions: { value: string; label: string }[];
+  skillOptions: { value: string; label: string }[];
+  onStartOutbound: (selection: { contact: CreateNewOutboundContact; channel: ChannelType; phone: string; skillId: string }) => void;
+}) {
+  const visible = CONTACT_CHANNEL_ORDER.filter((type) => contact.channels.includes(type));
+  return (
+    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+      {visible.map((type) => {
+        const Icon = CONTACT_CHANNEL_ICON[type];
+        const accent = CHANNEL_ACCENT[type];
+        return (
+          <AddOutboundButton
+            key={type}
+            contact={contact}
+            preselectedChannel={type}
+            channelOptions={channelOptions}
+            phoneOptions={phoneOptions}
+            skillOptions={skillOptions}
+            onStart={(channel, addressValue, skillId) => onStartOutbound({ contact, channel, phone: addressValue, skillId })}
+            renderTrigger={({ onClick, open }) => (
+              <ActionIconButton size="sm" title={CONTACT_CHANNEL_LABEL[type]} aria-expanded={open} onClick={onClick}>
+                <Icon className={cn("h-4 w-4", accent.text)} strokeWidth={1.5} />
+              </ActionIconButton>
+            )}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 /* ── Avatar helper — matches the initials-circle pattern already
  *  established elsewhere in this app (CustomerInteractionPanel's
  *  MessageAvatar). ── */
@@ -100,9 +157,29 @@ export interface DirectoryPageProps {
   skills: DirectorySkill[];
   teams: DirectoryTeam[];
   onContactAction: (contact: DirectoryCustomer | DirectoryAgent, channel: ChannelType) => void;
+  /** Starts a real outbound interaction from a customer row's own channel
+   *  icon (see `CustomerOutboundActionButtons` above) — same shape as
+   *  `NewOutboundConfig.onStartCall`/`AgentNextGenPage`'s own
+   *  `handleStartOutboundCall`, passed straight through rather than
+   *  re-derived here. Customers only; agent rows still go through
+   *  `onContactAction` above, unchanged. */
+  onStartOutbound: (selection: { contact: CreateNewOutboundContact; channel: ChannelType; phone: string; skillId: string }) => void;
+  outboundChannelOptions: CreateNewChannelOption[];
+  outboundPhoneOptions: { value: string; label: string }[];
+  outboundSkillOptions: { value: string; label: string }[];
 }
 
-export function DirectoryPage({ customers, agents, skills, teams, onContactAction }: DirectoryPageProps) {
+export function DirectoryPage({
+  customers,
+  agents,
+  skills,
+  teams,
+  onContactAction,
+  onStartOutbound,
+  outboundChannelOptions,
+  outboundPhoneOptions,
+  outboundSkillOptions,
+}: DirectoryPageProps) {
   const [activeTab, setActiveTab] = useState<DirectoryTab>("customers");
   const [search, setSearch] = useState("");
   const [drillDown, setDrillDown] = useState<DrillDown>(null);
@@ -122,16 +199,41 @@ export function DirectoryPage({ customers, agents, skills, teams, onContactActio
   const filteredSkills = skills.filter((s) => contactMatchesQuery(s, search));
   const filteredTeams = teams.filter((t) => contactMatchesQuery(t, search));
 
-  function renderContactRow(contact: DirectoryCustomer | DirectoryAgent) {
+  // Split by type (rather than one function branching on `contact.kind`) so
+  // `CustomerOutboundActionButtons` gets a real `DirectoryCustomer`, not a
+  // `DirectoryCustomer | DirectoryAgent` narrowed only by a runtime `kind`
+  // check — `kind`'s type is identical across both interfaces (neither
+  // narrows it to a literal), so TypeScript can't discriminate the union on
+  // it alone. Every call site already knows which one it has (the customers
+  // tab's list is always `DirectoryCustomer[]`; the agents tab and both
+  // skill/team drill-down rosters are always `DirectoryAgent[]`), so this
+  // is a plain, honestly-typed split, not a workaround.
+  function renderCustomerRow(contact: DirectoryCustomer) {
+    return (
+      <ListItem
+        key={contact.id}
+        leading={<DirectoryAvatar initials={contact.initials} className={contact.avatarClassName} />}
+        title={contact.name}
+        subtitle={contact.subtitle}
+        trailing={
+          <CustomerOutboundActionButtons
+            contact={contact}
+            channelOptions={outboundChannelOptions}
+            phoneOptions={outboundPhoneOptions}
+            skillOptions={outboundSkillOptions}
+            onStartOutbound={onStartOutbound}
+          />
+        }
+      />
+    );
+  }
+
+  function renderAgentRow(contact: DirectoryAgent) {
     return (
       <ListItem
         key={contact.id}
         leading={
-          <DirectoryAvatar
-            initials={contact.initials}
-            className={contact.avatarClassName}
-            availability={"availability" in contact ? contact.availability : undefined}
-          />
+          <DirectoryAvatar initials={contact.initials} className={contact.avatarClassName} availability={contact.availability} />
         }
         title={contact.name}
         subtitle={contact.subtitle}
@@ -164,7 +266,7 @@ export function DirectoryPage({ customers, agents, skills, teams, onContactActio
           <p className="lyra-heading-sm text-lyra-fg-default">{skill?.name}</p>
           {skill?.description && <p className="lyra-body-sm text-lyra-fg-secondary">{skill.description}</p>}
         </div>
-        <div className="flex-1 overflow-y-auto">{members.map(renderContactRow)}</div>
+        <div className="flex-1 overflow-y-auto">{members.map(renderAgentRow)}</div>
       </div>
     );
   }
@@ -180,7 +282,7 @@ export function DirectoryPage({ customers, agents, skills, teams, onContactActio
           <p className="lyra-heading-sm text-lyra-fg-default">{team?.name}</p>
           {team?.description && <p className="lyra-body-sm text-lyra-fg-secondary">{team.description}</p>}
         </div>
-        <div className="flex-1 overflow-y-auto">{members.map(renderContactRow)}</div>
+        <div className="flex-1 overflow-y-auto">{members.map(renderAgentRow)}</div>
       </div>
     );
   }
@@ -207,8 +309,8 @@ export function DirectoryPage({ customers, agents, skills, teams, onContactActio
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {activeTab === "customers" && filteredCustomers.map(renderContactRow)}
-        {activeTab === "agents" && filteredAgents.map(renderContactRow)}
+        {activeTab === "customers" && filteredCustomers.map(renderCustomerRow)}
+        {activeTab === "agents" && filteredAgents.map(renderAgentRow)}
 
         {activeTab === "skills" && filteredSkills.map((skill) => {
           const accent = CHANNEL_ACCENT[skill.channelType];

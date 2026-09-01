@@ -696,7 +696,10 @@ function OutboundDetailScreen({
  * screen behind it, so there's no back arrow, and no "No match found"
  * branch either (the contact is always on hand here, never `null`).
  * Anchored to its own trigger (not the left-nav's), same as any other
- * `Popover`-based control in this file. */
+ * `Popover`-based control in this file.
+ * Reused as-is (not re-approximated locally) for Directory's own per-channel
+ * customer icons — see `preselectedChannel`/`renderTrigger` below, added
+ * specifically for that second caller. */
 
 export interface AddOutboundButtonProps {
   contact: CreateNewOutboundContact;
@@ -710,6 +713,23 @@ export interface AddOutboundButtonProps {
   openChannelTypes?: ChannelType[];
   onStart: (channel: ChannelType, addressValue: string, skillId: string) => void;
   className?: string;
+  /** Pre-selects a channel in `OutboundDetailScreen`'s radio group — same
+   *  "clicked a specific channel icon, not a generic add button" pattern
+   *  `ContactRow`'s own hover icons use inside the browse screen (see
+   *  `Screen`'s `initialChannel`). The agent can still switch channels from
+   *  the same screen; this just saves the extra click when the entry point
+   *  already told us which one they meant. */
+  preselectedChannel?: ChannelType;
+  /** Renders this button's own trigger instead of the default "+" icon
+   *  button — added for Directory's customer rows, which already show one
+   *  distinct icon per channel (`Phone`/`Mail`/etc., see `DirectoryPage`'s
+   *  `CONTACT_CHANNEL_ICON`) rather than a single generic "add" affordance.
+   *  Receives `onClick` to wire into whatever element the caller renders
+   *  (a lyra-ui `ActionIconButton`, typically); `open` is exposed too in
+   *  case the caller wants to reflect it (e.g. `aria-expanded`). Omitted
+   *  keeps today's default "+" button + "Add Outbound" tooltip, unchanged
+   *  for `CustomerInteractionPanel`'s existing usage. */
+  renderTrigger?: (props: { onClick: () => void; open: boolean }) => React.ReactNode;
 }
 
 export function AddOutboundButton({
@@ -720,6 +740,8 @@ export function AddOutboundButton({
   openChannelTypes,
   onStart,
   className,
+  preselectedChannel,
+  renderTrigger,
 }: AddOutboundButtonProps) {
   const [open, setOpen] = useState(false);
 
@@ -742,58 +764,75 @@ export function AddOutboundButton({
     </div>
   );
 
-  return (
+  const toggleOpen = () => setOpen((v) => !v);
+
+  const trigger = renderTrigger ? (
+    renderTrigger({ onClick: toggleOpen, open })
+  ) : (
+    <button
+      type="button"
+      aria-label="Add Outbound"
+      aria-haspopup="true"
+      aria-expanded={open}
+      onClick={toggleOpen}
+      className={cn(
+        "flex h-8 w-8 shrink-0 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary transition-colors hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus",
+        className
+      )}
+    >
+      <Plus className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
+    </button>
+  );
+
+  const popover = (
+    <Popover
+      open={open}
+      onOpenChange={setOpen}
+      placement="bottom"
+      align="start"
+      sideOffset={4}
+      maxWidth="320px"
+      maxHeight="520px"
+      // `z-[10003]`, not the baseline `z-[9999]` — matches the tier
+      // lyra-ui's own `OutboundAddButton` uses (see its own doc comment
+      // in create-new.tsx) for a "+" that can end up nested inside
+      // another `z-[9999]` popover. Not currently nested anywhere in
+      // this app, just cheap insurance if a future caller (e.g.
+      // `InteractionNavItem.headerAction`) renders this inside one —
+      // higher than strictly needed here, never lower.
+      // it strictly needs to be there.
+      className="z-[10003] w-[320px]"
+      header={header}
+      content={
+        <OutboundDetailScreen
+          contact={contact}
+          query=""
+          preselectedChannel={preselectedChannel}
+          channelOptions={channelOptions}
+          phoneOptions={phoneOptions}
+          skillOptions={skillOptions}
+          recentSkillOptions={[]}
+          disabledChannels={openChannelTypes}
+          onStart={(channel, addressValue, skillId) => {
+            onStart(channel, addressValue, skillId);
+            setOpen(false);
+          }}
+        />
+      }
+    >
+      {trigger}
+    </Popover>
+  );
+
+  // A caller-supplied trigger already carries its own accessible name/
+  // tooltip (e.g. Directory's per-channel `ActionIconButton title="Call
+  // {name}"`) — wrapping it in this component's own "Add Outbound" Tooltip
+  // too would just double up on that. Only the default "+" button gets it.
+  return renderTrigger ? (
+    popover
+  ) : (
     <Tooltip content="Add Outbound" placement="bottom" asLabel>
-      <span className="inline-flex">
-        <Popover
-          open={open}
-          onOpenChange={setOpen}
-          placement="bottom"
-          align="start"
-          sideOffset={4}
-          maxWidth="320px"
-          maxHeight="520px"
-          // `z-[10003]`, not the baseline `z-[9999]` — matches the tier
-          // lyra-ui's own `OutboundAddButton` uses (see its own doc comment
-          // in create-new.tsx) for a "+" that can end up nested inside
-          // another `z-[9999]` popover. Not currently nested anywhere in
-          // this app, just cheap insurance if a future caller (e.g.
-          // `InteractionNavItem.headerAction`) renders this inside one —
-          // higher than strictly needed here, never lower.
-          // it strictly needs to be there.
-          className="z-[10003] w-[320px]"
-          header={header}
-          content={
-            <OutboundDetailScreen
-              contact={contact}
-              query=""
-              channelOptions={channelOptions}
-              phoneOptions={phoneOptions}
-              skillOptions={skillOptions}
-              recentSkillOptions={[]}
-              disabledChannels={openChannelTypes}
-              onStart={(channel, addressValue, skillId) => {
-                onStart(channel, addressValue, skillId);
-                setOpen(false);
-              }}
-            />
-          }
-        >
-          <button
-            type="button"
-            aria-label="Add Outbound"
-            aria-haspopup="true"
-            aria-expanded={open}
-            onClick={() => setOpen((v) => !v)}
-            className={cn(
-              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary transition-colors hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus",
-              className
-            )}
-          >
-            <Plus className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
-          </button>
-        </Popover>
-      </span>
+      <span className="inline-flex">{popover}</span>
     </Tooltip>
   );
 }
