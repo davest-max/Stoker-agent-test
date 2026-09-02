@@ -670,7 +670,26 @@ function OutboundDetailScreen({
         ))}
       </RadioGroup>
 
-      {contact ? (
+      {/* Once a channel is picked, a contact with only one number/address on
+       *  file gets a plain read-only field instead of the `Select` below —
+       *  per an explicit follow-up, a dropdown chevron implies there's a
+       *  choice to make, and showing one for a single value is misleading.
+       *  `disabled={!selectedChannel}`'s own "Select a channel first"
+       *  placeholder state is untouched (that dropdown isn't claiming
+       *  multiple addresses exist, just that none are known yet). */}
+      {contact && selectedChannel && addressOptions.length <= 1 ? (
+        <Input
+          label={
+            selectedChannel === "email"
+              ? "Email Address"
+              : selectedChannel === "whatsapp"
+                ? "WhatsApp Handle"
+                : "Phone"
+          }
+          value={addressOptions[0]?.value ?? addressValue}
+          readonly
+        />
+      ) : contact ? (
         <Select
           label={
             selectedChannel === "email"

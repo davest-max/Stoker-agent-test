@@ -831,6 +831,21 @@ export function SearchContactsPage() {
       <TableToolbar
         recordCount={hasSearched ? totalRecords : undefined}
         recordLabel="Interactions"
+        // `TableToolbar`'s own `filters` slot only renders at all once its
+        // internal `isFiltersWide` check passes (default breakpoint 991px)
+        // — below that it swaps to `{collapsedFilterChip}{advancedSearchNode}`
+        // instead, dropping `filters` entirely since `collapsedFilterChip`
+        // only exists when `filterDefs` is passed to `TableToolbar` itself
+        // (which it no longer is — see this file's own note on that above).
+        // Without this override, the whole custom Filters dropdown below
+        // silently disappeared any time this panel got narrower than 991px
+        // (flagged directly). `0` keeps `isFiltersWide` true unconditionally
+        // — `FiltersDropdown` is already this page's own "collapsed" filter
+        // experience (one button, not a row of chips), so there's nothing
+        // left for `TableToolbar`'s own collapse behavior to usefully do;
+        // the `flex-wrap` row it renders into handles genuinely narrow
+        // widths by wrapping instead.
+        filtersCollapseWidth={0}
         // Compact ("sm") sizing for the whole filter row — per an explicit
         // follow-up, the filter chips/date range/Query Builder button were
         // reading at the same visual weight as the primary search row
