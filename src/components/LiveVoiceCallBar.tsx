@@ -85,6 +85,134 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), Math.max(min, max));
 }
 
+/** The layouts either presentation of this bar can render, from roomiest to
+ *  tightest, per an explicit follow-up ("deliberate two-row layout at a
+ *  breakpoint" plus "extend the existing auto-undock precedent into a
+ *  minimized pill", both without ever collapsing the identity cluster
+ *  itself — the avatar/name/timer stay intact at every tier):
+ *   - "full": everything in one row — the only layout before this, and
+ *     still the default whenever there's room for it.
+ *   - "two-row": the identity cluster (avatar + name/timer, or the
+ *     switch-call trigger in `LiveVoiceCallBar`) keeps its own line exactly
+ *     as-is; the actual controls (Participants/Hold/Mute/Mask/Record/
+ *     Keypad/Video/Dock/Hang Up) stack onto a second line below it instead
+ *     of squeezing into the same row.
+ *   - "pill": floating bar only. `DockedVoiceControlBar` has no pill of its
+ *     own — it auto-undocks to floating instead once even two-row won't fit
+ *     (see `AgentNextGenPage`'s own squeeze check), so by the time a pill
+ *     would ever be needed, the floating bar is already what's on screen. A
+ *     minimized chip (avatar + hold/mute state + timer) that expands on tap
+ *     — the literal extension of that same "pop out when squeezed" idea to
+ *     the case where popping out doesn't help because the whole viewport is
+ *     this narrow to begin with. */
+type VoiceBarLayoutTier = "full" | "two-row" | "pill";
+
+/** Measures the identity cluster's and the controls row's own natural
+ *  (unconstrained) widths and returns which `VoiceBarLayoutTier` actually
+ *  fits `availableWidth`. Shared by both presentations so the two
+ *  thresholds — and the exact `ROW_GAP` they're measured against — are one
+ *  source of truth rather than two independently-tuned copies:
+ *  `LiveVoiceCallBar` passes how much of the viewport it has to work with;
+ *  `DockedVoiceControlBar` passes however much room `AgentNextGenPage`'s own
+ *  squeeze check reports for the panel it's docked into.
+ *  The two refs this returns are meant to be attached to persistent DOM
+ *  nodes that stay mounted at every tier (visually hidden, not removed, when
+ *  a tighter tier stops showing them) — see `LiveVoiceCallBar`'s own render
+ *  for how a "pill" tier keeps both nodes alive off-screen purely so
+ *  measurement (and the ability to grow back out on the next resize) keeps
+ *  working. `allowPill: false` (the docked presentation) simply never
+ *  returns "pill", collapsing that case into "two-row" instead. */
+function useVoiceBarLayoutTier(
+  availableWidth: number | null,
+  allowPill: boolean
+): { tier: VoiceBarLayoutTier; identityRef: React.RefObject<HTMLDivElement | null>; controlsRef: React.RefObject<HTMLDivElement | null>; controlsNeededWidth: number } {
+  const identityRef = useRef<HTMLDivElement>(null);
+  const controlsRef = useRef<HTMLDivElement>(null);
+  const [identityWidth, setIdentityWidth] = useState(0);
+  const [controlsWidth, setControlsWidth] = useState(0);
+
+  // Both nodes stay mounted for the lifetime of the bar (see this
+  // function's own doc comment), so a single observer set up once covers
+  // every tier change — no re-observing needed as `tier` itself changes.
+  useEffect(() => {
+    const identityEl = identityRef.current;
+    const controlsEl = controlsRef.current;
+    if (!identityEl || !controlsEl) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const width = Math.ceil(entry.contentRect.width);
+        if (entry.target === identityEl) setIdentityWidth(width);
+        else if (entry.target === controlsEl) setControlsWidth(width);
+      }
+    });
+    observer.observe(identityEl);
+    observer.observe(controlsEl);
+    return () => observer.disconnect();
+  }, []);
+
+  // Matches this row's own `gap-3` (0.75rem) between the identity cluster
+  // and the controls — "full" needs room for both plus this gap; "two-row"
+  // only needs room for the wider of the two, stacked, so the gap doesn't
+  // apply there.
+  const ROW_GAP = 12;
+  const controlsNeededWidth = Math.max(identityWidth, controlsWidth);
+  let tier: VoiceBarLayoutTier = "full";
+  if (availableWidth !== null && availableWidth < identityWidth + controlsWidth + ROW_GAP) {
+    tier = allowPill && availableWidth < controlsNeededWidth ? "pill" : "two-row";
+  }
+  return { tier, identityRef, controlsRef, controlsNeededWidth };
+}
+
+/** The minimized "pill" a `VoiceBarLayoutTier` of `"pill"` shows instead of
+ *  the full bar — floating presentation only (see that type's own doc
+ *  comment for why the docked one never needs this). Deliberately reuses
+ *  the SAME avatar element the full bar renders rather than a smaller one
+ *  of its own, for visual continuity between the two states. Shows just
+ *  enough live status to be useful at a glance without expanding — hold
+ *  state (red, matches every other hold treatment in this file) takes
+ *  priority over muted, matching this bar's own "hold is the more critical
+ *  state" ordering elsewhere; the plain elapsed timer shows when neither
+ *  applies. Tapping anywhere on it expands back to the full two-row layout
+ *  (see `isPillExpanded` in `LiveVoiceCallBar`). */
+function VoiceBarPill({
+  avatar,
+  displayName,
+  elapsedSeconds,
+  isOnHold,
+  heldSeconds,
+  isMuted,
+  onExpand,
+}: {
+  avatar: React.ReactNode;
+  displayName: string;
+  elapsedSeconds: number;
+  isOnHold: boolean;
+  heldSeconds?: number;
+  isMuted: boolean;
+  onExpand: () => void;
+}) {
+  const statusLabel = isOnHold ? `on hold ${formatElapsed(heldSeconds ?? 0)}` : formatElapsed(elapsedSeconds);
+  return (
+    <button
+      type="button"
+      onClick={onExpand}
+      title={`${displayName} — tap to expand call controls`}
+      aria-label={`${displayName}, ${statusLabel}${isMuted ? ", muted" : ""} — tap to expand call controls`}
+      className="flex items-center gap-1.5 rounded-full border border-lyra-border-subtle bg-lyra-bg-surface-base py-1 pl-1 pr-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus"
+    >
+      {avatar}
+      {isOnHold ? (
+        <Play className="h-4 w-4 shrink-0 text-lyra-status-critical-strong" strokeWidth={2} aria-hidden="true" />
+      ) : (
+        isMuted && <MicOff className="h-4 w-4 shrink-0 text-lyra-fg-secondary" strokeWidth={2} aria-hidden="true" />
+      )}
+      <span className={cn("lyra-body-sm-emphasis whitespace-nowrap", isOnHold ? "text-lyra-status-critical-strong" : "text-lyra-fg-default")}>
+        {statusLabel}
+      </span>
+    </button>
+  );
+}
+
 /** A colleague added to this call via consult-then-merge (see
  *  `VoiceCallConsult` below) — always an agent, never the customer, hence no
  *  `isInternalAgentCall`-style flag: every colleague renders with the same
@@ -667,7 +795,19 @@ export interface LiveVoiceCallBarProps {
    *  timer while `isOnHold` is true — per an explicit follow-up, this shows
    *  in addition to the total call time, not instead of it. */
   heldSince?: number;
+  /** The control row's own always-visible Hold button — holds/resumes the
+   *  primary party AND every merged colleague together in one click (see
+   *  `AgentNextGenPage`'s own `toggleVoiceCallHold`). NOT wired to the
+   *  primary party's own `ParticipantChip` — see `onTogglePrimaryHold`
+   *  below for that. */
   onToggleHold: () => void;
+  /** Row-level hold for JUST the primary party — independent of
+   *  `onToggleHold` above and of any merged colleague's own hold (see
+   *  `onToggleColleagueHold` below), the same idea as that prop just for the
+   *  primary party instead of a colleague. Backs the primary party's own
+   *  `ParticipantChip` hover-hold button and the Participants menu's primary
+   *  row — see `AgentNextGenPage`'s own `togglePrimaryOnlyHold`. */
+  onTogglePrimaryHold: () => void;
   /** Mute/Mask/Record — lifted to `AgentNextGenPage` for the same reason
    *  `isOnHold` is: this bar needs to render in two different places (this
    *  floating presentation, and the docked `DockedVoiceControlBar` below)
@@ -804,6 +944,13 @@ export interface LiveVoiceCallBarProps {
    *  own `data-theme` usage below for how one attribute re-scopes every
    *  lyra token used in its render for free. */
   theme: "light" | "dark";
+  /** `AgentNextGenPage`'s own tracked `window.innerWidth` — this bar isn't
+   *  squeezed by a parent container the way the docked presentation is (it's
+   *  `position: fixed`, sized to its own content), so deciding its
+   *  `VoiceBarLayoutTier` needs the actual viewport width instead, measured
+   *  against wherever this bar currently sits (`position`/`defaultAnchor`)
+   *  — see this component's own layout-tier logic below. */
+  windowWidth: number;
 }
 
 /** Persistent, global "there's a live voice call somewhere" strip — survives
@@ -854,6 +1001,7 @@ export function LiveVoiceCallBar({
   isOnHold,
   heldSince,
   onToggleHold,
+  onTogglePrimaryHold,
   isMuted,
   onToggleMute,
   isMasked,
@@ -881,6 +1029,7 @@ export function LiveVoiceCallBar({
   onPositionChange,
   defaultAnchor,
   theme,
+  windowWidth,
 }: LiveVoiceCallBarProps) {
   const [elapsedSeconds, setElapsedSeconds] = useState(() => Math.floor((Date.now() - startedAt) / 1000));
   const [isDragging, setIsDragging] = useState(false);
@@ -893,6 +1042,52 @@ export function LiveVoiceCallBar({
     const id = setInterval(() => setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000)), 1000);
     return () => clearInterval(id);
   }, [startedAt]);
+
+  // How much horizontal room this bar actually has to work with, measured
+  // from wherever it currently sits (a dragged `position`, the composer-
+  // aligned `defaultAnchor`, or the generic `left-4` fallback below) out to
+  // the right edge of the viewport, minus a small breathing-room margin —
+  // NOT just `windowWidth` on its own, since a bar dragged toward the right
+  // edge genuinely has less room than one sitting at the far left, and
+  // should switch layout tiers sooner. See `useVoiceBarLayoutTier`'s own doc
+  // comment for the three tiers this decides between.
+  const currentLeft = position?.left ?? defaultAnchor?.left ?? 16;
+  const availableWidth = windowWidth - currentLeft - 16;
+  const { tier, identityRef, controlsRef } = useVoiceBarLayoutTier(availableWidth, true);
+  // Tapping a "pill" tier bar temporarily reveals the full two-row layout —
+  // per an explicit follow-up, the pill exists so there's SOMETHING to look
+  // at when the viewport's too narrow for two-row, not so the controls
+  // become permanently unreachable. Resets the moment the bar isn't
+  // pill-sized anymore (the viewport widened, or the bar got dragged
+  // somewhere roomier) so a stale "expanded" flag doesn't resurface oddly
+  // next time it *does* shrink back to a pill.
+  const [isPillExpanded, setIsPillExpanded] = useState(false);
+  useEffect(() => {
+    if (tier !== "pill") setIsPillExpanded(false);
+  }, [tier]);
+  const showPill = tier === "pill" && !isPillExpanded;
+  const isStacked = tier === "two-row" || (tier === "pill" && isPillExpanded);
+
+  // Re-clamps a DRAGGED bar's position after its own rendered size changes
+  // (growing from "pill" to two-row on tap, or wrapping to two-row/back) —
+  // reuses the exact same on-screen clamp `handlePointerMove` applies live
+  // while dragging, just run once per size change instead of continuously.
+  // Skipped entirely for a bar still at its default anchor (`position` is
+  // `null`) — the composer-aligned/corner anchors below are already chosen
+  // conservatively and don't need this.
+  useEffect(() => {
+    if (!position) return;
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const nextLeft = clamp(position.left, 8, window.innerWidth - rect.width - 8);
+    const nextTop = clamp(position.top, 8, window.innerHeight - rect.height - 8);
+    if (nextLeft !== position.left || nextTop !== position.top) onPositionChange({ top: nextTop, left: nextLeft });
+    // Deliberately NOT depending on `position`/`onPositionChange` themselves
+    // — this should only re-run when the bar's own SIZE was what just
+    // changed (tier/expand state), not every time a drag updates position
+    // (that path already clamps live in `handlePointerMove`).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tier, isPillExpanded]);
 
   // Dragging is grabbed from anywhere on the bar EXCEPT its own buttons
   // (checked via `.closest("button")`, since the pointerdown target is often
@@ -982,8 +1177,11 @@ export function LiveVoiceCallBar({
         // button row together — grows as one aligned unit. Safe against the
         // earlier overflow bug since the resize is grow-only, floored at
         // this container's own current width — see `CallMediaArea`'s own
-        // top doc comment.
-        ...(videoPanelSize ? { width: videoPanelSize.width } : {}),
+        // top doc comment. Skipped while minimized to a pill — a wide
+        // explicit width left over from a video resize shouldn't keep
+        // forcing this container wide once everything that needed that
+        // width is itself hidden (see `showPill` above).
+        ...(videoPanelSize && !showPill ? { width: videoPanelSize.width } : {}),
         ...(position
           ? { position: "fixed", top: position.top, left: position.left }
           : defaultAnchor
@@ -1002,7 +1200,11 @@ export function LiveVoiceCallBar({
         // this outer column layout is a no-op on alignment while video is
         // off and simply makes room for `VideoTiles` above that row once
         // it's on.
-        "z-[9998] flex select-none flex-col rounded-lyra-lg border border-lyra-border-subtle bg-lyra-bg-surface-base px-3.5 py-2.5 shadow-md",
+        "z-[9998] flex select-none flex-col rounded-lyra-lg border border-lyra-border-subtle bg-lyra-bg-surface-base shadow-md",
+        // Tighter padding while minimized — the point of the pill is to take
+        // up as little room as possible, so it shouldn't carry the same
+        // padding budgeted for a full row of xl-sized icon buttons.
+        showPill ? "p-1" : "px-3.5 py-2.5",
         // Only falls back to the plain viewport corner when there's truly
         // nothing better to anchor to (no composer on screen to align
         // with) — see `defaultAnchor`'s own doc comment.
@@ -1013,13 +1215,22 @@ export function LiveVoiceCallBar({
       role="region"
       aria-label={`Live call with ${displayName}, ${formatElapsed(elapsedSeconds)} elapsed${isVideoOn ? ", video on" : ""}`}
     >
-      {consult && (
+      {/* All hidden while `showPill` — a minimized pill is meant to be the
+       *  whole bar shrinking down, not just its identity/controls row with a
+       *  full-size conference strip or video tile still looming above it.
+       *  Tapping the pill (see below) brings all of this straight back,
+       *  nothing here is actually lost by hiding it. */}
+      {consult && !showPill && (
         <ConsultBanner consultName={formatParticipantLabel(consult.name, consult.sourceSkillName)} onCancel={onCancelConsult} onMerge={onMergeConsult} />
       )}
-      {colleagues.length > 0 && !consult && (
+      {colleagues.length > 0 && !consult && !showPill && (
         <div className="mb-2.5 flex items-center gap-1.5 overflow-x-auto">
           <ParticipantChip label="You" isSelf isOnHold={false} />
-          <ParticipantChip label={displayName} isInternalAgent={isInternalAgentCall} isOnHold={isOnHold} onToggleHold={onToggleHold} />
+          {/* `onTogglePrimaryHold` — NOT the control row's `onToggleHold` —
+           *  so this pill's own hover-hold only ever holds/resumes the
+           *  customer, matching every colleague pill's already-independent
+           *  behavior below. See that prop's own doc comment. */}
+          <ParticipantChip label={displayName} isInternalAgent={isInternalAgentCall} isOnHold={isOnHold} onToggleHold={onTogglePrimaryHold} />
           {colleagues.map((colleague) => (
             <ParticipantChip
               key={colleague.id}
@@ -1033,7 +1244,7 @@ export function LiveVoiceCallBar({
           ))}
         </div>
       )}
-      {isVideoOn && (
+      {isVideoOn && !showPill && (
         <CallMediaArea
           customerName={customerName}
           isInternalAgentCall={isInternalAgentCall}
@@ -1046,7 +1257,27 @@ export function LiveVoiceCallBar({
           containerRef={containerRef}
         />
       )}
-      <div className="flex items-center gap-3">
+      {/* `relative` purely as the containing block for the minimized pill's
+       *  hidden-but-measured content below (see `useVoiceBarLayoutTier`'s
+       *  own doc comment) — has no effect on the normal "full"/"two-row"
+       *  layouts, which just render in-flow as before. */}
+      <div className="relative flex items-center gap-3">
+      {/* Identity cluster (the switcher popover, or a plain avatar+name/
+       *  timer when there's nothing to switch to) and the actual controls
+       *  each measured via their own ref — see `useVoiceBarLayoutTier`.
+       *  `isStacked` arranges them as two lines instead of one; `showPill`
+       *  hides this whole chunk (still mounted, so it keeps measuring
+       *  correctly and can grow back the instant there's room again — see
+       *  that hook's own doc comment) in favor of the compact pill below. */}
+      <div
+        className={cn(
+          "flex min-w-0 flex-1 gap-3",
+          isStacked ? "flex-col items-stretch" : "items-center",
+          showPill && "invisible absolute inset-x-0 top-0 pointer-events-none"
+        )}
+        aria-hidden={showPill || undefined}
+      >
+      <div ref={identityRef} className="flex min-w-0 items-center gap-2">
       {otherVoiceCalls.length > 0 ? (
         <Popover
           open={switcherOpen}
@@ -1136,6 +1367,8 @@ export function LiveVoiceCallBar({
           {nameAndTimer}
         </>
       )}
+      </div>
+      <div ref={controlsRef} className="flex items-center gap-3">
       {colleagues.length > 0 && (
         // Deliberately its own Popover/Menu, not merged into the switcher
         // above — per an explicit follow-up, "who's on this call" and
@@ -1159,7 +1392,7 @@ export function LiveVoiceCallBar({
                 primaryIsInternalAgent: isInternalAgentCall,
                 primaryIsOnHold: isOnHold,
                 primaryHeldSeconds: heldSeconds,
-                onTogglePrimaryHold: () => { onToggleHold(); setParticipantsOpen(false); },
+                onTogglePrimaryHold: () => { onTogglePrimaryHold(); setParticipantsOpen(false); },
                 colleagues,
                 onToggleColleagueHold: (id) => { onToggleColleagueHold(id); setParticipantsOpen(false); },
                 onTransferToColleague: (id) => { onTransferToColleague(id); setParticipantsOpen(false); },
@@ -1283,6 +1516,35 @@ export function LiveVoiceCallBar({
         <PhoneOff className="h-6 w-6 text-lyra-status-critical-strong" strokeWidth={2} />
       </ActionIconButton>
       </div>
+      </div>
+      {/* Minimized pill — see `VoiceBarLayoutTier`'s own doc comment. Tapping
+       *  it reveals the two-row layout above (still hidden-but-measured, not
+       *  removed, the instant before this) instead of this pill. */}
+      {showPill && (
+        <VoiceBarPill
+          avatar={avatar}
+          displayName={displayName}
+          elapsedSeconds={elapsedSeconds}
+          isOnHold={isOnHold}
+          heldSeconds={heldSeconds}
+          isMuted={isMuted}
+          onExpand={() => setIsPillExpanded(true)}
+        />
+      )}
+      {/* Manual "minimize" back to the pill — only offered once actually
+       *  expanded FROM a pill; a plain "two-row" tier (enough room for that,
+       *  just not a full single row) has no pill to collapse back to. */}
+      {tier === "pill" && isPillExpanded && (
+        <ActionIconButton
+          size="sm"
+          title="Minimize"
+          className="absolute right-0 top-0"
+          onClick={() => setIsPillExpanded(false)}
+        >
+          <ChevronDown className="h-4 w-4" strokeWidth={2} />
+        </ActionIconButton>
+      )}
+      </div>
     </div>
   );
 }
@@ -1357,7 +1619,14 @@ export interface DockedVoiceControlBarProps {
    *  bar's identical treatment. */
   heldSince?: number;
   isOnHold: boolean;
+  /** Same "hold everyone at once" control-row button as
+   *  `LiveVoiceCallBarProps.onToggleHold` — see that prop's own doc comment.
+   *  Not wired to the primary party's own `ParticipantChip`; see
+   *  `onTogglePrimaryHold` below for that. */
   onToggleHold: () => void;
+  /** Same per-primary-party-only hold as `LiveVoiceCallBarProps.onTogglePrimaryHold`
+   *  — see that prop's own doc comment. */
+  onTogglePrimaryHold: () => void;
   isMuted: boolean;
   onToggleMute: () => void;
   isMasked: boolean;
@@ -1413,6 +1682,17 @@ export interface DockedVoiceControlBarProps {
    *  value to both bars so a call reads the same whichever presentation
    *  it's currently in. */
   theme: "light" | "dark";
+  /** How much width the panel this bar sits in actually has to give it —
+   *  `AgentNextGenPage`'s own measurement (row width minus the Customer
+   *  Profile side panel, if open), the same input its existing squeeze
+   *  check already computes. Unlike the floating bar (which measures
+   *  against the viewport itself, having no constraining parent), this
+   *  presentation IS squeezed by its container, so this is the direct
+   *  `availableWidth` input to `useVoiceBarLayoutTier` — see that hook's own
+   *  doc comment. `null` before the first measurement, same "assume the
+   *  roomiest layout until proven otherwise" convention `dockedBarNeededWidth`
+   *  already uses. */
+  availableWidth: number | null;
 }
 
 /** Docked presentation of the exact same live call's controls
@@ -1442,6 +1722,7 @@ export function DockedVoiceControlBar({
   heldSince,
   isOnHold,
   onToggleHold,
+  onTogglePrimaryHold,
   isMuted,
   onToggleMute,
   isMasked,
@@ -1465,6 +1746,7 @@ export function DockedVoiceControlBar({
   onNeededWidthChange,
   onHangUp,
   theme,
+  availableWidth,
 }: DockedVoiceControlBarProps) {
   const accent = CHANNEL_ACCENT.voice;
   const displayName = isInternalAgentCall ? customerName ?? "Colleague" : customerName || "Customer";
@@ -1480,21 +1762,21 @@ export function DockedVoiceControlBar({
   }, [startedAt]);
   const heldSeconds = isOnHold && heldSince ? Math.floor((Date.now() - heldSince) / 1000) : undefined;
   const pillRef = useRef<HTMLDivElement>(null);
-  // Reports this bar's own width any time it changes — video/share turning
-  // on or off, a manual resize, even the customer name changing length —
-  // so `AgentNextGenPage` always has a fresh answer for "how wide does this
-  // bar want to be" without having to re-derive it. See `onNeededWidthChange`'s
-  // own doc comment for why this is cached by the parent rather than only
-  // read while docked.
+  // Never "pill" here (`allowPill: false`) — see `VoiceBarLayoutTier`'s own
+  // doc comment for why this presentation goes straight to auto-undocking
+  // instead of ever showing a minimized pill of its own.
+  const { tier, identityRef, controlsRef, controlsNeededWidth } = useVoiceBarLayoutTier(availableWidth, false);
+  const isStacked = tier === "two-row";
+  // Reports how much width this bar needs for at least its "two-row" layout
+  // — video/share turning on or off, a colleague joining, even the customer
+  // name changing length can all change this — so `AgentNextGenPage` always
+  // has a fresh answer for "how much room does this bar need before it has
+  // to give up and float" without having to re-derive it itself. See
+  // `onNeededWidthChange`'s own doc comment for why this is cached by the
+  // parent rather than only read while docked.
   useEffect(() => {
-    if (!onNeededWidthChange || !pillRef.current) return;
-    const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width;
-      if (width !== undefined) onNeededWidthChange(Math.ceil(width));
-    });
-    observer.observe(pillRef.current);
-    return () => observer.disconnect();
-  }, [onNeededWidthChange]);
+    onNeededWidthChange?.(controlsNeededWidth);
+  }, [onNeededWidthChange, controlsNeededWidth]);
   return (
     <div className="flex justify-center border-t border-lyra-border-subtle bg-lyra-bg-surface-base py-3">
       {/* Same rounded-lyra-lg/border/background as the floating bar's own
@@ -1530,8 +1812,12 @@ export function DockedVoiceControlBar({
              *  — `canExpand` inside `ParticipantChip` is only true once at
              *  least one of `onToggleHold`/`onHangUp` is actually passed, so
              *  hover-to-expand silently never engaged here. Mirrors the
-             *  floating bar's own calls above exactly. */}
-            <ParticipantChip label={displayName} isInternalAgent={isInternalAgentCall} isOnHold={isOnHold} onToggleHold={onToggleHold} />
+             *  floating bar's own calls above exactly.
+             *  `onTogglePrimaryHold` — NOT the control row's `onToggleHold`
+             *  — so this pill's own hover-hold only ever holds/resumes the
+             *  customer, matching every colleague pill's already-independent
+             *  behavior below. See that prop's own doc comment. */}
+            <ParticipantChip label={displayName} isInternalAgent={isInternalAgentCall} isOnHold={isOnHold} onToggleHold={onTogglePrimaryHold} />
             {colleagues.map((colleague) => (
               <ParticipantChip
                 key={colleague.id}
@@ -1558,8 +1844,14 @@ export function DockedVoiceControlBar({
             containerRef={pillRef}
           />
         )}
-        <div className="flex items-center gap-5">
-        <span className="flex items-center gap-2">
+        {/* `isStacked` (this bar's own two-row tier, see
+         *  `useVoiceBarLayoutTier`) stacks the identity cluster above the
+         *  controls instead of squeezing both into one row — no pill tier
+         *  here (see this component's own `allowPill: false`), so unlike
+         *  the floating bar there's no third state to render, just these
+         *  two arrangements of the exact same content. */}
+        <div className={cn("flex gap-5", isStacked ? "flex-col items-stretch" : "items-center")}>
+        <div ref={identityRef} className="flex items-center gap-2">
           <span
             className={cn("flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full lyra-body-md-emphasis", accent.bg, accent.text)}
             aria-hidden="true"
@@ -1573,7 +1865,8 @@ export function DockedVoiceControlBar({
               <p className="lyra-body-sm-emphasis text-lyra-status-critical-strong">On hold {formatElapsed(heldSeconds)}</p>
             )}
           </span>
-        </span>
+        </div>
+        <div ref={controlsRef} className="flex items-center gap-5">
         {colleagues.length > 0 && (
           // Same "separate from the switcher" reasoning as the floating
           // bar's identical button — see that one's own comment. Wraps a
@@ -1600,7 +1893,7 @@ export function DockedVoiceControlBar({
                     primaryIsInternalAgent: isInternalAgentCall,
                     primaryIsOnHold: isOnHold,
                     primaryHeldSeconds: heldSeconds,
-                    onTogglePrimaryHold: () => { onToggleHold(); setParticipantsOpen(false); },
+                    onTogglePrimaryHold: () => { onTogglePrimaryHold(); setParticipantsOpen(false); },
                     colleagues,
                     onToggleColleagueHold: (id) => { onToggleColleagueHold(id); setParticipantsOpen(false); },
                     onTransferToColleague: (id) => { onTransferToColleague(id); setParticipantsOpen(false); },
@@ -1688,6 +1981,7 @@ export function DockedVoiceControlBar({
         <DockedControlButton title="Hang Up" onClick={onHangUp}>
           <PhoneOff className="h-6 w-6 text-lyra-status-critical-strong" strokeWidth={2} />
         </DockedControlButton>
+        </div>
         </div>
       </div>
     </div>

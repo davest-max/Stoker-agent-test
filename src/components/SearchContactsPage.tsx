@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Table,
   TableHeader,
@@ -24,6 +24,7 @@ import {
   Accordion,
   StatusBadge,
   KebabMenuButton,
+  SidePanel,
   CHANNEL_ACCENT,
   type DateRange,
   type FilterChipOption,
@@ -58,11 +59,15 @@ import {
   type ContactStatus,
 } from "@/data/contacts";
 
-/* ── Interaction Search ──
- * (Named "Search Contacts" during development — renamed per an explicit
- * follow-up; the underlying `Contact`/`contacts.ts` data model and this
- * component's own file/export name are unchanged, since neither is
- * user-facing.)
+/* ── Search ──
+ * (Named "Search Contacts" during development, then "Interaction Search",
+ * then plain "Search" per later explicit follow-ups — the underlying
+ * `Contact`/`contacts.ts` data model and this component's own file/export
+ * name are unchanged across all of these, since neither is user-facing.
+ * Customer Name is one of the quick search types (see `SEARCH_TYPES`)
+ * alongside Interaction ID/Date Created — all three just narrow the same
+ * interaction table below; there's no separate customer-level result or
+ * profile view here, only interactions.)
  * A new nav destination (see AgentNextGenPage's `contacts` case in
  * renderSlideInContent) for finding ANY past contact across the whole app,
  * any status — distinct from the assignment rail, which only ever shows
@@ -83,7 +88,7 @@ import {
  * options/trade-offs presented first):
  *   1. Nothing loads on page mount — no query runs until the agent either
  *      searches or applies a filter (`hasSearched` below). Cheapest, and
- *      matches what a page literally named "Interaction Search" implies.
+ *      matches what a page literally named "Search" implies.
  *   2. The toolbar offers BOTH a quick type+value search (name/ID/date/etc,
  *      see `SEARCH_TYPES`) AND the full Query Builder — not an either/or.
  *   3. Each bulk action (Assign to Me/Others, Change Status, Send Message)
@@ -659,18 +664,18 @@ export function SearchContactsPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [activeBulkAction, setActiveBulkAction] = useState<BulkAction | null>(null);
 
-  /* Row-expand accordion — clicking anywhere on a row (other than the
-   *  checkbox/kebab, which stop propagation) expands it in place to show
-   *  fields not in the table plus the full conversation thread, for
-   *  review. True accordion, not independent per-row toggles — per an
-   *  explicit follow-up, opening a row auto-collapses whichever one was
-   *  already open, so `expandedId` is a single id rather than a Set.
-   *  Reset whenever the page changes so a stale expanded row from page 1
-   *  doesn't silently carry over and "expand" a different contact that
-   *  happens to land in the same row position on page 2. */
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  /* Row detail — clicking anywhere on a row (other than the checkbox/kebab,
+   *  which stop propagation) opens a right-side slide-out panel with the
+   *  fields not already in the table plus the full conversation thread, for
+   *  review. Per an explicit follow-up, this replaced an earlier in-place
+   *  accordion — the panel reuses the same right-side `SidePanel` pattern
+   *  the app's own Customer Profile already uses, rather than a bespoke
+   *  drawer. Reset whenever the page changes so a stale open panel from
+   *  page 1 doesn't silently carry over and "detail" a different contact
+   *  landing in the same row position on page 2. */
+  const [detailPanel, setDetailPanel] = useState<Contact | null>(null);
   useEffect(() => {
-    setExpandedId(null);
+    setDetailPanel(null);
   }, [currentPage]);
 
   /* Bulk action inline-row fields */
@@ -731,6 +736,7 @@ export function SearchContactsPage() {
     setSelectedIds(new Set());
     setActiveBulkAction(null);
     setCurrentPage(1);
+    setDetailPanel(null);
   };
 
   const handleRefresh = () => {
@@ -739,6 +745,7 @@ export function SearchContactsPage() {
     // that rather than being a pure no-op.
     setCurrentPage(1);
     setSelectedIds(new Set());
+    setDetailPanel(null);
   };
 
   const toggleRow = (id: string) => {
@@ -819,9 +826,12 @@ export function SearchContactsPage() {
        *  `FiltersDropdown` above) plus its own small removable active-filter
        *  chips, a Date Range control (via the `filters` slot — doesn't fit
        *  FilterChip's fixed-option-list shape either), and the native Query
-       *  Builder popover. Always visible, same as row 1 — filtering is one
-       *  of the two ways to trigger `hasSearched`, so it can't be gated
-       *  behind having already searched.
+       *  Builder popover. Always visible, same as row 1, for every search
+       *  type — Customer Name is just another quick-search value that
+       *  narrows the same interaction table these filters also narrow (see
+       *  `filteredContacts`), not a different mode with different controls.
+       *  Filtering is one of the two ways to trigger `hasSearched`, so it
+       *  can't be gated behind having already searched either.
        *  Per an explicit follow-up, this replaces the previous per-category
        *  `FilterChip` button-dropdowns (and lyra-ui's own built-in
        *  "collapsed filters" mode, which still nests a `FilterChip`
@@ -1036,37 +1046,42 @@ export function SearchContactsPage() {
           <p className="lyra-body-sm text-lyra-fg-secondary">Try a different search, or clear a filter.</p>
         </div>
       ) : (
-        <>
-          <div className="flex-1 overflow-hidden px-4 pt-3">
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className="w-[40px] shrink-0">
-                    <Checkbox checked={allOnPageSelected ? true : someOnPageSelected ? "indeterminate" : false} onCheckedChange={toggleAllOnPage} aria-label="Select all rows on this page" />
-                  </TableHead>
-                  <TableHead className="w-[56px] shrink-0">Channel</TableHead>
-                  <TableHead className="flex-[1.2]">Date Created</TableHead>
-                  <TableHead className="flex-1">Status</TableHead>
-                  <TableHead className="flex-[2]">Customer Name</TableHead>
-                  <TableHead className="flex-[1.5]">Skill</TableHead>
-                  <TableHead className="w-[40px] shrink-0"><span className="sr-only">Actions</span></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {pageContacts.map((contact) => {
-                  const ChannelIcon = CONTACT_CHANNEL_ICON[contact.channel];
-                  const accent = CHANNEL_ACCENT[contact.channel];
-                  const DirectionIcon = contact.direction === "inbound" ? ArrowDownLeft : ArrowUpRight;
-                  const isExpanded = expandedId === contact.id;
-                  return (
-                    <Fragment key={contact.id}>
-                      {/* Clicking anywhere on the row toggles the accordion below it
-                       *  — checkbox/kebab cells stop propagation so selecting a row
-                       *  or opening its menu doesn't also expand/collapse it. */}
+        // Table + its slide-out panel share this row so the panel narrows
+        // the table (pushes, doesn't overlay) — same "pinned side panel"
+        // behavior as the app's own Customer Profile.
+        <div className="flex flex-1 overflow-hidden">
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <div className="flex-1 overflow-hidden px-4 pt-3">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="w-[40px] shrink-0">
+                      <Checkbox checked={allOnPageSelected ? true : someOnPageSelected ? "indeterminate" : false} onCheckedChange={toggleAllOnPage} aria-label="Select all rows on this page" />
+                    </TableHead>
+                    <TableHead className="w-[56px] shrink-0">Channel</TableHead>
+                    <TableHead className="flex-[1.2]">Date Created</TableHead>
+                    <TableHead className="flex-1">Status</TableHead>
+                    <TableHead className="flex-[2]">Customer Name</TableHead>
+                    <TableHead className="flex-[1.5]">Skill</TableHead>
+                    <TableHead className="w-[40px] shrink-0"><span className="sr-only">Actions</span></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pageContacts.map((contact) => {
+                    const ChannelIcon = CONTACT_CHANNEL_ICON[contact.channel];
+                    const accent = CHANNEL_ACCENT[contact.channel];
+                    const DirectionIcon = contact.direction === "inbound" ? ArrowDownLeft : ArrowUpRight;
+                    // "Active" (not "expanded" — nothing expands in place
+                    // anymore) just changes this row's own background so
+                    // the agent can still tell which row the open panel is
+                    // showing, same as before.
+                    const isActive = detailPanel?.id === contact.id;
+                    return (
                       <TableRow
-                        className="cursor-pointer"
-                        aria-expanded={isExpanded}
-                        onClick={() => setExpandedId((prev) => (prev === contact.id ? null : contact.id))}
+                        key={contact.id}
+                        className={cn("cursor-pointer", isActive && "bg-lyra-bg-active-subtle hover:bg-lyra-bg-active-subtle")}
+                        aria-selected={isActive}
+                        onClick={() => setDetailPanel((prev) => (prev?.id === contact.id ? null : contact))}
                       >
                         <TableCell className="w-[40px] shrink-0" onClick={(e) => e.stopPropagation()}>
                           <Checkbox checked={selectedIds.has(contact.id)} onCheckedChange={() => toggleRow(contact.id)} aria-label={`Select ${contact.customerName}`} />
@@ -1095,61 +1110,69 @@ export function SearchContactsPage() {
                           />
                         </TableCell>
                       </TableRow>
-                      {isExpanded && (
-                        <TableRow className="cursor-default hover:bg-transparent active:bg-transparent">
-                          {/* `block` — the default TableCell force-wraps children in a
-                           *  truncating single-line <span>, which breaks this multi-line
-                           *  detail-fields + thread content. colSpan matches the 7
-                           *  TableHead columns above. */}
-                          <TableCell block colSpan={7} className="bg-lyra-bg-surface-canvas px-6 py-4">
-                            <div className="flex flex-col gap-3">
-                              {/* Fields not already shown as their own table column. */}
-                              <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 lyra-body-sm">
-                                <span><span className="text-lyra-fg-secondary">Case ID:</span> {contact.caseId}</span>
-                                <span><span className="text-lyra-fg-secondary">Direction:</span> {contact.direction === "inbound" ? "Inbound" : "Outbound"}</span>
-                                <span><span className="text-lyra-fg-secondary">Inbox Assignee:</span> {contact.assignee ?? "—"}</span>
-                                <span><span className="text-lyra-fg-secondary">Assigned Owner:</span> {contact.ownerAssignee ?? "—"}</span>
-                                <span><span className="text-lyra-fg-secondary">Tags:</span> {contact.tags?.length ? contact.tags.join(", ") : "—"}</span>
-                              </div>
-                              <div className="border-t border-lyra-border-subtle" />
-                              {/* Full thread for review — chat/SMS/voice transcript/email,
-                               *  same read-only renderer the Customer Profile's own past-
-                               *  interaction history uses (see CustomerSnapshotPanel). Fixed
-                               *  `h-` (not `max-h-`) per an explicit follow-up — a real,
-                               *  generously-sized scrollable pane rather than one that
-                               *  shrinks to fit whatever a short thread happens to need;
-                               *  a longer thread scrolls inside it instead of growing the
-                               *  row (and the whole table) taller. */}
-                              <div className="h-[420px] overflow-y-auto">
-                                <TranscriptThread
-                                  messages={contact.transcript.messages}
-                                  isVoiceCall={contact.channel === "voice"}
-                                  isEmailChannel={contact.channel === "email"}
-                                  callEvents={contact.transcript.callEvents}
-                                />
-                              </div>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </TableBody>
-            </Table>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+            <TableFooter
+              currentPage={currentPage}
+              totalPages={totalPages}
+              onPageChange={setCurrentPage}
+              rowsPerPage={ROWS_PER_PAGE}
+              totalRecords={totalRecords}
+              displayStart={pageStart + 1}
+              displayEnd={Math.min(pageStart + ROWS_PER_PAGE, totalRecords)}
+              showDisplayCount
+              className="border-t border-lyra-border-subtle px-4"
+            />
           </div>
-          <TableFooter
-            currentPage={currentPage}
-            totalPages={totalPages}
-            onPageChange={setCurrentPage}
-            rowsPerPage={ROWS_PER_PAGE}
-            totalRecords={totalRecords}
-            displayStart={pageStart + 1}
-            displayEnd={Math.min(pageStart + ROWS_PER_PAGE, totalRecords)}
-            showDisplayCount
-            className="border-t border-lyra-border-subtle px-4"
-          />
-        </>
+
+          {detailPanel && (
+            <SidePanel
+              side="right"
+              pinned
+              open
+              width={420}
+              headerTitle="Interaction Details"
+              headerActions={
+                <ActionIconButton title="Close" onClick={() => setDetailPanel(null)}>
+                  <X className="h-4 w-4" strokeWidth={1.5} />
+                </ActionIconButton>
+              }
+            >
+              <div className="flex h-full flex-col gap-3 p-4">
+                {/* Fields not already shown as their own table column —
+                 *  stacked (not the old inline row's `flex-wrap`) since
+                 *  this panel is meaningfully narrower than the full-width
+                 *  accordion row it replaced. */}
+                <div className="flex flex-col gap-1.5 lyra-body-sm">
+                  <span><span className="text-lyra-fg-secondary">Case ID:</span> {detailPanel.caseId}</span>
+                  <span><span className="text-lyra-fg-secondary">Direction:</span> {detailPanel.direction === "inbound" ? "Inbound" : "Outbound"}</span>
+                  <span><span className="text-lyra-fg-secondary">Inbox Assignee:</span> {detailPanel.assignee ?? "—"}</span>
+                  <span><span className="text-lyra-fg-secondary">Assigned Owner:</span> {detailPanel.ownerAssignee ?? "—"}</span>
+                  <span><span className="text-lyra-fg-secondary">Tags:</span> {detailPanel.tags?.length ? detailPanel.tags.join(", ") : "—"}</span>
+                </div>
+                <div className="border-t border-lyra-border-subtle" />
+                {/* Full thread for review — chat/SMS/voice transcript/email,
+                 *  same read-only renderer the Customer Profile's own past-
+                 *  interaction history uses (see CustomerSnapshotPanel).
+                 *  `flex-1` (not the old fixed `h-[420px]`) — this panel
+                 *  already spans the page's own height, so the thread
+                 *  fills whatever's left under the fields instead of
+                 *  carrying its own fixed size. */}
+                <div className="flex-1 overflow-y-auto">
+                  <TranscriptThread
+                    messages={detailPanel.transcript.messages}
+                    isVoiceCall={detailPanel.channel === "voice"}
+                    isEmailChannel={detailPanel.channel === "email"}
+                    callEvents={detailPanel.transcript.callEvents}
+                  />
+                </div>
+              </div>
+            </SidePanel>
+          )}
+        </div>
       )}
     </div>
   );

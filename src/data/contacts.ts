@@ -1,9 +1,10 @@
 import type { ChannelType } from "@nicecxone/lyra-ui";
 import type { Message, CallTranscriptEvent } from "@/components/CustomerInteractionPanel";
 
-/* ── Interaction Search ──
- * Backing data for the "Interaction Search" page (AgentNextGenPage's
- * `contacts` nav destination) — a distinct dataset from `directory.ts`'s
+/* ── Search ──
+ * Backing data for the "Search" page (AgentNextGenPage's `contacts` nav
+ * destination, named "Interaction Search" until a later rename) — a
+ * distinct dataset from `directory.ts`'s
  * DIRECTORY_CUSTOMERS/DIRECTORY_AGENTS. Those model people (a customer's
  * full CRM profile, an agent's presence); this models CONTACTS — one row
  * per historical interaction across the whole app, any status, not just the

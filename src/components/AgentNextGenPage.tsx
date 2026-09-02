@@ -87,7 +87,11 @@ const SLIDE_IN_META: Record<SlideInDestination, { title: string; icon: React.Rea
   // `FileSearch2`) is the one whose magnifying glass actually sits in a
   // corner of the document rather than centered over it, so that's the
   // match for what was asked for here.
-  contacts: { title: "Interaction Search", icon: <FileSearch className="h-4 w-4" strokeWidth={1.5} /> },
+  // Renamed from "Interaction Search" to plain "Search" per an explicit
+  // follow-up — the page covers more than interactions now (a matched
+  // customer's own profile, not just their interaction history), so a name
+  // scoped to "interaction" undersold it.
+  contacts: { title: "Search", icon: <FileSearch className="h-4 w-4" strokeWidth={1.5} /> },
   directory: { title: "Directory", icon: <BookUser className="h-4 w-4" strokeWidth={1.5} /> },
   schedule: { title: "Schedule", icon: <CalendarDays className="h-4 w-4" strokeWidth={1.5} /> },
   customWorkspace: { title: "Custom Workspace", icon: <Monitor className="h-4 w-4" strokeWidth={1.5} /> },
@@ -800,12 +804,24 @@ export function AgentNextGenPage({
   // bar's own Dock button is still there to force it back manually once
   // there's room again.
   const [voiceCallAutoUndocked, setVoiceCallAutoUndocked] = useState(false);
-  // The docked bar's own last-reported rendered width (see
-  // `DockedVoiceControlBar`'s `onNeededWidthChange`) — cached here (not just
-  // read while docked) so the squeeze check below still has something to
-  // compare against even after the bar itself has unmounted from going
-  // floating. `null` until it's rendered at least once.
+  // The docked bar's own last-reported minimum width — specifically how much
+  // room it needs for at least its "two-row" layout (see
+  // `DockedVoiceControlBar`'s `onNeededWidthChange`/`useVoiceBarLayoutTier`),
+  // not the roomier single-row width this used to mean before the bar could
+  // stack onto two rows itself. Cached here (not just read while docked) so
+  // the squeeze check below still has something to compare against even
+  // after the bar itself has unmounted from going floating. `null` until
+  // it's rendered at least once.
   const [dockedBarNeededWidth, setDockedBarNeededWidth] = useState<number | null>(null);
+  // How much width the panel actually has to give the docked bar right now
+  // — fed to it as its own `availableWidth` prop so it can pick full-vs-
+  // two-row itself (see `useVoiceBarLayoutTier`), computed once here
+  // (`checkVoiceBarSqueezeRef` below) rather than duplicating the same
+  // `bodyRowRef`/`sidePanelWidth` math a second time. `null` until it's
+  // been measured at least once — `DockedVoiceControlBar`'s own hook treats
+  // that the same "assume the roomiest layout" way `dockedBarNeededWidth`
+  // being `null` already does elsewhere.
+  const [dockedRowAvailableWidth, setDockedRowAvailableWidth] = useState<number | null>(null);
   // The docked video area's own explicit size once resized — a separate
   // piece of state from the floating bar's `videoPanelSize` since the two
   // remount independently, but resizes the same way (both width and
@@ -1386,10 +1402,15 @@ export function AgentNextGenPage({
   const checkVoiceBarSqueezeRef = useRef<() => void>(() => {});
   checkVoiceBarSqueezeRef.current = () => {
     if (!isVoiceCallDocked || voiceCallManuallyUndocked || voiceCallAutoUndocked) return;
-    if (dockedBarNeededWidth === null) return;
     const row = bodyRowRef.current;
     if (!row) return;
     const availableWidth = row.getBoundingClientRect().width - (sidePanelOpen ? sidePanelWidth : 0);
+    // Fed to `DockedVoiceControlBar` as its own `availableWidth` prop so it
+    // can pick full-vs-two-row itself — independent of this function's own
+    // (unrelated) auto-undock decision just below, which only cares about
+    // the smaller "not even two-row fits" threshold.
+    setDockedRowAvailableWidth(availableWidth);
+    if (dockedBarNeededWidth === null) return;
     if (availableWidth < dockedBarNeededWidth) setVoiceCallAutoUndocked(true);
   };
   useEffect(() => {
@@ -1598,10 +1619,27 @@ export function AgentNextGenPage({
   // one of the dedicated outbound/internal-call handlers below) still docks
   // inline automatically the first time it goes live, per an explicit
   // follow-up. `handleSelectAssignment`'s hold-swap branch passes `false`
-  // instead: switching focus straight from one live/held voice call to a
-  // DIFFERENT one is no longer treated as "go dock this," since docking is
-  // now a deliberate, user-selected state — the agent has to hit the
-  // floating bar's own Dock button once they're looking at that call's card.
+  // instead for a focus switch straight from one live/held voice call to a
+  // DIFFERENT one ("picking up a different line").
+  //
+  // Per a later explicit follow-up, that focus-switch case must NOT force
+  // the bar undocked anymore — it used to (`setVoiceCallManuallyUndocked(true)`
+  // unconditionally whenever `dockOnLive` was false), which meant clicking
+  // between two voice calls always yanked the bar out to floating even if
+  // the agent had it docked, or moved a floating bar's on-screen position by
+  // re-anchoring it. The bar's docked/floating placement (and, while
+  // floating, its dragged `voiceBarPosition`) is a property of the
+  // PERSISTENT bar itself, not of whichever call currently owns it — picking
+  // up a different line hands that same bar to the new call without moving
+  // it. So `voiceCallManuallyUndocked`/`voiceCallAutoUndocked` are now only
+  // ever touched here for a genuinely new call (`dockOnLive: true`), which
+  // still resets to the docked default; a focus switch leaves both exactly
+  // as they were.
+  //
+  // (Separately, and left alone here: looking away from the live call's own
+  // card to a NON-voice tile and back still force-floats the bar, via the
+  // `wasVoiceCallDockedRef` effect below — a distinct, still-intentional
+  // behavior the agent explicitly chose to keep.)
   const goLiveWithVoiceCall = (assignmentId: string, dockOnLive = true) => {
     setVoiceCallStartedAt((prev) => (prev[assignmentId] !== undefined ? prev : { ...prev, [assignmentId]: Date.now() }));
     setLiveVoiceCall({ assignmentId });
@@ -1613,16 +1651,28 @@ export function AgentNextGenPage({
     setIsVoiceCallRecording(false);
     setIsVideoCallOn(false);
     setIsSelfCameraOff(false);
-    setVoiceCallManuallyUndocked(!dockOnLive);
-    setVoiceCallAutoUndocked(false);
-    setDockedBarNeededWidth(null);
+    if (dockOnLive) {
+      setVoiceCallManuallyUndocked(false);
+      setVoiceCallAutoUndocked(false);
+      setDockedBarNeededWidth(null);
+    }
   };
 
-  // Manual Hold/Resume toggle — the single source of truth for both the
-  // persistent bar's own Hold button (whichever call is currently live) and
-  // a backgrounded call's tile preview (see `heldVoiceCallAssignmentIds`'s
-  // own doc comment above for why these are now the same set).
-  const toggleVoiceCallHold = (assignmentId: string) => {
+  // Row-level hold for JUST the primary/customer party — independent of any
+  // already-merged colleague's own hold state, the same idea
+  // `toggleVoiceCallColleagueHold` below already provides for a colleague.
+  // Backs the customer's own `ParticipantChip` hover-hold button and the
+  // Participants menu's primary row.
+  //
+  // Per an explicit follow-up, this used to also be the ONLY hold action for
+  // the primary party, which is what let it get reused (see
+  // `toggleVoiceCallHold` below) as the single "hold everyone" handler —
+  // meaning clicking hold on just the customer's own pill silently held
+  // every merged colleague too. Splitting this piece out fixes that: a
+  // pill's own hover-hold (customer's included) now only ever touches that
+  // one person; only the control row's separate, always-visible Hold button
+  // reaches everyone at once.
+  const togglePrimaryOnlyHold = (assignmentId: string) => {
     const isCurrentlyHeld = heldVoiceCallAssignmentIds.has(assignmentId);
     setHeldVoiceCallAssignmentIds((held) => {
       const next = new Set(held);
@@ -1638,14 +1688,25 @@ export function AgentNextGenPage({
       }
       return { ...prev, [assignmentId]: Date.now() };
     });
+  };
+
+  // Manual Hold/Resume toggle for the control row's own always-visible Hold
+  // button (whichever call is currently live) — the single source of truth
+  // for a backgrounded call's tile preview too (see
+  // `heldVoiceCallAssignmentIds`'s own doc comment above for why these are
+  // now the same set).
+  const toggleVoiceCallHold = (assignmentId: string) => {
+    const isCurrentlyHeld = heldVoiceCallAssignmentIds.has(assignmentId);
+    togglePrimaryOnlyHold(assignmentId);
     // "Hold" is the whole-call action once colleagues exist — per an
     // explicit follow-up, this same button puts every added colleague on
     // hold (or resumes them) right along with the primary party, in one
     // click. A no-op for a plain two-party call (`colleagues` is just
-    // empty). A colleague can still be held/resumed individually afterward
-    // via their own row in the Participants menu — see
-    // `toggleVoiceCallColleagueHold` below, which this doesn't touch again
-    // until this button is used a second time.
+    // empty). A colleague (or, since the split above, the primary party too)
+    // can still be held/resumed individually afterward via their own pill/
+    // row — see `togglePrimaryOnlyHold` above and
+    // `toggleVoiceCallColleagueHold` below, neither of which this touches
+    // again until this button is used a second time.
     const now = Date.now();
     setVoiceCallColleagues((prev) => {
       const colleagues = prev[assignmentId];
@@ -2585,7 +2646,7 @@ export function AgentNextGenPage({
              *  already matches across all of them (NavIconButton hardcodes
              *  it), so size was the only inconsistency. */}
             <NavIconButton item="customWorkspace" title="Custom Workspace" icon={Monitor} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
-            <NavIconButton item="contacts" title="Interaction Search" icon={FileSearch} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
+            <NavIconButton item="contacts" title="Search" icon={FileSearch} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
             <NavIconButton item="directory" title="Directory" icon={BookUser} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
             <NavIconButton item="schedule" title="Schedule" icon={CalendarDays} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
             <div className="mx-1 h-5 w-px bg-lyra-border-subtle" />
@@ -2932,6 +2993,7 @@ export function AgentNextGenPage({
                         heldSince={voiceCallHeldSince[liveVoiceCall!.assignmentId]}
                         isOnHold={heldVoiceCallAssignmentIds.has(liveVoiceCall!.assignmentId)}
                         onToggleHold={() => toggleVoiceCallHold(liveVoiceCall!.assignmentId)}
+                        onTogglePrimaryHold={() => togglePrimaryOnlyHold(liveVoiceCall!.assignmentId)}
                         isMuted={isVoiceCallMuted}
                         onToggleMute={() => setIsVoiceCallMuted((v) => !v)}
                         isMasked={isVoiceCallMasked}
@@ -2955,6 +3017,7 @@ export function AgentNextGenPage({
                         onNeededWidthChange={setDockedBarNeededWidth}
                         onHangUp={handleHangUpLiveCall}
                         theme={darkMode ? "light" : "dark"}
+                        availableWidth={dockedRowAvailableWidth}
                       />
                     ) : undefined;
                     return (
@@ -3314,6 +3377,7 @@ export function AgentNextGenPage({
             isOnHold={heldVoiceCallAssignmentIds.has(liveVoiceCall.assignmentId)}
             heldSince={voiceCallHeldSince[liveVoiceCall.assignmentId]}
             onToggleHold={() => toggleVoiceCallHold(liveVoiceCall.assignmentId)}
+            onTogglePrimaryHold={() => togglePrimaryOnlyHold(liveVoiceCall.assignmentId)}
             isMuted={isVoiceCallMuted}
             onToggleMute={() => setIsVoiceCallMuted((v) => !v)}
             isMasked={isVoiceCallMasked}
@@ -3361,6 +3425,7 @@ export function AgentNextGenPage({
             // `activeAssignmentId` update, same tile highlight).
             onSwitchCall={handleSelectAssignment}
             theme={darkMode ? "light" : "dark"}
+            windowWidth={windowWidth}
           />
         );
       })()}
