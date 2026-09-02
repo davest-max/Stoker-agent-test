@@ -97,11 +97,24 @@ export interface NewOutboundPopoverProps {
  *  selected rather than landing on "pick a channel first". */
 type Screen =
   | { kind: "browse" }
+  // Tapping a category's own title row on the browse screen (see the
+  // `content` branch that renders those rows when nothing's typed) opens
+  // this — the full, unfiltered list for just that one category (Favorites,
+  // Agents, Skills, My Team, or any external directory), with its own
+  // within-category search field. Replaces the old multi-select category
+  // dropdown's "exactly one category checked" case, per an explicit
+  // follow-up dropping multi-select entirely — browsing is now either "type
+  // to search every category at once" (still on `browse`) or "tap one
+  // category to see just its own full list" (here).
+  | { kind: "category"; groupId: string }
   | { kind: "detail"; contact: CreateNewOutboundContact | null; query: string; initialChannel?: ChannelType }
   // Clicking a skill row's own body (see `renderContactRow`'s onClick)
   // opens this — a roster of the real agents staffing that skill, each
   // callable/chattable exactly like an Agents-group row (see `outbound.
-  // skillMembers` and this screen's own render branch below).
+  // skillMembers` and this screen's own render branch below). Reachable
+  // from a skill row wherever one appears now — inline in a browse-screen
+  // search result, or inside the "category" screen above when that
+  // category is Skills — same as before, just from more places.
   | { kind: "skillAgents"; skillId: string; skillName: string };
 
 /** Digits typed before the dial pad bothers checking for a directory match
@@ -448,7 +461,29 @@ function CallSkillRow({ contact, onCall }: { contact: CreateNewOutboundContact &
         </div>
       }
       title="Call this skill"
-      trailing={<PhoneIcon className="h-4 w-4 shrink-0 text-lyra-fg-secondary" strokeWidth={1.5} aria-hidden="true" />}
+      // Per an explicit follow-up: a bare 16px glyph read as small, off-
+      // center, and hugging the row's right edge next to the leading tile's
+      // full 36px square — wrapping it in a same-height slot fixes the
+      // apparent vertical centering issue for free, since both slots now
+      // occupy the same height instead of one being a tall square and the
+      // other a tiny bare icon. `mr-1` gives it a bit more breathing room
+      // from the row's own edge on top of that. Sized to lyra-ui's own
+      // 40px touch-target step (`ActionIconButton`'s "lg") — comfortably
+      // finger-sized on mobile — while staying presentational (no nested
+      // button/tab-stop): the row's own `onClick` above already fires
+      // wherever it's tapped, icon included, same as before.
+      // Per a further follow-up, the tinted circle (matching the leading
+      // tile's `avatarClassName` accent) read as an unrelated colored badge
+      // rather than a call affordance — dropped in favor of the same plain
+      // gray `text-lyra-fg-secondary` this app already uses for its other
+      // call/chat icon buttons (see the agent/skill "call" icon in
+      // `ConsultTransferPopover`), no fill, so it reads as an icon rather
+      // than a status chip.
+      trailing={
+        <div className="mr-1 flex h-10 w-10 shrink-0 items-center justify-center text-lyra-fg-secondary">
+          <PhoneIcon className="h-5 w-5" strokeWidth={1.5} aria-hidden="true" />
+        </div>
+      }
     />
   );
 }
@@ -846,30 +881,28 @@ export function AddOutboundButton({
 // pinned/can't-remove list. IDs match `directory.ts` seed data
 // (`DIRECTORY_AGENTS`/`DIRECTORY_SKILLS`). No customers here anymore — per
 // an explicit follow-up, Customers were removed from New Outbound entirely
-// (not just hidden from the category dropdown), so "sofia"/"jordan" no
-// longer belong in this list either.
+// (not just hidden from the category list), so "sofia"/"jordan" no longer
+// belong in this list either.
 const DEFAULT_FAVORITE_IDS = ["john-smith", "amara", "vip-support"];
 
 export function NewOutboundPopover({ title = "New Outbound", expanded = false, outbound }: NewOutboundPopoverProps) {
   const [open, setOpen] = useState(false);
-  // Multi-select category filter — purely explicit now: a category is
-  // searched only while it's checked, full stop (no more "0 selected reads
-  // as search everything" sentinel behavior). A "Select All" row in the
-  // dropdown itself (see `showSelectAll` below) covers the "search
-  // everything" case instead of an implicit empty-selection meaning.
-  // Defaults to Favorites alone so the popover always opens on a populated,
-  // relevant view instead of an empty "select a category" prompt. Not reset
-  // on close after that, same "leave it as the agent left it" convention as
-  // `search` below.
-  const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>(["favorites"]);
-  // Dial Pad is a mode switch (swaps the whole body for a phone field), not a
-  // filterable category, so it's its own flag rather than a synthetic value
-  // hiding inside the category selection — see its own doc comment further
-  // down at the `content` branch that reads this.
+  // Dial Pad is a mode switch (swaps the whole body for a phone field), not
+  // a category to browse or search, so it's its own flag rather than a
+  // screen/category value — see its own doc comment further down at the
+  // `content` branch that reads this.
   const [dialPadActive, setDialPadActive] = useState(false);
   const [search, setSearch] = useState("");
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set(DEFAULT_FAVORITE_IDS));
   const [screen, setScreen] = useState<Screen>({ kind: "browse" });
+  // The "category" screen's own within-category filter (see that `Screen`
+  // variant's doc comment) — separate from the browse root's own `search`
+  // above, same "each drill-down gets its own scoped field" convention
+  // `skillAgentSearch` below already established for the Skills roster
+  // screen. Reset on entry (see `renderCategoryRow`), not on close, same
+  // "leave it as the agent left it until the next visit" idea `search`
+  // itself follows.
+  const [categorySearch, setCategorySearch] = useState("");
   // Last 3 outbound skills the agent has started an interaction with,
   // most-recent-first — surfaced as a "Recent" shortcut section in the
   // "Select outbound skill" dropdown.
@@ -899,12 +932,15 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
     setRecentSkillIds((prev) => [skillId, ...prev.filter((id) => id !== skillId)].slice(0, 3));
   };
 
-  // The single group to treat specially when exactly one category is
-  // explicitly checked — preserves the old single-select behavior exactly
-  // (flat contact list, no section header, that group's own
-  // `searchPlaceholder`/`emptyMessage`) for what's still the common case.
-  const singleSelectedGroup =
-    selectedCategoryIds.length === 1 ? outbound.groups.find((g) => g.id === selectedCategoryIds[0]) ?? null : null;
+  // A group's own raw contact list, before any query/search filtering —
+  // Favorites is the one group that doesn't carry its own `contacts` array
+  // (it derives its members from `favoriteIds` against `allContacts`
+  // instead, see that memo below); every other group just uses whatever's
+  // on `group.contacts`. Shared by the root browse screen's own
+  // query-driven sections below and the "category" drill-down screen, so
+  // both agree on exactly what belongs to a given category.
+  const contactsForGroup = (group: CreateNewOutboundGroup): CreateNewOutboundContact[] =>
+    group.kind === "favorites" ? allContacts.filter((c) => favoriteIds.has(c.id)) : group.contacts ?? [];
 
   // Deduped by id — "My Team" now lists real `DIRECTORY_AGENTS` records that
   // also appear in the "Agents" group (see directory.ts's own
@@ -966,45 +1002,28 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
 
   const query = search.trim().toLowerCase();
 
-  // Which groups are in scope: only whatever's explicitly checked — no more
-  // implicit "nothing checked means search everything" fallback. Check
-  // "Select All" in the dropdown to search every category at once instead.
-  const scopedGroups = outbound.groups.filter((g) => selectedCategoryIds.includes(g.id));
-
-  // Nothing selected AND nothing typed is the one state that still needs an
-  // explicit prompt. A typed query still falls through to the unmatched-flow
-  // ("No match found" + Continue) even with zero categories checked, same as
-  // a query that matches nothing within whatever categories are checked —
-  // see `noMatches` below. Any explicit category selection shows its full
-  // contents right away (no query required), matching the old single-group
-  // behavior.
-  const showStartTypingPrompt = selectedCategoryIds.length === 0 && !query;
-
-  /** Categorized sections across whatever's in scope — one per group with at
-   *  least one match, in `groups` order. Skipped entirely while
-   *  `showStartTypingPrompt` is true (nothing to compute yet). Plain
-   *  computation, not memoized — `scopedGroups` is a fresh array every
-   *  render anyway, and this list is small enough that it doesn't matter. */
-  const sections = showStartTypingPrompt
-    ? []
-    : scopedGroups
+  /** Categorized sections across EVERY category at once — per an explicit
+   *  follow-up dropping the old multi-select category dropdown entirely,
+   *  typing in the root search field now always searches every group
+   *  (there's no way to scope it to a subset anymore; that's what the
+   *  "category" drill-down screen is for instead). One entry per group with
+   *  at least one match, in `outbound.groups` order. Only meaningful while
+   *  there's a query — see the `content` branch below, which shows the
+   *  plain category title-row list instead whenever `query` is empty.
+   *  Plain computation, not memoized — `outbound.groups` is small enough
+   *  that it doesn't matter. */
+  const sections = query
+    ? outbound.groups
         .map((g) => ({
           group: g,
           // Matches by phone number too (see contactMatchesQuery) — the
           // search box's own placeholder already promises "Enter phone,
           // email or search term", so this closes a real gap rather than
-          // adding new UI. Favorites derives its list from
-          // `allContacts`/`favoriteIds` rather than its own (empty)
-          // `contacts` array.
-          contacts: (g.kind === "favorites" ? allContacts.filter((c) => favoriteIds.has(c.id)) : g.contacts ?? []).filter((c) =>
-            contactMatchesQuery(c, search)
-          ),
+          // adding new UI.
+          contacts: contactsForGroup(g).filter((c) => contactMatchesQuery(c, search)),
         }))
-        .filter((section) => section.contacts.length > 0);
-
-  // Only a real header cue when results span more than one group — a single
-  // explicitly-selected category still reads as a flat list, same as before.
-  const showSectionLabels = selectedCategoryIds.length !== 1;
+        .filter((section) => section.contacts.length > 0)
+    : [];
 
   const noMatches = query.length > 0 && sections.length === 0;
 
@@ -1204,6 +1223,44 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
         }}
       />
     );
+  } else if (screen.kind === "category") {
+    // Full, unfiltered list for one category — reached by tapping its title
+    // row on the browse screen (see the final `else` branch below). Own
+    // within-category `categorySearch` field, same "own scoped SearchInput
+    // inside `content`, not the shared header" placement the Skills roster
+    // screen above already uses — kept consistent rather than inventing a
+    // second pattern for the same idea. `renderContactRow` is reused as-is,
+    // so a Skill row here still opens that skill's own agent roster exactly
+    // like it does everywhere else (see that function's own doc comment) —
+    // nothing category-specific needed for that to keep working.
+    const group = outbound.groups.find((g) => g.id === screen.groupId);
+    const groupContacts = group ? contactsForGroup(group) : [];
+    const filteredContacts = categorySearch
+      ? groupContacts.filter((c) => contactMatchesQuery(c, categorySearch))
+      : groupContacts;
+    content = (
+      <div className="flex flex-col pb-2">
+        {groupContacts.length > 0 && (
+          <div className="px-4 pb-2 pt-1">
+            <SearchInput
+              value={categorySearch}
+              onValueChange={setCategorySearch}
+              placeholder={group?.searchPlaceholder ?? `Search ${group?.label ?? "this category"}`}
+              aria-label={`Search ${group?.label ?? "this category"}`}
+            />
+          </div>
+        )}
+        {groupContacts.length === 0 ? (
+          <p className="px-4 py-8 text-center lyra-body-sm text-lyra-fg-secondary">
+            {group?.emptyMessage ?? "Nothing here yet."}
+          </p>
+        ) : filteredContacts.length === 0 ? (
+          <p className="px-4 py-8 text-center lyra-body-sm text-lyra-fg-secondary">No matches.</p>
+        ) : (
+          filteredContacts.map(renderContactRow)
+        )}
+      </div>
+    );
   } else if (noMatches) {
     // A search with zero matches — including a raw phone number or email
     // that will never match a contact record — offers a manual "Continue"
@@ -1268,47 +1325,65 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
         </Button>
       </div>
     );
-  } else if (showStartTypingPrompt) {
-    content = (
-      <p className="px-4 py-8 text-center lyra-body-sm text-lyra-fg-secondary">
-        Select a category above, or type a phone number or email.
-      </p>
-    );
-  } else if (sections.length === 0) {
-    // Reached only when a category is explicitly selected (otherwise
-    // `showStartTypingPrompt`/`noMatches` above would already have caught
-    // it) and it's genuinely empty — e.g. Favorites with nothing favorited
-    // yet. A single selection keeps that group's own `emptyMessage`; 2+
-    // empty selections fall back to a generic message since there's no
-    // single group left to attribute it to.
-    content = (
-      <p className="px-4 py-8 text-center lyra-body-sm text-lyra-fg-secondary">
-        {singleSelectedGroup?.emptyMessage ?? "Nothing here yet."}
-      </p>
-    );
-  } else {
+  } else if (query) {
+    // A query on the root browse screen always searches every category at
+    // once now (see `sections`'s own doc comment) — `noMatches` above
+    // already caught the zero-result case, so `sections` is guaranteed
+    // non-empty here. Always labeled: unlike the old single-category-
+    // selected case, a query result is never "obviously" just one category,
+    // so the label stays even when only one happens to have a match.
     content = (
       <div className="flex flex-col pb-2">
         {sections.map(({ group, contacts }, i) => (
           <div key={group.id}>
-            {showSectionLabels && (
-              <p
-                className={cn(
-                  "px-4 pt-3 pb-1 lyra-body-xs text-lyra-fg-secondary uppercase tracking-wide",
-                  i > 0 && "border-t border-lyra-border-subtle mt-1"
-                )}
-              >
-                {group.label}
-              </p>
-            )}
+            <p
+              className={cn(
+                "px-4 pt-3 pb-1 lyra-body-xs text-lyra-fg-secondary uppercase tracking-wide",
+                i > 0 && "border-t border-lyra-border-subtle mt-1"
+              )}
+            >
+              {group.label}
+            </p>
             {contacts.map(renderContactRow)}
           </div>
         ))}
       </div>
     );
+  } else {
+    // Nothing typed yet — per an explicit follow-up replacing the old
+    // multi-select category dropdown, the browse root now just lists every
+    // category as its own title + chevron row, with no preview of contacts
+    // underneath (that's what tapping through to the "category" screen
+    // above is for). Doubles as this screen's "start" prompt — there's no
+    // separate empty-state message anymore, the row list itself is it.
+    content = (
+      <div className="flex flex-col pb-2">
+        {outbound.groups.map((group) => (
+          <ListItem
+            key={group.id}
+            className="group/row"
+            onClick={() => {
+              setCategorySearch("");
+              setScreen({ kind: "category", groupId: group.id });
+            }}
+            // Matches the same uppercase/tracked/secondary-gray treatment
+            // this file already uses for group labels above a set of search
+            // results (see the `query` branch above) — per an explicit
+            // follow-up, sized one step up (`lyra-body-sm`'s 12px, not
+            // `lyra-body-xs`'s 10px) since these rows are the primary,
+            // stand-alone content here rather than a small label sitting
+            // above other rows. `ListItem`'s own `title` renders through a
+            // `lyra-body-md-emphasis` wrapper by default; passing a styled
+            // span here overrides that for just this usage, same
+            // "compose via the prop's own ReactNode support" approach as
+            // everywhere else in this file, not a `ListItem` core change.
+            title={<span className="lyra-body-sm uppercase tracking-wide text-lyra-fg-secondary">{group.label}</span>}
+            trailing={<ChevronRight className="h-4 w-4 text-lyra-fg-secondary" strokeWidth={1.5} aria-hidden="true" />}
+          />
+        ))}
+      </div>
+    );
   }
-
-  const categoryOptions = outbound.groups.map((g) => ({ value: g.id, label: g.label }));
 
   // Search doesn't apply while the Dial Pad is active (nothing to search —
   // it's a single phone field, not a contact list), same as lyra-ui's own
@@ -1321,11 +1396,11 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
     <div className="border-b border-lyra-border-subtle">
       <div className="flex items-center justify-between px-4 py-4">
         <div className="flex min-w-0 items-center gap-2">
-          {/* Detail/skill-agents screens back out to browse; Dial Pad (still
-           *  technically the browse screen, just with `dialPadActive` on —
-           *  see that state's own doc comment) backs out to whatever
-           *  category selection/search was already in place, not a reset. */}
-          {(screen.kind === "detail" || screen.kind === "skillAgents" || dialPadActive) && (
+          {/* Detail/category/skill-agents screens back out to browse; Dial
+           *  Pad (still technically the browse screen, just with
+           *  `dialPadActive` on — see that state's own doc comment) backs
+           *  out to whatever search text was already in place, not a reset. */}
+          {(screen.kind === "detail" || screen.kind === "category" || screen.kind === "skillAgents" || dialPadActive) && (
             <button
               type="button"
               onClick={() => (screen.kind === "browse" ? setDialPadActive(false) : setScreen({ kind: "browse" }))}
@@ -1344,11 +1419,13 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
             <p className="lyra-heading-sm text-lyra-fg-default truncate">
               {screen.kind === "detail"
                 ? "Outbound Call"
-                : screen.kind === "skillAgents"
-                  ? `${screen.skillName} Agents`
-                  : dialPadActive
-                    ? "Dial Pad"
-                    : title}
+                : screen.kind === "category"
+                  ? outbound.groups.find((g) => g.id === screen.groupId)?.label ?? title
+                  : screen.kind === "skillAgents"
+                    ? `${screen.skillName} Agents`
+                    : dialPadActive
+                      ? "Dial Pad"
+                      : title}
             </p>
           )}
         </div>
@@ -1364,13 +1441,19 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
       {screen.kind === "browse" && !dialPadActive && (
         <div className="flex flex-col gap-3 px-4 pb-4">
           {/* Phone/email/search-term entry leads — it's the primary action
-           *  (type a number/address, or a name to filter the group below),
-           *  so it sits above the group picker rather than under it. Per
-           *  the reference design, the help text is now a plain label ABOVE
-           *  the field (was a `helperText` caption underneath it). */}
+           *  (type a number/address, or a name to filter every category at
+           *  once below), so it sits above everything else here. Per the
+           *  reference design, the help text is now a plain label ABOVE the
+           *  field (was a `helperText` caption underneath it). No more
+           *  `singleSelectedGroup`-driven placeholder swap — per an explicit
+           *  follow-up dropping the category dropdown entirely, this field
+           *  always searches every category at once now, so its label stays
+           *  generic; a group's own `searchPlaceholder` still gets used, just
+           *  on the "category" screen's own within-category field instead
+           *  (see that screen's own `content` branch). */}
           {showSearchInput && (
             <div className="flex flex-col gap-1.5">
-              <Label label={`${singleSelectedGroup?.searchPlaceholder ?? "Enter phone, email or search term"}`} labelFor="new-outbound-search" />
+              <Label label="Enter phone, email or search term" labelFor="new-outbound-search" />
               <Input
                 id="new-outbound-search"
                 type="text"
@@ -1393,29 +1476,18 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
               />
             </div>
           )}
-          <Select
-            multiple
-            showSelectAll
-            label="Search"
-            values={selectedCategoryIds}
-            onValuesChange={setSelectedCategoryIds}
-            options={categoryOptions}
-            placeholder="Select a category to search"
-            portalDropdown
-          />
-          {/* Quick-access shortcut into the Dial Pad screen — moved below
-           *  the category dropdown and restyled as a plain (not link-blue/
-           *  underlined) row per the reference design; still one click
-           *  instead of a Select interaction, for what's meant to be a fast
-           *  "just dial a number" path. Sized up (icon + text) and given
-           *  extra top margin per an explicit follow-up, so it reads as its
-           *  own distinct row rather than crowding the category dropdown
-           *  right above it. */}
+          {/* Quick-access shortcut into the Dial Pad screen — per an explicit
+           *  follow-up, moved up to sit directly under the search field now
+           *  that the category dropdown it used to sit below is gone
+           *  (category browsing moved into the scrollable list itself, see
+           *  the browse-root `content` branch). Still one click instead of a
+           *  Select interaction, for what's meant to be a fast "just dial a
+           *  number" path. */}
           {showSearchInput && (
             <button
               type="button"
               onClick={() => setDialPadActive(true)}
-              className="mt-2 flex items-center gap-2 self-start lyra-body-md text-lyra-fg-secondary hover:text-lyra-fg-default transition-colors"
+              className="flex items-center gap-2 self-start lyra-body-md text-lyra-fg-secondary hover:text-lyra-fg-default transition-colors"
             >
               <Grid3x3 className="h-5 w-5" strokeWidth={1.5} aria-hidden="true" />
               Dial Pad

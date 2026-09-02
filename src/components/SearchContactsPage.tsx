@@ -21,12 +21,14 @@ import {
   ToggleGroup,
   Popover,
   Menu,
+  Accordion,
   StatusBadge,
   KebabMenuButton,
   CHANNEL_ACCENT,
   type DateRange,
   type FilterChipOption,
   type MenuEntry,
+  type AccordionItem,
 } from "@nicecxone/lyra-ui";
 import {
   RefreshCw,
@@ -40,6 +42,7 @@ import {
   Send,
   Plus,
   X,
+  ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CONTACT_CHANNEL_ICON, CONTACT_CHANNEL_LABEL } from "@/components/DirectoryPage";
@@ -424,6 +427,182 @@ function QueryBuilderContent({ root, onUpdate }: { root: QbGroup; onUpdate: (g: 
   );
 }
 
+/* ── Filters dropdown ──
+ * Per an explicit follow-up, replaces the previous per-category `FilterChip`
+ * button-dropdowns (Status/Skill/Channel/Inbox Assignee/Assigned Owner/Tags)
+ * with a single "Filters" button opening one popover. Inside it, an
+ * `Accordion` lists every category as its own title+chevron row — clicking
+ * a row expands a checklist of that category's options directly beneath it,
+ * rather than opening yet another nested button-dropdown (which is what
+ * lyra-ui's own built-in "collapsed filters" mode still does under the
+ * hood — see `FilterChip`, always a `Select`-with-portal-dropdown itself).
+ * `type="multiple"` since the categories are independent — checking Skill
+ * shouldn't require closing Status first.
+ * Query Builder and Date Created intentionally stay separate (see this
+ * file's own scope note above) — this only replaces the six `filterDefs`
+ * categories. Currently-active selections also render as their own small
+ * removable chips outside this popover (`ActiveFilterChips` below), so an
+ * agent can see and clear what's applied without reopening the dropdown. */
+
+interface FilterDef {
+  key: string;
+  label: string;
+  options: { value: string; label: string }[];
+}
+
+function FiltersDropdown({
+  filterDefs,
+  filterValues,
+  onFilterChange,
+  onFilterClear,
+}: {
+  filterDefs: FilterDef[];
+  filterValues: Record<string, string[]>;
+  onFilterChange: (key: string, values: string[]) => void;
+  onFilterClear: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  // Per-category search text — keyed by `filterDefs[].key`, so typing in
+  // Skill's row doesn't affect Status's. Kept even after the popover closes
+  // (not reset on `onOpenChange`) since a stale search on reopen is a minor
+  // convenience miss, not a correctness issue, and every other filter
+  // control in this file (Query Builder chips, etc.) behaves the same way.
+  const [categorySearch, setCategorySearch] = useState<Record<string, string>>({});
+  const activeCount = filterDefs.filter((f) => (filterValues[f.key]?.length ?? 0) > 0).length;
+
+  const items: AccordionItem[] = filterDefs.map((f) => {
+    const selected = filterValues[f.key] ?? [];
+    const query = (categorySearch[f.key] ?? "").trim().toLowerCase();
+    const visibleOptions = query ? f.options.filter((opt) => opt.label.toLowerCase().includes(query)) : f.options;
+    return {
+      id: f.key,
+      title: f.label,
+      endSlot:
+        selected.length > 0 ? (
+          <span className="lyra-body-sm-emphasis text-lyra-fg-active-strong">{selected.length}</span>
+        ) : undefined,
+      content: (
+        <div className="flex flex-col gap-2.5">
+          {/* Only worth showing once a category has enough options that
+           *  scanning them is slower than typing — short lists (e.g. the
+           *  five Statuses) don't need it, but this stays uniform across
+           *  every category per an explicit follow-up rather than only
+           *  appearing on the longer ones (Skill/Inbox Assignee/Tags). */}
+          <SearchInput
+            value={categorySearch[f.key] ?? ""}
+            onValueChange={(val) => setCategorySearch((prev) => ({ ...prev, [f.key]: val }))}
+            placeholder={`Search ${f.label}…`}
+            className="mb-0.5"
+          />
+          {visibleOptions.length === 0 ? (
+            <span className="lyra-body-sm text-lyra-fg-secondary">No matches</span>
+          ) : (
+            visibleOptions.map((opt) => {
+              const checked = selected.includes(opt.value);
+              return (
+                <label key={opt.value} className="flex cursor-pointer items-center gap-2">
+                  <Checkbox
+                    checked={checked}
+                    onCheckedChange={() =>
+                      onFilterChange(f.key, checked ? selected.filter((v) => v !== opt.value) : [...selected, opt.value])
+                    }
+                  />
+                  <span className="lyra-body-sm text-lyra-fg-default">{opt.label}</span>
+                </label>
+              );
+            })
+          )}
+        </div>
+      ),
+    };
+  });
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={setOpen}
+      placement="bottom"
+      align="start"
+      className="w-[300px] p-0"
+      content={
+        <div className="flex max-h-[420px] flex-col overflow-y-auto">
+          <Accordion type="multiple" items={items} />
+          {activeCount > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                onFilterClear();
+                setOpen(false);
+              }}
+              className="lyra-body-sm border-t border-lyra-border-subtle px-4 py-3 text-left text-lyra-fg-secondary transition-colors hover:text-lyra-fg-default"
+            >
+              Clear all
+            </button>
+          )}
+        </div>
+      }
+    >
+      <button
+        type="button"
+        className={cn(
+          "inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lyra-md border px-2 lyra-body-sm-emphasis transition-colors",
+          activeCount > 0
+            ? "border-lyra-border-active bg-lyra-bg-active-subtle text-lyra-fg-active-strong"
+            : "border-lyra-border-default bg-lyra-bg-control text-lyra-fg-default hover:bg-lyra-state-hover"
+        )}
+      >
+        Filters{activeCount > 0 ? `: ${activeCount} Active` : ""}
+        <ChevronDown
+          className={cn("h-3.5 w-3.5 transition-transform duration-200", open && "rotate-180")}
+          strokeWidth={1.5}
+          aria-hidden="true"
+        />
+      </button>
+    </Popover>
+  );
+}
+
+/** Small removable summary chips for whichever categories currently have a
+ *  selection — one chip per category (not per value), grouping multi-select
+ *  values together (e.g. "Status: New, Resolved"); its own "×" clears just
+ *  that category, leaving the others untouched. Lives outside the
+ *  `FiltersDropdown` popover per an explicit follow-up. */
+function ActiveFilterChips({
+  filterDefs,
+  filterValues,
+  onFilterChange,
+}: {
+  filterDefs: FilterDef[];
+  filterValues: Record<string, string[]>;
+  onFilterChange: (key: string, values: string[]) => void;
+}) {
+  const active = filterDefs.filter((f) => (filterValues[f.key]?.length ?? 0) > 0);
+  if (active.length === 0) return null;
+  return (
+    <>
+      {active.map((f) => {
+        const selected = filterValues[f.key] ?? [];
+        const labels = selected.map((v) => f.options.find((o) => o.value === v)?.label ?? v);
+        return (
+          <div key={f.key} className={cn(filterChipVariants({ variant: "active", size: "sm" }), "rounded-lyra-md")}>
+            <span className="lyra-body-sm-emphasis max-w-[200px] truncate">
+              {f.label}: {labels.join(", ")}
+            </span>
+            <button
+              type="button"
+              onClick={() => onFilterChange(f.key, [])}
+              aria-label={`Remove ${f.label} filter`}
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-lyra-fg-secondary hover:bg-lyra-state-hover-active-subtle hover:text-lyra-fg-default"
+            >
+              <X className="h-3 w-3" strokeWidth={2} aria-hidden="true" />
+            </button>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 /* ── Quick search types ── */
 
 const SEARCH_TYPES: { value: string; label: string; placeholder: string }[] = [
@@ -635,44 +814,53 @@ export function SearchContactsPage() {
         </div>
       </div>
 
-      {/* ── Row 2: TableToolbar — filter chips (Status/Skill/Channel/Inbox
-       *  Assignee/Assigned Owner/Tags), a Date Range control (via the
-       *  `filters` slot — doesn't fit FilterChip's fixed-option-list shape),
-       *  and the native Query Builder popover. Always visible, same as row 1
-       *  — filtering is one of the two ways to trigger `hasSearched`, so it
-       *  can't be gated behind having already searched. */}
+      {/* ── Row 2: TableToolbar — a single consolidated "Filters" dropdown
+       *  (Status/Skill/Channel/Inbox Assignee/Assigned Owner/Tags, see
+       *  `FiltersDropdown` above) plus its own small removable active-filter
+       *  chips, a Date Range control (via the `filters` slot — doesn't fit
+       *  FilterChip's fixed-option-list shape either), and the native Query
+       *  Builder popover. Always visible, same as row 1 — filtering is one
+       *  of the two ways to trigger `hasSearched`, so it can't be gated
+       *  behind having already searched.
+       *  Per an explicit follow-up, this replaces the previous per-category
+       *  `FilterChip` button-dropdowns (and lyra-ui's own built-in
+       *  "collapsed filters" mode, which still nests a `FilterChip`
+       *  button-dropdown per category under the hood) — `filterDefs` is no
+       *  longer passed to `TableToolbar` itself, just to `FiltersDropdown`/
+       *  `ActiveFilterChips` below. */}
       <TableToolbar
         recordCount={hasSearched ? totalRecords : undefined}
         recordLabel="Interactions"
-        // Per an explicit follow-up — keep these filter chips
-        // listed and wrapping across as many lines as needed, and only
-        // collapse them into the "Filters" dropdown once the panel gets
-        // genuinely narrow (~360px), rather than lyra-ui's own default
-        // 991px breakpoint (still used for the action-buttons/panel-toggle
-        // side of this same toolbar, unaffected by this).
-        filtersCollapseWidth={360}
         // Compact ("sm") sizing for the whole filter row — per an explicit
         // follow-up, the filter chips/date range/Query Builder button were
         // reading at the same visual weight as the primary search row
-        // above, with nothing signaling "these are secondary." lyra-ui's
-        // FilterChip/DateRangePicker/TableToolbar all gained a `size="sm"`
-        // option for exactly this (see their own doc comments) — this is
-        // the first consumer to use it.
-        filterChipSize="sm"
+        // above, with nothing signaling "these are secondary."
         advancedSearchButtonSize="sm"
-        filterDefs={filterDefs}
-        filterValues={filterValues}
-        onFilterChange={(key, values) => {
-          setFilterValues((prev) => ({ ...prev, [key]: values }));
-          setCurrentPage(1);
-        }}
-        onFilterClear={() => {
-          setFilterValues({});
-          setDateRange(undefined);
-          setCurrentPage(1);
-        }}
         filters={
-          <DateRangePicker value={dateRange} onChange={(range) => { setDateRange(range); setCurrentPage(1); }} placeholder="Date Created" className="w-[220px]" size="sm" />
+          <>
+            <FiltersDropdown
+              filterDefs={filterDefs}
+              filterValues={filterValues}
+              onFilterChange={(key, values) => {
+                setFilterValues((prev) => ({ ...prev, [key]: values }));
+                setCurrentPage(1);
+              }}
+              onFilterClear={() => {
+                setFilterValues({});
+                setDateRange(undefined);
+                setCurrentPage(1);
+              }}
+            />
+            <DateRangePicker value={dateRange} onChange={(range) => { setDateRange(range); setCurrentPage(1); }} placeholder="Date Created" className="w-[220px]" size="sm" />
+            <ActiveFilterChips
+              filterDefs={filterDefs}
+              filterValues={filterValues}
+              onFilterChange={(key, values) => {
+                setFilterValues((prev) => ({ ...prev, [key]: values }));
+                setCurrentPage(1);
+              }}
+            />
+          </>
         }
         showAdvancedSearch
         advancedSearchContent={<QueryBuilderContent root={qbRoot} onUpdate={setQbRoot} />}

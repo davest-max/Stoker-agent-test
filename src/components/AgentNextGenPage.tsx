@@ -1395,6 +1395,31 @@ export function AgentNextGenPage({
   useEffect(() => {
     checkVoiceBarSqueezeRef.current();
   }, [sidePanelWidth, sidePanelOpen, dockedBarNeededWidth, isVoiceCallDocked]);
+  // Per an explicit follow-up: clicking away from the voice call's own
+  // docked assignment (to any other assignment, or nothing at all), then
+  // clicking back, should leave the bar floating right where the agent had
+  // it — not silently re-dock the moment `isVoiceCallDocked` flips back to
+  // true, which is purely definitional (true whenever this happens to be
+  // the active assignment) and says nothing about whether the agent
+  // actually wants it docked again. Tracked via a ref rather than a
+  // per-call-site check in every handler that can change
+  // `activeAssignmentId` (`handleSelectAssignment`, the outbound-call
+  // handlers, dismissing the active assignment, etc.) — same "compare
+  // against the previous render's value to detect a change happening THIS
+  // render" ref pattern `NewOutboundPopover`'s own screen-transition
+  // direction already uses, so this covers every current and future path
+  // uniformly instead of needing to be duplicated at each one. Reuses
+  // `voiceCallManuallyUndocked` — the exact same "stay floating until the
+  // agent explicitly hits Dock again" flag the floating bar's own Undock
+  // button already sets — rather than inventing a second flag for what is,
+  // from the bar's own point of view, the identical state.
+  const wasVoiceCallDockedRef = useRef(isVoiceCallDocked);
+  useEffect(() => {
+    if (wasVoiceCallDockedRef.current && !isVoiceCallDocked) {
+      setVoiceCallManuallyUndocked(true);
+    }
+    wasVoiceCallDockedRef.current = isVoiceCallDocked;
+  }, [isVoiceCallDocked]);
   // Shared by the kebab's "Unassign & Dismiss" (`onDismissCurrentChannel`)
   // and the Outcome form's "Approve & Save" (`onApproveOutcome`) — two
   // different buttons that both end the interaction the exact same way, so
@@ -1710,6 +1735,19 @@ export function AgentNextGenPage({
             ? { ...c, isOnHold: false, heldSince: undefined }
             : { ...c, isOnHold: true, heldSince: Date.now() }
       ),
+    }));
+  };
+
+  // Drops just ONE colleague from the conference — the call keeps going for
+  // everyone else (primary party included), unlike `handleHangUpLiveCall`,
+  // which ends the whole thing. New per an explicit follow-up giving each
+  // participant pill its own Hang Up action; confirmed inline before this
+  // ever fires (see `ParticipantChip`'s own `confirming` state) since,
+  // unlike hold, dropping someone isn't reversible.
+  const dropVoiceCallColleague = (assignmentId: string, colleagueId: string) => {
+    setVoiceCallColleagues((prev) => ({
+      ...prev,
+      [assignmentId]: (prev[assignmentId] ?? []).filter((c) => c.id !== colleagueId),
     }));
   };
 
@@ -2909,6 +2947,7 @@ export function AgentNextGenPage({
                         onCancelConsult={() => cancelVoiceCallConsult(liveVoiceCall!.assignmentId)}
                         onMergeConsult={() => mergeVoiceCallConsult(liveVoiceCall!.assignmentId)}
                         onToggleColleagueHold={(colleagueId) => toggleVoiceCallColleagueHold(liveVoiceCall!.assignmentId, colleagueId)}
+                        onDropColleague={(colleagueId) => dropVoiceCallColleague(liveVoiceCall!.assignmentId, colleagueId)}
                         onTransferToColleague={handleTransferVoiceCallToColleague}
                         isSelfCameraOff={isSelfCameraOff}
                         onToggleSelfCamera={() => setIsSelfCameraOff((v) => !v)}
@@ -3290,6 +3329,7 @@ export function AgentNextGenPage({
             onCancelConsult={() => cancelVoiceCallConsult(liveVoiceCall.assignmentId)}
             onMergeConsult={() => mergeVoiceCallConsult(liveVoiceCall.assignmentId)}
             onToggleColleagueHold={(colleagueId) => toggleVoiceCallColleagueHold(liveVoiceCall.assignmentId, colleagueId)}
+            onDropColleague={(colleagueId) => dropVoiceCallColleague(liveVoiceCall.assignmentId, colleagueId)}
             onTransferToColleague={handleTransferVoiceCallToColleague}
             isSelfCameraOff={isSelfCameraOff}
             onToggleSelfCamera={() => setIsSelfCameraOff((v) => !v)}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ActionIconButton, Button, CHANNEL_ACCENT, Popover, Menu, type MenuEntry } from "@nicecxone/lyra-ui";
-import { Headset, Mic, MicOff, Pause, AudioLines, CircleDot, Grip, PhoneOff, ChevronDown, Video, VideoOff, Move, PanelRight, Users, ArrowRightLeft } from "lucide-react";
+import { Headset, Mic, MicOff, Pause, Play, AudioLines, Circle, CircleDot, Grip, PhoneOff, ChevronDown, Video, VideoOff, Move, PanelRight, Users, ArrowRightLeft, Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /** AudioLines with a diagonal slash — Lucide has no ready icon for "mask
@@ -36,7 +36,17 @@ function MutedAudioLinesIcon({ strokeWidth = 2, className }: { strokeWidth?: num
  *  lighter on hover — this class
  *  wins over `ActionIconButton`'s own `hover:bg-lyra-state-hover` via
  *  `cn`'s tailwind-merge. */
-const SELECTED_RED = "bg-lyra-status-critical-strong hover:bg-lyra-status-critical-strong active:bg-lyra-status-critical-strong";
+// `bg-destructive` (not `bg-status-critical-strong`) — per the accessibility
+// follow-up flagged in this file's own audit: `status-critical-strong` is a
+// STATUS-indicator token, deliberately inverted per theme for legibility as
+// small text/badges (dark red on light chrome, a light pastel red on dark
+// chrome) — exactly wrong for a large button fill meant to hold a permanent
+// white icon, since that pastel-on-dark-chrome case drops to ~2.5:1 contrast.
+// `bg-destructive` is the stable, theme-independent dark red actually meant
+// to pair with a white icon (see `fg-on-destructive`, used below) — same
+// color as `status-critical-strong` in light theme (so no visible change
+// there), just no longer collapsing in dark theme.
+const SELECTED_RED = "bg-lyra-bg-destructive hover:bg-lyra-bg-destructive active:bg-lyra-bg-destructive";
 const SELECTED_SLATE = "bg-lyra-accent-slate-strong hover:bg-lyra-accent-slate-strong active:bg-lyra-accent-slate-strong";
 // Reverted per an explicit follow-up: no per-button shape override
 // (`ActionIconButton`'s own default rounded-square/no-border look is used
@@ -123,35 +133,218 @@ function formatParticipantLabel(name: string, sourceSkillName?: string): string 
  *  name/timer once `colleagues.length > 0` — one per person on the call
  *  (self, the primary party, and every added colleague), so the agent can
  *  see who's actually here at a glance without opening the Participants
- *  menu. Purely a glanceable summary; the menu (see `buildParticipantMenuItems`
- *  below) is where hold/transfer actions actually live — kept as two
- *  separate affordances per an explicit follow-up, rather than making this
- *  strip itself clickable. */
+ *  menu. Per an explicit follow-up, the label runs a size bigger than it
+ *  used to (`lyra-body-sm`, not `lyra-body-xs`) — permanently, not just
+ *  while expanded below — since a 10px name is hard to read once there are
+ *  3+ people in the strip. Per a second follow-up (name + icons still hard
+ *  to read/hit), the label stepped up again to `lyra-body-md` (14px), the
+ *  avatar bubble grew to match, and every icon button in this pill's
+ *  expanded state — Hold, Transfer, Hang Up, and the Check/X confirm step —
+ *  now uses `h-8 w-8`, matching `ActionIconButton`'s own smallest real
+ *  touch-target step (`size="sm"`, 32px) rather than an arbitrary value.
+ *  `onToggleHold`/`onTransfer`/`onHangUp` are each optional and
+ *  independently gate whether this pill can expand at all: "You" gets none
+ *  (an agent can't hold, transfer, or hang up on themselves), the primary
+ *  party gets hold only (ending their leg is the bar's own main Hang Up
+ *  button's job, transferring it is the switcher's, not a per-pill action),
+ *  and a colleague gets all three. Kept as a second affordance alongside
+ *  the Participants menu (which already has the same Hold/Transfer pair)
+ *  rather than replacing it — quicker access is worth the duplication; the
+ *  two now stay in sync since both call the same `onTransferToColleague`.
+ *  Per an accessibility follow-up: the Hold icon swaps `Pause`↔`Play`
+ *  (rather than only recoloring the same glyph) so the on/off state doesn't
+ *  rely on color alone — see `WCAG 1.4.1`; every interactive element here
+ *  also carries this app's standard focus ring (`focus-visible:ring-2
+ *  ring-inset ring-lyra-border-focus`), which this pill was missing
+ *  entirely before. */
 function ParticipantChip({
   label,
   isSelf,
   isInternalAgent,
   isOnHold,
+  onToggleHold,
+  onTransfer,
+  onHangUp,
 }: {
   label: string;
   isSelf?: boolean;
   isInternalAgent?: boolean;
   isOnHold?: boolean;
+  /** Presence alone gates the Hold/Resume icon in this pill's expanded
+   *  state — omitted for "You". */
+  onToggleHold?: () => void;
+  /** Presence alone gates the Transfer icon in this pill's expanded state —
+   *  only ever passed for a colleague (same restriction as `onHangUp`
+   *  below), and routed straight to the same `onTransferToColleague` the
+   *  Participants menu already calls — no separate confirm step, matching
+   *  that menu's own existing (unconfirmed) transfer action. */
+  onTransfer?: () => void;
+  /** Presence alone gates the Hang Up icon in this pill's expanded state —
+   *  per an explicit follow-up, only ever passed for a colleague. Routed
+   *  through an inline "Drop {name}?" confirm (see `confirming` below)
+   *  before it actually fires, since — unlike hold or transfer — this isn't
+   *  reversible. */
+  onHangUp?: () => void;
 }) {
   const accent = CHANNEL_ACCENT.voice;
+  const canExpand = !!onToggleHold || !!onTransfer || !!onHangUp;
+  // Shared focus-ring treatment for every interactive element in this pill
+  // — `ring-inset` (rather than this app's usual offset ring) so it never
+  // gets clipped by the participant strip's own `overflow-x-auto`.
+  const focusRing = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-lyra-border-focus";
+  // Hover shows it transiently; a click "pins" it open so Hold/Hang Up can
+  // actually be reached without the pointer having to stay put over a
+  // pill this small. Pinning is cleared the moment an action completes (or
+  // is cancelled) rather than needing a separate click-outside listener —
+  // see `closeAndReset` below.
+  const [hovering, setHovering] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const expanded = canExpand && (hovering || pinned);
+
+  const closeAndReset = () => {
+    setPinned(false);
+    setHovering(false);
+    setConfirming(false);
+  };
+
   return (
-    <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-lyra-bg-surface-container-subtle py-0.5 pl-0.5 pr-2">
+    <span
+      // Fixed `h-8` (not padding-driven) so this pill is exactly as tall
+      // collapsed as it is expanded — per an explicit follow-up, the
+      // expanded state's `h-8` Hold/Hang Up buttons used to be taller than
+      // the collapsed content (avatar + label), so the pill's own
+      // content-driven height grew a few px on hover, shifting the whole
+      // participant strip (and everything below it in the bar) with it.
+      // A fixed height means hover only ever changes this pill's *width*
+      // (the icons sliding in), never the row's height.
+      className={cn("flex h-8 shrink-0 items-center gap-2 rounded-full bg-lyra-bg-surface-container-subtle pl-1 pr-2.5", focusRing)}
+      onMouseEnter={() => canExpand && setHovering(true)}
+      onMouseLeave={() => {
+        setHovering(false);
+        setConfirming(false);
+      }}
+      onClick={() => {
+        if (!canExpand) return;
+        setPinned((prev) => !prev);
+        setConfirming(false);
+      }}
+      onKeyDown={(e) => {
+        if (!canExpand) return;
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        setPinned((prev) => !prev);
+        setConfirming(false);
+      }}
+      role={canExpand ? "button" : undefined}
+      aria-expanded={canExpand ? expanded : undefined}
+      // Only set here for "You" — see the note on the label span below for
+      // why: with that label removed for this one case, the avatar bubble's
+      // own "You" (otherwise `aria-hidden`, same as every other pill's
+      // decorative initials) becomes this pill's only accessible name.
+      aria-label={isSelf ? "You" : undefined}
+      tabIndex={canExpand ? 0 : undefined}
+    >
       <span
         className={cn(
-          "flex h-5 w-5 items-center justify-center rounded-full lyra-body-xs-emphasis",
+          "flex h-6 w-6 shrink-0 items-center justify-center rounded-full lyra-body-xs-emphasis",
           isSelf ? cn(accent.bg, accent.text) : "bg-lyra-bg-surface-base text-lyra-fg-secondary"
         )}
         aria-hidden="true"
       >
-        {isSelf ? "You" : isInternalAgent ? <Headset className="h-2.5 w-2.5" strokeWidth={1.5} /> : getInitials(label)}
+        {isSelf ? "You" : isInternalAgent ? <Headset className="h-3 w-3" strokeWidth={1.5} /> : getInitials(label)}
       </span>
-      <span className="lyra-body-xs text-lyra-fg-secondary max-w-[80px] truncate">{label}</span>
-      {isOnHold && <span className="lyra-body-xs-emphasis text-lyra-status-critical-strong">Hold</span>}
+      {/* Every other pill's avatar is a genuine abbreviation (initials) of
+       *  a longer label, so showing both isn't redundant — the self pill's
+       *  avatar already spells out the whole word "You", so a second "You"
+       *  right next to it was pure duplication (flagged directly). Skipped
+       *  only for `isSelf`; every other pill keeps its label as before. */}
+      {!isSelf && <span className="lyra-body-md text-lyra-fg-secondary max-w-[130px] truncate">{label}</span>}
+      {isOnHold && !expanded && <span className="lyra-body-sm-emphasis text-lyra-status-critical-strong">Hold</span>}
+      {expanded &&
+        (confirming ? (
+          <span className="flex shrink-0 items-center gap-1.5">
+            <span className="lyra-body-sm text-lyra-fg-secondary whitespace-nowrap">Drop {label}?</span>
+            <button
+              type="button"
+              aria-label={`Confirm drop ${label}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onHangUp?.();
+                closeAndReset();
+              }}
+              className={cn("flex h-8 w-8 items-center justify-center rounded-full text-lyra-status-critical-strong hover:bg-lyra-bg-surface-base", focusRing)}
+            >
+              <Check className="h-4 w-4" strokeWidth={2} />
+            </button>
+            <button
+              type="button"
+              aria-label="Cancel"
+              onClick={(e) => {
+                e.stopPropagation();
+                setConfirming(false);
+              }}
+              className={cn("flex h-8 w-8 items-center justify-center rounded-full text-lyra-fg-secondary hover:bg-lyra-bg-surface-base", focusRing)}
+            >
+              <X className="h-4 w-4" strokeWidth={2} />
+            </button>
+          </span>
+        ) : (
+          <span className="flex shrink-0 items-center gap-1.5">
+            {onToggleHold && (
+              <button
+                type="button"
+                title={isOnHold ? `Resume ${label}` : `Hold ${label}`}
+                aria-label={isOnHold ? `Resume ${label}` : `Hold ${label}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleHold();
+                  closeAndReset();
+                }}
+                className={cn(
+                  "flex h-8 w-8 items-center justify-center rounded-full hover:bg-lyra-bg-surface-base",
+                  isOnHold ? "text-lyra-status-critical-strong" : "text-lyra-fg-secondary",
+                  focusRing
+                )}
+              >
+                {/* Swaps shape (not just color) when on hold — Play reads as
+                 *  "tap to resume", matching this button's own `aria-label`/
+                 *  `title` in that state — see this component's own doc
+                 *  comment on why color alone isn't used here. */}
+                {isOnHold ? <Play className="h-4 w-4" strokeWidth={2} /> : <Pause className="h-4 w-4" strokeWidth={2} />}
+              </button>
+            )}
+            {onTransfer && (
+              <button
+                type="button"
+                title={`Transfer call to ${label}`}
+                aria-label={`Transfer call to ${label}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTransfer();
+                  closeAndReset();
+                }}
+                className={cn("flex h-8 w-8 items-center justify-center rounded-full text-lyra-fg-secondary hover:bg-lyra-bg-surface-base", focusRing)}
+              >
+                <ArrowRightLeft className="h-4 w-4" strokeWidth={2} />
+              </button>
+            )}
+            {onHangUp && (
+              <button
+                type="button"
+                title={`Hang up on ${label}`}
+                aria-label={`Hang up on ${label}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setConfirming(true);
+                }}
+                className={cn("flex h-8 w-8 items-center justify-center rounded-full text-lyra-status-critical-strong hover:bg-lyra-bg-surface-base", focusRing)}
+              >
+                <PhoneOff className="h-4 w-4" strokeWidth={2} />
+              </button>
+            )}
+          </span>
+        ))}
     </span>
   );
 }
@@ -520,6 +713,12 @@ export interface LiveVoiceCallBarProps {
    *  "hold everyone at once" behavior once colleagues exist — see
    *  `AgentNextGenPage`'s own `toggleVoiceCallHold`. */
   onToggleColleagueHold: (colleagueId: string) => void;
+  /** Drops just this one colleague from the conference — call continues for
+   *  everyone else. Only ever offered from a colleague's own participant
+   *  pill (see `ParticipantChip`'s own `onHangUp`), never the primary
+   *  party or "You" — ending the whole call is what `onHangUp` below
+   *  already does. */
+  onDropColleague: (colleagueId: string) => void;
   /** Original agent leaves the call, handing it fully to this colleague —
    *  same end effect as `onHangUp` (this interaction leaves the rail the
    *  same way a hang-up does), just reached from a specific colleague's row
@@ -664,6 +863,7 @@ export function LiveVoiceCallBar({
   onCancelConsult,
   onMergeConsult,
   onToggleColleagueHold,
+  onDropColleague,
   onTransferToColleague,
   isSelfCameraOff,
   onToggleSelfCamera,
@@ -813,9 +1013,17 @@ export function LiveVoiceCallBar({
       {colleagues.length > 0 && !consult && (
         <div className="mb-2.5 flex items-center gap-1.5 overflow-x-auto">
           <ParticipantChip label="You" isSelf isOnHold={false} />
-          <ParticipantChip label={displayName} isInternalAgent={isInternalAgentCall} isOnHold={isOnHold} />
+          <ParticipantChip label={displayName} isInternalAgent={isInternalAgentCall} isOnHold={isOnHold} onToggleHold={onToggleHold} />
           {colleagues.map((colleague) => (
-            <ParticipantChip key={colleague.id} label={formatParticipantLabel(colleague.name, colleague.sourceSkillName)} isInternalAgent isOnHold={colleague.isOnHold} />
+            <ParticipantChip
+              key={colleague.id}
+              label={formatParticipantLabel(colleague.name, colleague.sourceSkillName)}
+              isInternalAgent
+              isOnHold={colleague.isOnHold}
+              onToggleHold={() => onToggleColleagueHold(colleague.id)}
+              onTransfer={() => onTransferToColleague(colleague.id)}
+              onHangUp={() => onDropColleague(colleague.id)}
+            />
           ))}
         </div>
       )}
@@ -839,6 +1047,19 @@ export function LiveVoiceCallBar({
           onOpenChange={setSwitcherOpen}
           placement="top"
           align="start"
+          // This bar's own outer container sits at `z-[9998]` (see its own
+          // doc comment on why) so it always floats above ordinary app
+          // chrome — but `Popover`'s own portaled content defaults to only
+          // `z-50`. While conferencing, the participant strip makes this
+          // bar noticeably taller (it grows upward — the container is
+          // anchored by `bottom`), which extends the bar's own painted
+          // area up into the same screen region this "top"-placed popover
+          // renders in; since 9998 > 50, the bar then paints over the
+          // popover instead of the other way around, hiding it. Bumping
+          // this one popover above the bar's own z-index (not touching
+          // popover.tsx) fixes it without affecting any other Popover in
+          // the app.
+          className="z-[9999]"
           // No `alignOffset` on this wrapper (see popover.tsx), so instead
           // of anchoring to just the name/timer button — which sits to the
           // right of the avatar, offsetting the flyout's left edge from the
@@ -920,6 +1141,9 @@ export function LiveVoiceCallBar({
           onOpenChange={setParticipantsOpen}
           placement="top"
           align="start"
+          // Same z-index fix as the call switcher's `Popover` above, same
+          // reason — see that one's own doc comment.
+          className="z-[9999]"
           content={
             <Menu
               aria-label="Call participants"
@@ -955,7 +1179,15 @@ export function LiveVoiceCallBar({
         onClick={onToggleHold}
         className={cn(isOnHold && SELECTED_RED)}
       >
-        <Pause className={cn("h-6 w-6", isOnHold && "text-lyra-fg-on-primary")} strokeWidth={2} />
+        {/* Swaps shape (Pause↔Play), not just color, once on hold — per an
+         *  accessibility follow-up (WCAG 1.4.1, color can't be the only
+         *  state cue). Play reads as "tap to resume", matching this
+         *  button's own title/aria-label in that state. */}
+        {isOnHold ? (
+          <Play className="h-6 w-6 text-lyra-fg-on-destructive" strokeWidth={2} />
+        ) : (
+          <Pause className="h-6 w-6" strokeWidth={2} />
+        )}
       </ActionIconButton>
       <ActionIconButton
         size="xl"
@@ -965,7 +1197,7 @@ export function LiveVoiceCallBar({
         className={cn(isMuted && SELECTED_SLATE)}
       >
         {isMuted ? (
-          <MicOff className="h-6 w-6 text-lyra-fg-on-primary" strokeWidth={2} />
+          <MicOff className="h-6 w-6 text-lyra-fg-inverse" strokeWidth={2} />
         ) : (
           <Mic className="h-6 w-6" strokeWidth={2} />
         )}
@@ -978,10 +1210,25 @@ export function LiveVoiceCallBar({
         className={cn(isMasked && SELECTED_SLATE)}
       >
         {/* Slash stays on in both states — this isn't a mute toggle whose
-         *  icon reflects on/off, it's a fixed "masking" glyph; the filled
-         *  slate background (via SELECTED_SLATE above) is what shows the
-         *  toggle is engaged. See `isMasked`'s own doc comment. */}
-        <MutedAudioLinesIcon strokeWidth={2} className={isMasked ? "text-lyra-fg-on-primary" : undefined} />
+         *  icon reflects on/off, it's a fixed "masking" glyph (see
+         *  `isMasked`'s own doc comment) — so unlike Hold/Record, changing
+         *  its shape isn't an option here. Per the same accessibility
+         *  follow-up, a small always-visible dot takes over as the non-color
+         *  "engaged" cue instead, using `bg-lyra-bg-surface-base` — always
+         *  the theme's own extreme (white in light, near-black in dark),
+         *  so it stays legible against `accent-slate-strong`'s mid-tone
+         *  fill in either theme. The icon itself now uses `fg-inverse`
+         *  (not `fg-on-primary`) for the same reason — see this file's
+         *  `SELECTED_RED` constant above for the full explanation. */}
+        <span className="relative inline-flex">
+          <MutedAudioLinesIcon strokeWidth={2} className={isMasked ? "text-lyra-fg-inverse" : undefined} />
+          {isMasked && (
+            <span
+              className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-lyra-bg-surface-base"
+              aria-hidden="true"
+            />
+          )}
+        </span>
       </ActionIconButton>
       <ActionIconButton
         size="xl"
@@ -990,7 +1237,13 @@ export function LiveVoiceCallBar({
         onClick={onToggleRecording}
         className={cn(isRecording && SELECTED_RED)}
       >
-        <CircleDot className={cn("h-6 w-6", isRecording && "text-lyra-fg-on-primary")} strokeWidth={2} />
+        {/* Hollow ring off, filled dot on — same "shape change, not just
+         *  color" fix as Hold above, and a common record-button convention. */}
+        {isRecording ? (
+          <CircleDot className="h-6 w-6 text-lyra-fg-on-destructive" strokeWidth={2} />
+        ) : (
+          <Circle className="h-6 w-6" strokeWidth={2} />
+        )}
       </ActionIconButton>
       <ActionIconButton size="xl" title="Keypad">
         <Grip className="h-6 w-6" strokeWidth={2} />
@@ -1010,7 +1263,7 @@ export function LiveVoiceCallBar({
         className={cn(isVideoOn && SELECTED_SLATE)}
       >
         {isVideoOn ? (
-          <Video className="h-6 w-6 text-lyra-fg-on-primary" strokeWidth={2} />
+          <Video className="h-6 w-6 text-lyra-fg-inverse" strokeWidth={2} />
         ) : (
           <VideoOff className="h-6 w-6" strokeWidth={2} />
         )}
@@ -1123,6 +1376,7 @@ export interface DockedVoiceControlBarProps {
   onCancelConsult?: () => void;
   onMergeConsult?: () => void;
   onToggleColleagueHold: (colleagueId: string) => void;
+  onDropColleague: (colleagueId: string) => void;
   onTransferToColleague: (colleagueId: string) => void;
   isSelfCameraOff: boolean;
   onToggleSelfCamera: () => void;
@@ -1197,6 +1451,7 @@ export function DockedVoiceControlBar({
   onCancelConsult,
   onMergeConsult,
   onToggleColleagueHold,
+  onDropColleague,
   onTransferToColleague,
   isSelfCameraOff,
   onToggleSelfCamera,
@@ -1263,9 +1518,24 @@ export function DockedVoiceControlBar({
         {colleagues.length > 0 && !consult && (
           <div className="mb-2.5 flex items-center gap-1.5 overflow-x-auto">
             <ParticipantChip label="You" isSelf isOnHold={false} />
-            <ParticipantChip label={displayName} isInternalAgent={isInternalAgentCall} isOnHold={isOnHold} />
+            {/* `onToggleHold`/`onToggleColleagueHold`/`onDropColleague` were
+             *  missing from this docked presentation's own `ParticipantChip`
+             *  calls (bug: the floating bar passed them, this one never did)
+             *  — `canExpand` inside `ParticipantChip` is only true once at
+             *  least one of `onToggleHold`/`onHangUp` is actually passed, so
+             *  hover-to-expand silently never engaged here. Mirrors the
+             *  floating bar's own calls above exactly. */}
+            <ParticipantChip label={displayName} isInternalAgent={isInternalAgentCall} isOnHold={isOnHold} onToggleHold={onToggleHold} />
             {colleagues.map((colleague) => (
-              <ParticipantChip key={colleague.id} label={formatParticipantLabel(colleague.name, colleague.sourceSkillName)} isInternalAgent isOnHold={colleague.isOnHold} />
+              <ParticipantChip
+                key={colleague.id}
+                label={formatParticipantLabel(colleague.name, colleague.sourceSkillName)}
+                isInternalAgent
+                isOnHold={colleague.isOnHold}
+                onToggleHold={() => onToggleColleagueHold(colleague.id)}
+                onTransfer={() => onTransferToColleague(colleague.id)}
+                onHangUp={() => onDropColleague(colleague.id)}
+              />
             ))}
           </div>
         )}
@@ -1338,7 +1608,7 @@ export function DockedVoiceControlBar({
                 aria-expanded={participantsOpen}
                 className={cn(participantsOpen && SELECTED_SLATE)}
               >
-                <Users className={cn("h-6 w-6", participantsOpen && "text-lyra-fg-on-primary")} strokeWidth={2} />
+                <Users className={cn("h-6 w-6", participantsOpen && "text-lyra-fg-inverse")} strokeWidth={2} />
               </ActionIconButton>
             </Popover>
             <span className="lyra-body-xs text-lyra-fg-secondary">Participants</span>
@@ -1346,11 +1616,17 @@ export function DockedVoiceControlBar({
         )}
         <div className="mx-0.5 h-7 w-px bg-lyra-border-subtle" />
         <DockedControlButton title={isOnHold ? "Resume" : "Hold"} selected={isOnHold} tone="red" onClick={onToggleHold}>
-          <Pause className={cn("h-6 w-6", isOnHold && "text-lyra-fg-on-primary")} strokeWidth={2} />
+          {/* Shape swap, not just color — see the floating bar's identical
+           *  button for why (WCAG 1.4.1). */}
+          {isOnHold ? (
+            <Play className="h-6 w-6 text-lyra-fg-on-destructive" strokeWidth={2} />
+          ) : (
+            <Pause className="h-6 w-6" strokeWidth={2} />
+          )}
         </DockedControlButton>
         <DockedControlButton title={isMuted ? "Unmute" : "Mute"} selected={isMuted} tone="slate" onClick={onToggleMute}>
           {isMuted ? (
-            <MicOff className="h-6 w-6 text-lyra-fg-on-primary" strokeWidth={2} />
+            <MicOff className="h-6 w-6 text-lyra-fg-inverse" strokeWidth={2} />
           ) : (
             <Mic className="h-6 w-6" strokeWidth={2} />
           )}
@@ -1361,12 +1637,27 @@ export function DockedVoiceControlBar({
           tone="slate"
           onClick={onToggleMask}
         >
-          {/* Slash stays on regardless of state — see the floating bar's
-           *  identical button for why. */}
-          <MutedAudioLinesIcon strokeWidth={2} className={isMasked ? "text-lyra-fg-on-primary" : undefined} />
+          {/* Slash stays on regardless of state; a small always-visible dot
+           *  is the non-color "engaged" cue instead — see the floating
+           *  bar's identical button for the full reasoning (WCAG 1.4.1). */}
+          <span className="relative inline-flex">
+            <MutedAudioLinesIcon strokeWidth={2} className={isMasked ? "text-lyra-fg-inverse" : undefined} />
+            {isMasked && (
+              <span
+                className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-lyra-bg-surface-base"
+                aria-hidden="true"
+              />
+            )}
+          </span>
         </DockedControlButton>
         <DockedControlButton title={isRecording ? "Stop Recording" : "Record"} selected={isRecording} tone="red" onClick={onToggleRecording}>
-          <CircleDot className={cn("h-6 w-6", isRecording && "text-lyra-fg-on-primary")} strokeWidth={2} />
+          {/* Hollow ring off, filled dot on — see the floating bar's
+           *  identical button for why (WCAG 1.4.1). */}
+          {isRecording ? (
+            <CircleDot className="h-6 w-6 text-lyra-fg-on-destructive" strokeWidth={2} />
+          ) : (
+            <Circle className="h-6 w-6" strokeWidth={2} />
+          )}
         </DockedControlButton>
         <DockedControlButton title="Keypad">
           <Grip className="h-6 w-6" strokeWidth={2} />
@@ -1378,7 +1669,7 @@ export function DockedVoiceControlBar({
         <div className="mx-0.5 h-7 w-px bg-lyra-border-subtle" />
         <DockedControlButton title={isVideoOn ? "Turn off video" : "Add video"} selected={isVideoOn} tone="slate" onClick={onToggleVideo}>
           {isVideoOn ? (
-            <Video className="h-6 w-6 text-lyra-fg-on-primary" strokeWidth={2} />
+            <Video className="h-6 w-6 text-lyra-fg-inverse" strokeWidth={2} />
           ) : (
             <VideoOff className="h-6 w-6" strokeWidth={2} />
           )}
