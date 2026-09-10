@@ -271,7 +271,15 @@ export const DIRECTORY_CUSTOMERS: DirectoryCustomer[] = [
     // `channels` above) — per an explicit follow-up, favorited right below
     // her so Favorites demonstrates this on more than just one contact.
     channels: ["voice", "sms", "email", "chat", "whatsapp"],
-    phoneNumbers: [{ value: "+15557734410", label: "Mobile · (555) 773-4410" }],
+    // Two labeled numbers (not just one) — per an explicit follow-up, this
+    // is the demo case for the "Select Phone" dropdown actually appearing as
+    // a real dropdown (a contact with only one number/address on file gets
+    // a plain read-only field instead — see OutboundDetailScreen's own
+    // `addressOptions.length <= 1` branch in NewOutboundPopover.tsx).
+    phoneNumbers: [
+      { value: "+15557734410", label: "Mobile · (555) 773-4410" },
+      { value: "+15557732298", label: "Home · (555) 773-2298" },
+    ],
     emailAddresses: [{ value: "jordan.lee@brightloop.io", label: "Work · jordan.lee@brightloop.io" }],
     customerSince: "2023",
     tier: "Standard",

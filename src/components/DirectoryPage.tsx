@@ -18,8 +18,13 @@ import { contactMatchesQuery, type DirectoryCustomer, type DirectoryAgent, type 
 import { AddOutboundButton } from "@/components/NewOutboundPopover";
 
 /* ── Contact action buttons — one icon button per channel the record
- *  supports, colored via `CHANNEL_ACCENT` (the same lyra-ui map the
- *  channel chips/tiles elsewhere in the app use). ── */
+ *  supports. Per an explicit follow-up, these are flat gray (`fg-action`,
+ *  #5D6A79 in light theme) rather than colored via `CHANNEL_ACCENT` the way
+ *  a channel/direction icon on an interaction's own row still is — those
+ *  are read-only "what kind of thing is this" indicators where the color
+ *  carries meaning, while these are clickable actions, where a single
+ *  neutral tone consistently means "actionable" the same way `ActionIconButton`
+ *  content generally does elsewhere in this app. ── */
 
 // Exported — NewOutboundPopover's own channel flyout menu reuses this exact
 // order/icon/label mapping instead of a second copy (see its ContactRow).
@@ -56,10 +61,15 @@ export function ContactActionButtons({
     <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
       {visible.map((type) => {
         const Icon = CONTACT_CHANNEL_ICON[type];
-        const accent = CHANNEL_ACCENT[type];
         return (
           <ActionIconButton key={type} size="sm" title={CONTACT_CHANNEL_LABEL[type]} onClick={(e) => onAction(type, e)}>
-            <Icon className={cn("h-4 w-4", accent.text)} strokeWidth={1.5} />
+            {/* Flat gray (`fg-action`), not the per-channel `CHANNEL_ACCENT`
+             *  color these used to carry — per an explicit follow-up, a
+             *  contact row's own quick-action icons read as one consistent
+             *  "do something" affordance, not a second place restating each
+             *  channel's own color (already shown elsewhere, e.g. the
+             *  channel/direction icons on an interaction's own row). */}
+            <Icon className="h-4 w-4 text-lyra-fg-action" strokeWidth={1.5} />
           </ActionIconButton>
         );
       })}
@@ -99,7 +109,6 @@ function CustomerOutboundActionButtons({
     <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
       {visible.map((type) => {
         const Icon = CONTACT_CHANNEL_ICON[type];
-        const accent = CHANNEL_ACCENT[type];
         return (
           <AddOutboundButton
             key={type}
@@ -111,7 +120,9 @@ function CustomerOutboundActionButtons({
             onStart={(channel, addressValue, skillId) => onStartOutbound({ contact, channel, phone: addressValue, skillId })}
             renderTrigger={({ onClick, open }) => (
               <ActionIconButton size="sm" title={CONTACT_CHANNEL_LABEL[type]} aria-expanded={open} onClick={onClick}>
-                <Icon className={cn("h-4 w-4", accent.text)} strokeWidth={1.5} />
+                {/* Flat gray (`fg-action`) — see `ContactActionButtons`'s
+                 *  identical change above for why. */}
+                <Icon className="h-4 w-4 text-lyra-fg-action" strokeWidth={1.5} />
               </ActionIconButton>
             )}
           />

@@ -42,12 +42,12 @@ import { contactMatchesQuery } from "@/data/directory";
  * `lyra-ui/create-new.tsx` itself is untouched — see this repo's CLAUDE.md
  * ("never modify a lyra-ui core component from here"). */
 
-/* Re-enabled per an explicit follow-up: an outbound skill is now required
- * before starting any interaction — this flag was only ever a visibility
- * toggle (see `canStart` below, which already gates on `skillId` whenever
- * this is true), so flipping it back on both shows the field again AND
- * enforces the requirement, with no other logic changes needed. */
-const SHOW_SKILL_SELECTION = true;
+/* Hidden again per an explicit follow-up, ahead of user testing — this flag
+ * is a single visibility toggle (see `canStart`/`canQuickDial` below, which
+ * already skip the `skillId` requirement whenever this is false), so
+ * flipping it off both hides the field in the unified detail screen and Dial
+ * Pad AND drops the requirement, with no other logic changes needed. */
+const SHOW_SKILL_SELECTION = false;
 
 /* ── Types ── */
 
@@ -704,6 +704,15 @@ function OutboundDetailScreen({
           disabled={!selectedChannel}
           placeholder={selectedChannel ? undefined : "Select a channel first"}
           portalDropdown
+          // This popover's own content sits at z-[10003] (`AddOutboundButton`'s
+          // popover, or the left-nav's `NewOutboundPopover` — see either
+          // one's own z-[10003] doc comment), one tier above the baseline
+          // z-[9999] popover stack. `Select`'s portal dropdown defaults to
+          // that same z-[9999], which put it BEHIND this card instead of
+          // above it — same nested-popover case `PhoneInput`'s own
+          // `dropdownClassName` fixes for the Dial Pad's country picker
+          // just below.
+          dropdownClassName="z-[10003]"
         />
       ) : (
         <Input
@@ -725,6 +734,12 @@ function OutboundDetailScreen({
           optionGroups={skillOptionGroups}
           searchable
           portalDropdown
+          // Same nested-popover z-index fix as "Select Phone"/"Select Email
+          // Address" above — see that Select's own dropdownClassName doc
+          // comment. Currently unreachable in the AddOutboundButton case
+          // while `SHOW_SKILL_SELECTION` is off, but fixed here too so it
+          // doesn't quietly regress the moment that flag flips back on.
+          dropdownClassName="z-[10003]"
         />
       )}
 
@@ -1337,6 +1352,9 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
             optionGroups={dialpadSkillOptionGroups}
             searchable
             portalDropdown
+            // Same tier as this screen's own PhoneInput just above — see its
+            // dropdownClassName doc comment.
+            dropdownClassName="z-[10003]"
           />
         )}
         <Button variant="default" className="w-full" disabled={!canQuickDial} onClick={handleQuickDial}>

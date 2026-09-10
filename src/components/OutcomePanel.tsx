@@ -235,7 +235,10 @@ export function OutcomeButton({ customerName, open, onOpenChange, onApprove }: O
         onClick={handleOpen}
         className={cn(open && "bg-lyra-state-hover")}
       >
-        <CircleCheckBig className="h-4 w-4 text-lyra-status-info-strong" strokeWidth={2} />
+        {/* 4px larger than this icon's default (h-4 w-4), per an explicit
+         *  follow-up — matches the Transfer icon right next to it in this
+         *  toolbar (see ConsultTransferPopover.tsx's own trigger button). */}
+        <CircleCheckBig className="h-5 w-5 text-lyra-status-info-strong" strokeWidth={2} />
       </ActionIconButton>
 
       {open &&

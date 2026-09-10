@@ -854,7 +854,10 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall,
             aria-expanded={open}
             className={cn(open && "bg-lyra-state-hover")}
           >
-            <ConsultTransferIcon strokeWidth={2} />
+            {/* 4px larger than this icon's default (h-4 w-4), per an
+             *  explicit follow-up — this toolbar's Transfer and Outcome
+             *  icons together, next to the case subject/ID/status pill. */}
+            <ConsultTransferIcon strokeWidth={2} className="h-5 w-5" />
           </ActionIconButton>
         </Popover>
       </span>

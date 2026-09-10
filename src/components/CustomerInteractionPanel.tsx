@@ -954,8 +954,18 @@ export function InteractionInfoBar({
  *  icon. Exported so ConsultTransferPopover.tsx (the "Transfer" button's
  *  popup content) can reuse this exact glyph for its own per-row "Transfer"
  *  actions instead of a second copy. */
-export function ConsultTransferIcon({ strokeWidth = 1.5 }: { strokeWidth?: number }) {
-  return <ArrowRightLeft className="h-4 w-4" strokeWidth={strokeWidth} aria-hidden="true" />;
+export function ConsultTransferIcon({
+  strokeWidth = 1.5,
+  className,
+}: {
+  strokeWidth?: number;
+  /** Overrides the default h-4 w-4 sizing — used by the InteractionInfoBar
+   *  toolbar's own Transfer button, which per an explicit follow-up reads
+   *  4px larger (h-5 w-5) than every other place this icon appears
+   *  (popover rows, per-agent/skill list items). */
+  className?: string;
+}) {
+  return <ArrowRightLeft className={cn("h-4 w-4", className)} strokeWidth={strokeWidth} aria-hidden="true" />;
 }
 
 /* ── InteractionActionsBar ──

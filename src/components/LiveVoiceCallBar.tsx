@@ -290,7 +290,12 @@ function formatParticipantLabel(name: string, sourceSkillName?: string): string 
  *  rely on color alone — see `WCAG 1.4.1`; every interactive element here
  *  also carries this app's standard focus ring (`focus-visible:ring-2
  *  ring-inset ring-lyra-border-focus`), which this pill was missing
- *  entirely before. */
+ *  entirely before.
+ *  Per a later explicit follow-up, "expanded" (Hold/Transfer/Hang Up
+ *  visible) is no longer a hover/click-to-pin state — every pill with any
+ *  controls at all (i.e. `canExpand`) shows them always, so an agent can
+ *  see at a glance what's available for each participant without having to
+ *  hover or tap to discover it first. */
 function ParticipantChip({
   label,
   isSelf,
@@ -326,58 +331,40 @@ function ParticipantChip({
   // — `ring-inset` (rather than this app's usual offset ring) so it never
   // gets clipped by the participant strip's own `overflow-x-auto`.
   const focusRing = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-lyra-border-focus";
-  // Hover shows it transiently; a click "pins" it open so Hold/Hang Up can
-  // actually be reached without the pointer having to stay put over a
-  // pill this small. Pinning is cleared the moment an action completes (or
-  // is cancelled) rather than needing a separate click-outside listener —
-  // see `closeAndReset` below.
-  const [hovering, setHovering] = useState(false);
-  const [pinned, setPinned] = useState(false);
+  // Per an explicit follow-up, every participant's own controls (Hold,
+  // Transfer, Hang Up) are always visible now — no more hover-to-reveal or
+  // click-to-pin. An agent shouldn't have to discover a hidden affordance
+  // mid-call to see what they can even do to a given participant. `expanded`
+  // is kept as its own name (rather than inlining `canExpand` everywhere
+  // below) purely for readability at each call site. This also drops the
+  // outer pill's own `role="button"`/`tabIndex` entirely: with the controls
+  // always on screen, a keyboard user tabs straight to whichever real
+  // `<button>` they want instead of first having to "open" the pill — a
+  // strictly shorter path to the same functionality (WCAG 2.1.1).
+  const expanded = canExpand;
   const [confirming, setConfirming] = useState(false);
-  const expanded = canExpand && (hovering || pinned);
 
   const closeAndReset = () => {
-    setPinned(false);
-    setHovering(false);
     setConfirming(false);
   };
 
   return (
     <span
-      // Fixed `h-8` (not padding-driven) so this pill is exactly as tall
-      // collapsed as it is expanded — per an explicit follow-up, the
-      // expanded state's `h-8` Hold/Hang Up buttons used to be taller than
-      // the collapsed content (avatar + label), so the pill's own
-      // content-driven height grew a few px on hover, shifting the whole
-      // participant strip (and everything below it in the bar) with it.
-      // A fixed height means hover only ever changes this pill's *width*
-      // (the icons sliding in), never the row's height.
+      // Fixed `h-8` (not padding-driven) so every pill in the strip is the
+      // same height regardless of whether it happens to have any buttons —
+      // e.g. the "You" pill (no controls at all) still lines up with a
+      // colleague's pill (always showing Hold/Transfer/Hang Up) rather than
+      // reading shorter next to it.
       className={cn("flex h-8 shrink-0 items-center gap-2 rounded-full bg-lyra-bg-surface-container-subtle pl-1 pr-2.5", focusRing)}
-      onMouseEnter={() => canExpand && setHovering(true)}
-      onMouseLeave={() => {
-        setHovering(false);
-        setConfirming(false);
-      }}
-      onClick={() => {
-        if (!canExpand) return;
-        setPinned((prev) => !prev);
-        setConfirming(false);
-      }}
-      onKeyDown={(e) => {
-        if (!canExpand) return;
-        if (e.key !== "Enter" && e.key !== " ") return;
-        e.preventDefault();
-        setPinned((prev) => !prev);
-        setConfirming(false);
-      }}
-      role={canExpand ? "button" : undefined}
-      aria-expanded={canExpand ? expanded : undefined}
+      // Resets an armed "Drop {name}?" confirmation if the agent moves away
+      // without deciding — the explicit Cancel (X) button below still covers
+      // the deliberate case, this just avoids leaving it silently armed.
+      onMouseLeave={() => setConfirming(false)}
       // Only set here for "You" — see the note on the label span below for
       // why: with that label removed for this one case, the avatar bubble's
       // own "You" (otherwise `aria-hidden`, same as every other pill's
       // decorative initials) becomes this pill's only accessible name.
       aria-label={isSelf ? "You" : undefined}
-      tabIndex={canExpand ? 0 : undefined}
     >
       <span
         className={cn(
@@ -394,7 +381,11 @@ function ParticipantChip({
        *  right next to it was pure duplication (flagged directly). Skipped
        *  only for `isSelf`; every other pill keeps its label as before. */}
       {!isSelf && <span className="lyra-body-md text-lyra-fg-secondary max-w-[130px] truncate">{label}</span>}
-      {isOnHold && !expanded && <span className="lyra-body-sm-emphasis text-lyra-status-critical-strong">Hold</span>}
+      {/* The old collapsed-only "Hold" text badge is gone — `expanded` is
+       *  now always true for every pill that could ever actually be on hold
+       *  (anyone with `onToggleHold`), so hold state already reads off the
+       *  Pause/Play icon below at all times; only "You" (never on hold)
+       *  could ever hit the old `!expanded` branch. */}
       {expanded &&
         (confirming ? (
           <span className="flex shrink-0 items-center gap-1.5">
@@ -460,7 +451,13 @@ function ParticipantChip({
                 }}
                 className={cn("flex h-8 w-8 items-center justify-center rounded-full text-lyra-fg-secondary hover:bg-lyra-bg-surface-base", focusRing)}
               >
-                <ArrowRightLeft className="h-4 w-4" strokeWidth={2} />
+                {/* ~2px larger than the Hold icon above it, per an explicit
+                 *  follow-up — Transfer and Hang Up (this pill's two
+                 *  "outcome" actions for a colleague) read a little small
+                 *  next to the rest of this bar's icon sizing. Briefly went
+                 *  to 22px (another +20%) then reverted back to 18px per a
+                 *  later follow-up. */}
+                <ArrowRightLeft className="h-[18px] w-[18px]" strokeWidth={2} />
               </button>
             )}
             {onHangUp && (
@@ -474,7 +471,7 @@ function ParticipantChip({
                 }}
                 className={cn("flex h-8 w-8 items-center justify-center rounded-full text-lyra-status-critical-strong hover:bg-lyra-bg-surface-base", focusRing)}
               >
-                <PhoneOff className="h-4 w-4" strokeWidth={2} />
+                <PhoneOff className="h-[18px] w-[18px]" strokeWidth={2} />
               </button>
             )}
           </span>

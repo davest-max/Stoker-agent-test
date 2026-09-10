@@ -793,8 +793,9 @@ export function AgentNextGenPage({
   // user-selected state, not something that happens automatically just
   // because the agent's eyes land on the right card — so unlike the earlier
   // design, this is NOT reset just by looking away and back; it only clears
-  // via the docked bar's own explicit Dock button, or when a genuinely new
-  // call goes live (`goLiveWithVoiceCall`'s own `dockOnLive` default).
+  // via the docked bar's own explicit Dock button. Per a later follow-up,
+  // starting a genuinely new call doesn't reset it either anymore — see
+  // `goLiveWithVoiceCall`'s own doc comment for why.
   const [voiceCallManuallyUndocked, setVoiceCallManuallyUndocked] = useState(false);
   // Automatic counterpart to the manual toggle above — set when the docked
   // bar itself no longer fits the room the center column actually has (the
@@ -1615,32 +1616,29 @@ export function AgentNextGenPage({
   // caller stamp its own `Date.now()`, which is what let a resumed call's
   // timer silently reset. Every `setLiveVoiceCall(...)` in this file should
   // go through this instead of constructing the object directly.
-  // `dockOnLive` (default true) — a genuinely new call (accepted/placed via
-  // one of the dedicated outbound/internal-call handlers below) still docks
-  // inline automatically the first time it goes live, per an explicit
-  // follow-up. `handleSelectAssignment`'s hold-swap branch passes `false`
-  // instead for a focus switch straight from one live/held voice call to a
-  // DIFFERENT one ("picking up a different line").
   //
-  // Per a later explicit follow-up, that focus-switch case must NOT force
-  // the bar undocked anymore — it used to (`setVoiceCallManuallyUndocked(true)`
-  // unconditionally whenever `dockOnLive` was false), which meant clicking
-  // between two voice calls always yanked the bar out to floating even if
-  // the agent had it docked, or moved a floating bar's on-screen position by
-  // re-anchoring it. The bar's docked/floating placement (and, while
-  // floating, its dragged `voiceBarPosition`) is a property of the
-  // PERSISTENT bar itself, not of whichever call currently owns it — picking
-  // up a different line hands that same bar to the new call without moving
-  // it. So `voiceCallManuallyUndocked`/`voiceCallAutoUndocked` are now only
-  // ever touched here for a genuinely new call (`dockOnLive: true`), which
-  // still resets to the docked default; a focus switch leaves both exactly
-  // as they were.
+  // Per a later explicit follow-up, a genuinely new call (accepted/placed
+  // via one of the dedicated outbound/internal-call handlers below) no
+  // longer force-docks the bar either — it used to, unconditionally
+  // resetting `voiceCallManuallyUndocked`/`voiceCallAutoUndocked` back to
+  // false any time a fresh call went live, even if the agent had the bar
+  // floating (and deliberately dragged to some on-screen position) at the
+  // time. That meant a call ending and the next one starting would silently
+  // yank the bar back inline, discarding a position the agent had just set.
+  // The bar's docked/floating placement (and, while floating, its dragged
+  // `voiceBarPosition`) is a property of the PERSISTENT bar itself, not of
+  // whichever call currently owns it — same reasoning `handleSelectAssignment`'s
+  // hold-swap branch already followed for switching between two existing
+  // calls, now extended to a brand-new call too. So this function no longer
+  // touches `voiceCallManuallyUndocked`/`voiceCallAutoUndocked`/
+  // `dockedBarNeededWidth` at all; whatever the bar's current placement is,
+  // it just carries straight over.
   //
   // (Separately, and left alone here: looking away from the live call's own
   // card to a NON-voice tile and back still force-floats the bar, via the
   // `wasVoiceCallDockedRef` effect below — a distinct, still-intentional
   // behavior the agent explicitly chose to keep.)
-  const goLiveWithVoiceCall = (assignmentId: string, dockOnLive = true) => {
+  const goLiveWithVoiceCall = (assignmentId: string) => {
     setVoiceCallStartedAt((prev) => (prev[assignmentId] !== undefined ? prev : { ...prev, [assignmentId]: Date.now() }));
     setLiveVoiceCall({ assignmentId });
     // Fresh call, fresh controls — a new/resumed live call doesn't inherit
@@ -1651,11 +1649,6 @@ export function AgentNextGenPage({
     setIsVoiceCallRecording(false);
     setIsVideoCallOn(false);
     setIsSelfCameraOff(false);
-    if (dockOnLive) {
-      setVoiceCallManuallyUndocked(false);
-      setVoiceCallAutoUndocked(false);
-      setDockedBarNeededWidth(null);
-    }
   };
 
   // Row-level hold for JUST the primary/customer party — independent of any
@@ -1855,12 +1848,11 @@ export function AgentNextGenPage({
         }));
       }
       if (!liveVoiceCall || liveVoiceCall.assignmentId !== id) {
-        // `dockOnLive: false` — focusing a different existing voice call
-        // tile is a focus switch, not "starting a new call," so per an
-        // explicit follow-up it must not silently pull the bar inline; the
-        // agent has to hit Dock themselves once they're looking at it. See
-        // `goLiveWithVoiceCall`'s own doc comment.
-        goLiveWithVoiceCall(id, false);
+        // Focusing a different existing voice call tile is a focus switch,
+        // not "starting a new call" — `goLiveWithVoiceCall` no longer forces
+        // any particular dock/float state for either case (see its own doc
+        // comment), so this already leaves the bar exactly where it was.
+        goLiveWithVoiceCall(id);
       }
       // Deliberately NOT clearing `id` from `heldVoiceCallAssignmentIds`
       // here — per an explicit follow-up, returning to a call that was put
@@ -2645,9 +2637,11 @@ export function AgentNextGenPage({
              *  default rather than shrinking those two down. strokeWidth 1.5
              *  already matches across all of them (NavIconButton hardcodes
              *  it), so size was the only inconsistency. */}
+            {/* Directory first per an explicit follow-up — was originally
+             *  third (after Custom Workspace/Search), now leads this row. */}
+            <NavIconButton item="directory" title="Directory" icon={BookUser} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
             <NavIconButton item="customWorkspace" title="Custom Workspace" icon={Monitor} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
             <NavIconButton item="contacts" title="Search" icon={FileSearch} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
-            <NavIconButton item="directory" title="Directory" icon={BookUser} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
             <NavIconButton item="schedule" title="Schedule" icon={CalendarDays} activeNav={openSlideInPage} onNavClick={handleNavClick} iconClassName="h-5 w-5" />
             <div className="mx-1 h-5 w-px bg-lyra-border-subtle" />
             <NotificationsBell
