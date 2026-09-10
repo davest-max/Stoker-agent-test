@@ -873,20 +873,45 @@ export function AddOutboundButton({
       className="z-[10003] w-[320px]"
       header={header}
       content={
-        <OutboundDetailScreen
-          contact={contact}
-          query=""
-          preselectedChannel={preselectedChannel}
-          channelOptions={channelOptions}
-          phoneOptions={phoneOptions}
-          skillOptions={skillOptions}
-          recentSkillOptions={[]}
-          disabledChannels={openChannelTypes}
-          onStart={(channel, addressValue, skillId) => {
-            onStart(channel, addressValue, skillId);
-            setOpen(false);
-          }}
-        />
+        <>
+          {/* Forces `Select`'s own portal dropdown (its "Select Phone"/
+           *  "Select Email Address"/"Select outbound skill" fields below)
+           *  above this popover's z-[10003] card instead of behind it.
+           *  `Select` portals straight to `document.body` with a baseline
+           *  `z-[9999]` — one tier below this popover — so without this it
+           *  renders behind the card that contains its own trigger (the
+           *  reported "phone number dropdown appears underneath the
+           *  modal" bug). lyra-ui's `Select` does have a proper
+           *  `dropdownClassName` prop for this (passed below, same
+           *  `z-[10003]` value) — but that fix lives in the sibling
+           *  `lyra-ui` checkout, which isn't tracked in THIS repo's git
+           *  history, so it can silently go missing for anyone who
+           *  doesn't have that exact same lyra-ui working copy. This
+           *  scoped, self-contained override is the belt-and-suspenders
+           *  fallback that ships with this repo alone and doesn't depend
+           *  on lyra-ui carrying the fix — only mounted while this
+           *  popover is open, and scoped to the dropdown's own distinctive
+           *  `max-h-[300px]` (unique to `Select`'s dropdown panel — see
+           *  the class list in lyra-ui's select.tsx) so it can't bump any
+           *  other z-[9999] overlay in the app. Safe to delete once
+           *  lyra-ui's own fix is confirmed to travel with every
+           *  environment this app runs in. */}
+          <style>{`.bg-lyra-bg-surface-overlay.max-h-\\[300px\\].z-\\[9999\\] { z-index: 10003 !important; }`}</style>
+          <OutboundDetailScreen
+            contact={contact}
+            query=""
+            preselectedChannel={preselectedChannel}
+            channelOptions={channelOptions}
+            phoneOptions={phoneOptions}
+            skillOptions={skillOptions}
+            recentSkillOptions={[]}
+            disabledChannels={openChannelTypes}
+            onStart={(channel, addressValue, skillId) => {
+              onStart(channel, addressValue, skillId);
+              setOpen(false);
+            }}
+          />
+        </>
       }
     >
       {trigger}
@@ -1575,16 +1600,30 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
       className="w-[320px]"
       header={header}
       content={
-        <div
-          key={screenKey}
-          className={cn(
-            "animate-in fade-in-0 duration-200",
-            direction === "forward" && "slide-in-from-right-4",
-            direction === "backward" && "slide-in-from-left-4"
-          )}
-        >
-          {content}
-        </div>
+        <>
+          {/* Same self-contained z-index force as `AddOutboundButton`'s own
+           *  popover above (see its identical `<style>` doc comment) — a
+           *  `Select` nested in here (the detail screen's "Select Phone"/
+           *  "Select Email Address"/"Select outbound skill", or the dial
+           *  pad's own skill Select) portals to `document.body` at the
+           *  same baseline `z-[9999]` tier as THIS popover's own card, so
+           *  which one wins is down to DOM insertion order rather than any
+           *  guaranteed stacking rule. Ships with this repo alone; doesn't
+           *  depend on lyra-ui's own `dropdownClassName` fix (passed to
+           *  each `Select`/`PhoneInput` below too) actually being present
+           *  in whatever lyra-ui checkout this app is running against. */}
+          <style>{`.bg-lyra-bg-surface-overlay.max-h-\\[300px\\].z-\\[9999\\] { z-index: 10003 !important; }`}</style>
+          <div
+            key={screenKey}
+            className={cn(
+              "animate-in fade-in-0 duration-200",
+              direction === "forward" && "slide-in-from-right-4",
+              direction === "backward" && "slide-in-from-left-4"
+            )}
+          >
+            {content}
+          </div>
+        </>
       }
     >
       {trigger}
