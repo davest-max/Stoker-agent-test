@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { useState, useEffect } from "react";
-import { AgentProfile, type AgentStatus } from "../agent-profile";
+import { AgentProfile, StatusIcon, type AgentStatus } from "../agent-profile";
 import type { ConnectedApp } from "../connected-apps";
 
 const APPS: ConnectedApp[] = [
@@ -101,4 +101,26 @@ export const WithAvatar: Story = {
       </div>
     );
   },
+};
+
+export const StatusIconStandalone: Story = {
+  name: "StatusIcon (standalone export)",
+  render: () => (
+    // `StatusIcon` is the same glyph shown in the corner of the avatar above
+    // and in the status menu's own rows — exported on its own for consumers
+    // that need this exact "not just a color dot" availability treatment
+    // somewhere other than an `AgentProfile`, e.g. a directory or contact
+    // list row. `available`/`unavailable` render as a small check/minus
+    // inside a colored fill circle; `offline` renders as a bare `CircleX`
+    // filling the same 16px footprint with no colored fill behind it (see
+    // this component's own doc comment for why the two differ).
+    <div className="flex items-center gap-6 p-8">
+      {(["available", "unavailable", "offline"] as AgentStatus[]).map((s) => (
+        <div key={s} className="flex flex-col items-center gap-2">
+          <StatusIcon status={s} />
+          <span className="lyra-body-sm text-lyra-fg-secondary capitalize">{s}</span>
+        </div>
+      ))}
+    </div>
+  ),
 };

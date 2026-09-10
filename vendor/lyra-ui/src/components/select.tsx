@@ -96,6 +96,20 @@ interface SelectProps {
   /** Render dropdown in a portal (fixed position) to escape overflow containers */
   portalDropdown?: boolean;
 
+  /**
+   * Extra className for the portal-rendered dropdown panel itself (not the
+   * trigger — use `className` for that). Mainly for overriding its z-index:
+   * the portal dropdown defaults to `z-[9999]`, which is correct in normal
+   * flow but sits below any `z-[9999]`+ overlay it might be nested inside
+   * (e.g. a `Popover`'s own `z-[10003]` per-row flyout) — see
+   * CONTRIBUTING.md §5 "Z-index hierarchy", the same nested-popover case
+   * `PhoneInput`'s own `dropdownClassName` exists for. Only applies when
+   * `portalDropdown` is true (the default) — the inline (non-portal)
+   * dropdown already sits in normal DOM flow above its own trigger, so it
+   * has no equivalent stacking problem to override.
+   */
+  dropdownClassName?: string;
+
   /** Additional class on the root */
   className?: string;
 }
@@ -125,6 +139,7 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
       onOpenChange,
       dropdownAlign = "left",
       portalDropdown = true,
+      dropdownClassName,
       className,
     },
     ref
@@ -177,7 +192,11 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
         left: dropdownAlign === "left" ? rect.left : undefined,
         right: dropdownAlign === "right" ? window.innerWidth - rect.right : undefined,
         width: trigger ? 240 : rect.width,
-        zIndex: 9999,
+        // Not `zIndex` here — kept as a Tailwind class below (`z-[9999]`)
+        // instead of an inline style so `dropdownClassName`'s own z-*
+        // override can actually win. An inline style always beats a CSS
+        // class regardless of specificity/order, so a z-index set here
+        // would silently ignore any override the caller passes in.
       });
     }, [open, portalDropdown, dropdownAlign, trigger]);
 
@@ -411,8 +430,9 @@ const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
             ref={dropdownRef}
             className={cn(
               "rounded-lyra-lg bg-lyra-bg-surface-overlay border border-lyra-border-subtle shadow-lg flex flex-col max-h-[300px]",
-              portalDropdown ? "" : "absolute top-full z-50 mt-1",
-              !portalDropdown && trigger ? cn(dropdownAlign === "left" ? "left-0" : "right-0", "w-[240px]") : !portalDropdown ? "w-full" : ""
+              portalDropdown ? "z-[9999]" : "absolute top-full z-50 mt-1",
+              !portalDropdown && trigger ? cn(dropdownAlign === "left" ? "left-0" : "right-0", "w-[240px]") : !portalDropdown ? "w-full" : "",
+              portalDropdown && dropdownClassName
             )}
             style={portalDropdown ? portalStyle : undefined}
           >
