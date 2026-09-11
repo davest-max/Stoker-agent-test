@@ -25,6 +25,8 @@ import {
   type CreateNewOutboundContact,
   type AgentDashboardContactHistoryEntry,
   CHANNEL_TYPE_META,
+  buildVoiceMenuItems,
+  type MenuEntry,
 } from "@nicecxone/lyra-ui";
 import appIcon from "@/assets/app-icon.svg";
 import {
@@ -45,6 +47,7 @@ import { SlideInPage, SlideInPlaceholder } from "@/components/SlideInPage";
 import { NewOutboundPopover, AddOutboundButton, type NewOutboundConfig } from "@/components/NewOutboundPopover";
 import { InternalChatTrigger, InternalChatDockedPanel, InternalChatFloatPanel, InternalChatMaximizedPanel, type ChatView } from "@/components/InternalChatPopover";
 import { LiveVoiceCallBar, DockedVoiceControlBar, type CallColleague, type VoiceCallConsult } from "@/components/LiveVoiceCallBar";
+import type { ActiveCallOption } from "@/components/ConsultTransferPopover";
 import { INITIAL_FAVORITE_EMPLOYEE_IDS, INITIAL_CHAT_THREADS, type InternalChatMessage } from "@/data/internalChat";
 import { DirectoryPage } from "@/components/DirectoryPage";
 import { SearchContactsPage } from "@/components/SearchContactsPage";
@@ -58,6 +61,7 @@ import {
   OUTBOUND_SKILL_MEMBER_CONTACTS,
   type DirectoryCustomer,
   type DirectoryAgent,
+  type DirectorySkill,
   type CustomerNote,
 } from "@/data/directory";
 import {
@@ -75,6 +79,7 @@ import {
   Minimize2,
   Monitor,
   FileSearch,
+  UserPlus,
 } from "lucide-react";
 
 /** Title + icon for each right-side slide-in destination — Directory has
@@ -698,6 +703,18 @@ export function AgentNextGenPage({
   // internal state) so a future consumer of this same interaction could
   // coordinate against it if needed; currently just passed straight through.
   const [outcomeButtonOpen, setOutcomeButtonOpen] = useState(false);
+  // Same lifted-state idea as `outcomeButtonOpen` above, for
+  // `ConsultTransferButton`'s own popover — per an explicit follow-up, both
+  // the assignment rail's per-tile kebab and the active interaction's own
+  // "More options" kebab now have a real "Consult / Transfer" action (they
+  // used to be dead menu items), and clicking either one needs to open this
+  // exact popover rather than a disconnected copy. A flat boolean (not
+  // keyed by assignment id) is enough since only the currently-active
+  // assignment's `InteractionInfoBar`/`ConsultTransferButton` is ever
+  // mounted at a time — see `handleConsultTransferFromKebab` below for how
+  // the rail's kebab (which can belong to a BACKGROUNDED assignment) uses
+  // this alongside a focus switch.
+  const [consultTransferOpen, setConsultTransferOpen] = useState(false);
   // The one live voice call, independent of `activeAssignmentId` — an agent
   // can only ever have one live call at a time (explicit product decision),
   // so this is a single slot, not a list. Drives the persistent
@@ -751,6 +768,22 @@ export function AgentNextGenPage({
   // a "Call ended" label next to the channel name (InteractionActionsBar)
   // and the same tile preview override `heldVoiceCallAssignmentIds` uses.
   const [endedVoiceCallAssignmentIds, setEndedVoiceCallAssignmentIds] = useState<Set<string>>(new Set());
+  // Keyed by assignment id, valued with the "Merged into {name}'s call"
+  // tile-preview text (see `dismissMergedAwayAssignment`) — present only for
+  // the brief window between an active-call merge completing and that
+  // now-redundant tile actually being removed from `assignments`. Unlike
+  // `endedVoiceCallAssignmentIds` (which lingers until the agent manually
+  // dismisses it), this is always self-cleaning on its own timer.
+  const [mergedAwayAssignmentIds, setMergedAwayAssignmentIds] = useState<Record<string, string>>({});
+  // Bumped (to `Date.now()`) to force the live call's own Conference popover
+  // open on its Active Calls tab — see `ConsultTransferButtonProps
+  // .forceActiveCallsTabSignal`'s own doc comment. Only ever set by
+  // `handleMergeIntoFromKebab` below, for the rare case where an agent/skill
+  // call's "Merge into..." kebab item has more than one eligible customer
+  // call to choose between (the common single-target case skips this
+  // entirely and goes straight to the consult banner). Starts `undefined` so
+  // the popover never force-opens on page load.
+  const [conferenceForceActiveCallsSignal, setConferenceForceActiveCallsSignal] = useState<number | undefined>(undefined);
   // Mute/mask/recording toggles for whichever call is currently live —
   // lifted here (not local `useState` inside `LiveVoiceCallBar`) so the SAME
   // state reads correctly from either presentation of that call's controls:
@@ -1125,9 +1158,65 @@ export function AgentNextGenPage({
     }
     prevHasActiveAssignmentRef.current = hasActiveAssignment;
   }, [activeAssignmentId, openSlideInPage]);
-  const handleDirectoryContactAction = (contact: DirectoryCustomer | DirectoryAgent, channel: ChannelType) => {
+  /** Directory's own Agents tab (and the same `renderAgentRow` reused for a
+   *  Skill/Team drill-down's member roster) — per an explicit follow-up,
+   *  these were still just a `console.log` stub even though the exact same
+   *  actions already work for real everywhere else an agent contact shows
+   *  up (New Outbound's own agent rows, `ConsultTransferPopover`'s Agents
+   *  tab). Reuses those same two handlers rather than a third
+   *  implementation: Chat opens the real Internal Chat panel
+   *  (`openInternalChatWith`, positioned near the click same as New
+   *  Outbound's own agent chat icon does); Call reuses
+   *  `handleStartOutboundCall`'s existing agent-kind branch, which creates a
+   *  real assignment tile (flagged `isInternalAgentCall`) and goes live —
+   *  see that function's own doc comment. Customer contact actions never
+   *  reach here at all (Directory's customer rows already call
+   *  `onStartOutbound`/`handleStartOutboundCall` directly via
+   *  `CustomerOutboundActionButtons`), so this only ever needs to handle
+   *  the agent case. */
+  const handleDirectoryContactAction = (
+    contact: DirectoryCustomer | DirectoryAgent,
+    channel: ChannelType,
+    event: React.MouseEvent<HTMLButtonElement>
+  ) => {
+    if (contact.kind === "agent") {
+      if (channel === "chat") {
+        openInternalChatWith(contact.id, { x: event.clientX, y: event.clientY });
+        return;
+      }
+      if (channel === "voice") {
+        handleStartOutboundCall({ contact, channel: "voice", phone: "", skillId: "" });
+        return;
+      }
+    }
     // eslint-disable-next-line no-console
     console.log("Directory contact action:", channel, contact.name);
+  };
+
+  /** Directory's own Skills tab — per the same explicit follow-up as
+   *  `handleDirectoryContactAction` above, "Call" on a skill row now rings
+   *  that skill's queue instead of doing nothing. Skills route work to
+   *  whichever member picks up, not to one fixed identity the way an agent
+   *  row does — so unlike agents, there's no separate "Chat" action here
+   *  (chat needs one specific person on the other end; a skill has no
+   *  single identity to chat with, only a roster). Reuses the exact same
+   *  "pick a random available member" logic
+   *  `ConsultTransferPopover`'s own skill-consult effect already has,
+   *  simplified to skip that popover's ring→answer sub-state: every other
+   *  outbound call this app creates (customer or agent) goes straight to
+   *  live the instant its tile is created, so a skill call matches that
+   *  same convention rather than inventing a "ringing" tile state nothing
+   *  else here has. If nobody on the skill is available, this is a no-op
+   *  (logged) — same rough edge case the consult flow already accepts. */
+  const handleStartSkillCall = (skill: DirectorySkill) => {
+    const available = DIRECTORY_AGENTS.filter((a) => skill.memberAgentIds.includes(a.id) && a.availability === "available");
+    if (available.length === 0) {
+      // eslint-disable-next-line no-console
+      console.log("Call skill:", skill.name, "— no available agents right now");
+      return;
+    }
+    const picked = available[Math.floor(Math.random() * available.length)];
+    handleStartOutboundCall({ contact: picked, channel: "voice", phone: "", skillId: "" });
   };
 
   /** Dispatches a `SlideInDestination` to its actual content — shared by
@@ -1149,6 +1238,7 @@ export function AgentNextGenPage({
             skills={DIRECTORY_SKILLS}
             teams={DIRECTORY_TEAMS}
             onContactAction={handleDirectoryContactAction}
+            onCallSkill={handleStartSkillCall}
             // Customer rows' own channel icons start a real outbound
             // interaction (see `CustomerOutboundActionButtons`'s own doc
             // comment in DirectoryPage.tsx) — same config/handler the main
@@ -1490,16 +1580,6 @@ export function AgentNextGenPage({
   const activeCustomer = baseActiveCustomer
     ? { ...baseActiveCustomer, ...customerFieldOverrides[baseActiveCustomer.id] }
     : undefined;
-  /** The outbound-contact record backing a given assignment's customer, if
-   *  any — feeds each card's own `AddOutboundButton` (name/avatar/channels
-   *  it supports), rendered as `InteractionNavItem.headerAction` now (see
-   *  the assignment-card render below) rather than just the active
-   *  assignment's header, since every card gets its own "+" next to the
-   *  customer name. `undefined` (internal agent calls, a not-yet-identified
-   *  caller) just means no "+" renders for that card. */
-  const getOutboundContact = (customerId?: string): CreateNewOutboundContact | undefined =>
-    DIRECTORY_CUSTOMERS.find((c) => c.id === customerId);
-
   // Shared by the composer's real Send action and the fake outbound-call
   // transcript below — appends one message to a specific assignment
   // (not necessarily the active one, though in practice it always is for
@@ -1756,6 +1836,55 @@ export function AgentNextGenPage({
     resumePrimaryOnly(assignmentId);
   };
 
+  // How long a tile that just got folded into another call's conference
+  // keeps showing its own "Merged into…" confirmation before actually
+  // disappearing from the rail — long enough to register as a deliberate
+  // confirmation, short enough not to leave a dead tile cluttering the rail.
+  const MERGED_TILE_NOTICE_MS = 1800;
+
+  // Folds a tile away right after its own live call gets merged into a
+  // DIFFERENT tile's conference (see `mergeVoiceCallConsult`'s own
+  // `mergeFromAssignmentId` check, below) — the tile is now redundant (its
+  // whole reason to exist was the call that just moved elsewhere), but per
+  // an explicit follow-up it doesn't just vanish: it shows a brief "Merged
+  // into {name}'s call" confirmation in place of its usual preview (see
+  // `mergedAwayNotice` in the assignment-rail render above) before actually
+  // being removed.
+  const dismissMergedAwayAssignment = (sourceAssignmentId: string, targetDisplayName: string) => {
+    setMergedAwayAssignmentIds((prev) => ({ ...prev, [sourceAssignmentId]: `Merged into ${targetDisplayName}'s call` }));
+    // The source's own call is over the instant it folds into another one —
+    // same end state a plain hang-up would leave it in, just without
+    // touching `liveVoiceCall`/focus (the tile it merged into already owns
+    // both — see `startActiveCallMerge`).
+    setHeldVoiceCallAssignmentIds((held) => {
+      if (!held.has(sourceAssignmentId)) return held;
+      const next = new Set(held);
+      next.delete(sourceAssignmentId);
+      return next;
+    });
+    setVoiceCallColleagues((prev) => {
+      if (!(sourceAssignmentId in prev)) return prev;
+      const { [sourceAssignmentId]: _removed, ...rest } = prev;
+      return rest;
+    });
+    setTimeout(() => {
+      setAssignments((prev) => prev.filter((a) => a.id !== sourceAssignmentId));
+      setMergedAwayAssignmentIds((prev) => {
+        const { [sourceAssignmentId]: _removed, ...rest } = prev;
+        return rest;
+      });
+      setVoiceCallStartedAt((prev) => {
+        const { [sourceAssignmentId]: _removed, ...rest } = prev;
+        return rest;
+      });
+      setVoiceCallHeldSince((prev) => {
+        const { [sourceAssignmentId]: _removed, ...rest } = prev;
+        return rest;
+      });
+      setActiveAssignmentId((current) => (current === sourceAssignmentId ? undefined : current));
+    }, MERGED_TILE_NOTICE_MS);
+  };
+
   // Brings the consulted colleague into the call as a full participant and
   // resumes the primary party — the conference actually begins here.
   const mergeVoiceCallConsult = (assignmentId: string) => {
@@ -1765,15 +1894,146 @@ export function AgentNextGenPage({
       ...prev,
       [assignmentId]: [
         ...(prev[assignmentId] ?? []),
-        // `sourceSkillName` carried over from the consult (see that field's
-        // own doc comment) so a skill-routed colleague keeps their
-        // attribution after merging into a full participant, not just
-        // while the pre-merge consult banner is showing.
-        { id: consult.id, name: consult.name, isOnHold: false, sourceSkillName: consult.sourceSkillName },
+        // `sourceSkillName`/`isCustomer` both carried over from the consult
+        // (see each field's own doc comment) so a skill-routed colleague
+        // keeps their attribution, and a customer keeps reading as a
+        // customer (initials, no Transfer icon), after merging into a full
+        // participant — not just while the pre-merge consult banner is
+        // showing.
+        { id: consult.id, name: consult.name, isOnHold: false, sourceSkillName: consult.sourceSkillName, isCustomer: consult.isCustomer },
       ],
     }));
     setVoiceCallConsult((prev) => ({ ...prev, [assignmentId]: undefined }));
     resumePrimaryOnly(assignmentId);
+    // This consult came from an active-call merge (see `startActiveCallMerge`
+    // below), not a fresh dial — the OTHER tile it came from is now
+    // redundant and needs to fold away. A plain agent/skill/customer consult
+    // never sets `mergeFromAssignmentId`, so this is a no-op for every
+    // existing call site.
+    if (consult.mergeFromAssignmentId) {
+      const targetAssignment = assignments.find((a) => a.id === assignmentId);
+      dismissMergedAwayAssignment(consult.mergeFromAssignmentId, targetAssignment?.customerName ?? "the call");
+    }
+  };
+
+  // Other in-progress voice-call assignments eligible to merge with
+  // `liveAssignmentId`'s own call — always the OPPOSITE customer/internal
+  // type (see `ConsultTransferButtonProps.activeCallOptions`'s own doc
+  // comment for why), excluding ended/resolved calls and anything already
+  // mid-merge-teardown. Shared by both the floating and docked Conference
+  // buttons' own render so the exact same eligibility rule backs whichever
+  // presentation happens to be showing right now.
+  const computeActiveCallOptions = (liveAssignmentId: string): ActiveCallOption[] => {
+    const liveAssignment = assignments.find((a) => a.id === liveAssignmentId);
+    const liveIsInternal = !!liveAssignment?.isInternalAgentCall;
+    return assignments
+      .filter(
+        (a) =>
+          a.id !== liveAssignmentId &&
+          assignmentChannelType(a) === "voice" &&
+          a.escalationStatus !== "resolved" &&
+          !endedVoiceCallAssignmentIds.has(a.id) &&
+          !mergedAwayAssignmentIds[a.id] &&
+          !!a.isInternalAgentCall !== liveIsInternal
+      )
+      .map((a): ActiveCallOption => {
+        const isHeld = heldVoiceCallAssignmentIds.has(a.id);
+        const heldSince = voiceCallHeldSince[a.id];
+        return {
+          assignmentId: a.id,
+          name: a.customerName ?? (a.isInternalAgentCall ? "Colleague" : "Customer"),
+          isCustomer: !a.isInternalAgentCall,
+          statusLabel: isHeld
+            ? `On hold ${formatHoldDuration(Math.floor((Date.now() - (heldSince ?? Date.now())) / 1000))}`
+            : "Connected",
+          statusCritical: isHeld,
+        };
+      });
+  };
+
+  /** Wired to the Conference button's own "Active Calls" tab (see
+   *  `computeActiveCallOptions` above) — merges two ALREADY-connected calls,
+   *  each living in its own tile, rather than dialing someone fresh. Per an
+   *  explicit follow-up, the customer always absorbs the other call
+   *  regardless of which tile the agent picked "Merge" from:
+   *   - Picked from the CUSTOMER's own tile (an internal call was offered
+   *     as the target) — just starts the consult right here, no focus
+   *     change needed.
+   *   - Picked from the INTERNAL call's own tile (a customer call was
+   *     offered as the target) — switches focus/hold to the customer tile
+   *     FIRST, via the exact same hold-swap `handleSelectAssignment` runs
+   *     for any other tile switch, so the resulting `ConsultBanner` — which
+   *     only ever renders on whichever bar is currently live — is actually
+   *     visible the moment the consult starts.
+   *  Either way this ends by calling `startVoiceCallConsult` with
+   *  `mergeFromAssignmentId` set to whichever assignment holds the
+   *  "internal call" role — that's what `mergeVoiceCallConsult` uses to
+   *  fold that tile away once the agent actually confirms the merge;
+   *  Cancel leaves it completely untouched, still its own live/held call. */
+  const startActiveCallMerge = (currentAssignmentId: string, targetAssignmentId: string) => {
+    const currentAssignment = assignments.find((a) => a.id === currentAssignmentId);
+    const targetAssignment = assignments.find((a) => a.id === targetAssignmentId);
+    if (!currentAssignment || !targetAssignment) return;
+    if (currentAssignment.isInternalAgentCall) {
+      handleSelectAssignment(targetAssignmentId);
+      startVoiceCallConsult(targetAssignmentId, {
+        id: currentAssignment.id,
+        name: currentAssignment.customerName ?? "Colleague",
+        mergeFromAssignmentId: currentAssignment.id,
+      });
+    } else {
+      startVoiceCallConsult(currentAssignmentId, {
+        id: targetAssignment.id,
+        name: targetAssignment.customerName ?? "Colleague",
+        mergeFromAssignmentId: targetAssignment.id,
+      });
+    }
+  };
+
+  // Packages "who this agent/skill call could merge into" as a single kebab
+  // `MenuEntry` — shared by the assignment rail's per-tile kebab and the
+  // case toolbar's "More options" kebab (see both call sites below) so the
+  // wording/eligibility logic lives in exactly one place. Only ever offered
+  // on an agent/skill call's own tile/card — per the "customer always
+  // absorbs" rule `computeActiveCallOptions` already enforces, a customer's
+  // own interaction never gets a "Merge into" entry of its own (the Active
+  // Calls tab on ITS Conference button still exists, same as before — this
+  // is purely an additional, more discoverable entry point, not a
+  // replacement). `undefined` when there's nothing eligible to merge with,
+  // which both call sites treat as "don't add anything."
+  const getMergeCallMenuEntry = (assignmentId: string): MenuEntry | undefined => {
+    const assignment = assignments.find((a) => a.id === assignmentId);
+    if (!assignment?.isInternalAgentCall) return undefined;
+    const targets = computeActiveCallOptions(assignmentId);
+    if (targets.length === 0) return undefined;
+    return {
+      id: "merge-into-call",
+      label: targets.length === 1 ? `Merge into ${targets[0].name}'s call` : "Merge into a call...",
+      icon: <UserPlus className="h-4 w-4" strokeWidth={1.5} />,
+      onClick: () => handleMergeIntoFromKebab(assignmentId),
+    };
+  };
+
+  // The "Merge into..." kebab item's own click handler — `assignmentId` here
+  // is always the agent/skill side (see `getMergeCallMenuEntry` above, the
+  // only place this entry is ever offered). With exactly one eligible
+  // customer call, there's nothing to choose between, so this goes straight
+  // to the same pre-merge consult banner an Active Calls pick already
+  // triggers — no popover detour. With more than one (not today's typical
+  // scenario, but the data model allows it), there's no way to guess which
+  // one the agent means: this instead brings the agent/skill call into focus
+  // (making it live if it wasn't already, via the same hold-swap every other
+  // focus switch uses) and forces its own Conference popover open on the
+  // Active Calls tab so the agent can pick — see `forceActiveCallsTabSignal`
+  // and `ConsultTransferPopover`'s own doc comment on that prop.
+  const handleMergeIntoFromKebab = (assignmentId: string) => {
+    const targets = computeActiveCallOptions(assignmentId);
+    if (targets.length === 1) {
+      startActiveCallMerge(assignmentId, targets[0].assignmentId);
+      return;
+    }
+    handleSelectAssignment(assignmentId);
+    setConferenceForceActiveCallsSignal(Date.now());
   };
 
   // Row-level hold for one specific added colleague — independent of the
@@ -1805,6 +2065,47 @@ export function AgentNextGenPage({
     }));
   };
 
+  // Assignment rail's per-tile kebab "Consult / Transfer" item — per an
+  // explicit follow-up, clicking it for a BACKGROUNDED assignment (one that
+  // isn't currently shown in the center panel) first brings that
+  // interaction into focus the same way clicking the tile itself would,
+  // then opens its Consult/Transfer popover — one click does both, rather
+  // than requiring the agent to switch over manually first. For the
+  // already-active assignment's own tile, `handleSelectAssignment` is a
+  // harmless no-op (already selected), so this works identically either
+  // way without needing to special-case "is this already the active one."
+  const handleConsultTransferFromKebab = (id: string) => {
+    handleSelectAssignment(id);
+    setConsultTransferOpen(true);
+  };
+
+  // Puts whatever voice call is CURRENTLY live on hold before a different
+  // one takes over — the "picking up a different line" behavior every path
+  // that can hand the persistent bar to a different call needs. Originally
+  // only lived inline in `handleSelectAssignment` below; extracted so
+  // `handleStartOutboundCall`'s agent-kind branch (starting a brand-new
+  // internal call from Directory/New Outbound while a customer call is
+  // already live) and `startActiveCallMerge` below can run the exact same
+  // hold-swap instead of each silently skipping it — before this, starting
+  // a new agent call from Directory left the previous live call neither
+  // live nor marked held, an inconsistency that only mattered once a second
+  // live call could exist alongside the first (which is exactly what this
+  // feature introduces).
+  const holdCurrentLiveCallBeforeSwitching = (nextAssignmentId: string) => {
+    if (liveVoiceCall && liveVoiceCall.assignmentId !== nextAssignmentId) {
+      setHeldVoiceCallAssignmentIds((held) => new Set(held).add(liveVoiceCall.assignmentId));
+      // `?? Date.now()` — only stamp this the first time. If this same call
+      // was already on hold (e.g. the agent came back to it without hitting
+      // Resume, then swapped to a third call), its hold stretch has been
+      // continuous this whole time; re-stamping here would reset the
+      // "On hold · MM:SS" timer for no reason.
+      setVoiceCallHeldSince((prev) => ({
+        ...prev,
+        [liveVoiceCall.assignmentId]: prev[liveVoiceCall.assignmentId] ?? Date.now(),
+      }));
+    }
+  };
+
   // Switching interactions always lands back on the Chat tab — seeing a
   // different customer's history tab still open after switching would be odd.
   const handleSelectAssignment = (id: string) => {
@@ -1833,20 +2134,7 @@ export function AgentNextGenPage({
       targetAssignment.escalationStatus !== "resolved" &&
       !endedVoiceCallAssignmentIds.has(id)
     ) {
-      if (liveVoiceCall && liveVoiceCall.assignmentId !== id) {
-        // The call being backgrounded goes on hold automatically — same
-        // "picking up a different line" behavior as a real desk phone.
-        setHeldVoiceCallAssignmentIds((held) => new Set(held).add(liveVoiceCall.assignmentId));
-        // `?? Date.now()` — only stamp this the first time. If this same
-        // call was already on hold (e.g. the agent came back to it without
-        // hitting Resume, then swapped to a third call), its hold stretch
-        // has been continuous this whole time; re-stamping here would reset
-        // the "On hold · MM:SS" timer for no reason.
-        setVoiceCallHeldSince((prev) => ({
-          ...prev,
-          [liveVoiceCall.assignmentId]: prev[liveVoiceCall.assignmentId] ?? Date.now(),
-        }));
-      }
+      holdCurrentLiveCallBeforeSwitching(id);
       if (!liveVoiceCall || liveVoiceCall.assignmentId !== id) {
         // Focusing a different existing voice call tile is a focus switch,
         // not "starting a new call" — `goLiveWithVoiceCall` no longer forces
@@ -1879,9 +2167,10 @@ export function AgentNextGenPage({
   // wasn't passing either prop down yet, so the action fired but did
   // nothing). Most assignments here only ever have one open channel, so in
   // practice `onDismiss` (whole-card removal) is the one that usually
-  // fires — `onDismissChannel` handles the case where "Add Outbound" (see
-  // `handleAddOutboundChannel` below) has put a second channel on the same
-  // card. Clearing `activeAssignmentId` only when the dismissed card was
+  // fires — `onDismissChannel` handles the case where a card has picked up
+  // a second open channel (e.g. Directory's outbound actions adding a
+  // channel to an existing customer interaction). Clearing
+  // `activeAssignmentId` only when the dismissed card was
   // the active one — matches `handleCloseInteraction` above rather than
   // auto-selecting another tile, so dismissing a background tile never
   // disturbs whatever the agent is currently looking at.
@@ -2013,58 +2302,6 @@ export function AgentNextGenPage({
     setAssignments((prev) => prev.map((a) => (a.id === assignmentId ? { ...a, currentChannelKey: key } : a)));
   };
 
-  /** The card's own "+" (`AddOutboundButton`, `InteractionNavItem
-   *  .headerAction`) — starts another channel with the customer already on
-   *  this interaction. Unlike `handleStartOutboundCall` below (always
-   *  creates a brand-new assignment tile), this appends to the *existing*
-   *  assignment's own `channels` array and makes the new channel current,
-   *  so the agent sees one card with two live channels instead of two
-   *  separate cards for the same customer — each channel gets its own full
-   *  row on that card (see `InteractionNavItem`'s own doc comment), stacked
-   *  under the first. */
-  const handleAddOutboundChannel = (assignmentId: string, channel: ChannelType, address: string, skillId: string) => {
-    const skillLabel = OUTBOUND_CONFIG.skillOptions.find((o) => o.value === skillId)?.label;
-    const channelLabel = OUTBOUND_CONFIG.channelOptions.find((o) => o.id === channel)?.label ?? channel;
-    const newChannel: AssignmentChannel = {
-      id: `${channel}-${Date.now()}`,
-      type: channel,
-      elapsed: "00:00",
-      current: true,
-      preview: skillLabel,
-      address,
-      // Its own subject/case ID — this is a new, separate case being opened
-      // on the same customer's card (see `AssignmentChannel`'s own doc
-      // comment), not a continuation of whatever the card's other channel(s)
-      // are already about.
-      subject:
-        channel === "email"
-          ? fakeOutboundEmailSubject()
-          : `Outbound ${channelLabel}${skillLabel ? ` — ${skillLabel}` : ""}`,
-      caseId: generateCaseId(),
-    };
-    setAssignments((prev) =>
-      prev.map((a) =>
-        a.id === assignmentId
-          ? {
-              ...a,
-              channels: [...a.channels, newChannel],
-              currentChannelKey: channelKey(newChannel),
-              // Same "every outbound voice call gets a script" rule as
-              // handleStartOutboundCall/handleStartUnmatchedOutbound above —
-              // this is a customer-facing card (never reached for the
-              // agent-to-agent internal call, which has its own branch),
-              // just adding voice as a second channel rather than starting
-              // the whole card fresh.
-              script: channel === "voice" ? buildOutboundVoiceScript(a.customerName ?? "the customer", skillLabel) : a.script,
-            }
-          : a
-      )
-    );
-    if (channel === "voice") goLiveWithVoiceCall(assignmentId);
-    const assignment = assignments.find((a) => a.id === assignmentId);
-    scheduleOutboundDemoTranscript(assignmentId, channel, assignment?.customerName ?? "the customer", skillLabel);
-  };
-
   /** New Outbound's `onStartCall` — fired for every matched-contact outbound
    *  attempt except the Agents-group "chat" icon (that's intercepted
    *  earlier by `onOpenInternalChat`, straight into Internal Chat, and
@@ -2115,6 +2352,13 @@ export function AgentNextGenPage({
       };
       setAssignments((prev) => [newAssignment, ...prev]);
       setActiveAssignmentId(id);
+      // Same hold-swap `handleSelectAssignment` runs for any other tile
+      // switch — starting this call while a different voice call is already
+      // live backgrounds that one instead of leaving it in limbo (neither
+      // live nor marked held). Matters now that a customer call and an
+      // internal one can coexist and later be merged back together — see
+      // `startActiveCallMerge`'s own doc comment.
+      holdCurrentLiveCallBeforeSwitching(id);
       // Internal agent-to-agent call — this branch only ever fires for
       // `channel === "voice"` (see the early return above), so this always
       // becomes the live call.
@@ -2702,9 +2946,15 @@ export function AgentNextGenPage({
                 className="mb-2"
               />
               {assignments.map((a) => {
-                const outboundContact = getOutboundContact(a.customerId);
                 const isHeldVoiceCall = heldVoiceCallAssignmentIds.has(a.id);
                 const isEndedVoiceCall = endedVoiceCallAssignmentIds.has(a.id);
+                // Set only for the brief window between an active-call merge
+                // completing and this now-redundant tile actually being
+                // removed — see `dismissMergedAwayAssignment`'s own doc
+                // comment. Takes priority over both branches below (a
+                // merged-away call is never also "held" in any way that
+                // matters — the agent is never coming back to it).
+                const mergedAwayNotice = mergedAwayAssignmentIds[a.id];
                 // Live-ticking "On hold · MM:SS" rather than a static "On
                 // hold" — this whole component already re-renders every
                 // second (see the unrelated agent-status `elapsedSeconds`
@@ -2727,13 +2977,40 @@ export function AgentNextGenPage({
                 // turns that text red (see channel-row.tsx) — per an
                 // explicit follow-up, hold state should read as red
                 // wherever it shows up, not just on the persistent bar.
+                // Only ever defined for an agent/skill call's own tile (see
+                // `getMergeCallMenuEntry`'s own doc comment) — spliced into
+                // that voice channel's kebab below, right after "Consult /
+                // Transfer", same insertion point the case toolbar's
+                // identical entry uses (see `InteractionInfoBar`'s own
+                // `mergeCallMenuEntry` handling).
+                const mergeCallEntry = a.isInternalAgentCall ? getMergeCallMenuEntry(a.id) : undefined;
                 const displayChannels =
-                  isHeldVoiceCall || isEndedVoiceCall
-                    ? a.channels.map((c) =>
-                        c.type === "voice"
-                          ? { ...c, preview: isEndedVoiceCall ? "Call ended" : holdPreview, previewCritical: isHeldVoiceCall }
-                          : c
-                      )
+                  mergedAwayNotice || isHeldVoiceCall || isEndedVoiceCall || mergeCallEntry
+                    ? a.channels.map((c) => {
+                        if (c.type !== "voice") return c;
+                        const withPreview =
+                          mergedAwayNotice || isHeldVoiceCall || isEndedVoiceCall
+                            ? {
+                                ...c,
+                                preview: mergedAwayNotice ?? (isEndedVoiceCall ? "Call ended" : holdPreview),
+                                previewCritical: isHeldVoiceCall && !mergedAwayNotice,
+                              }
+                            : c;
+                        if (!mergeCallEntry) return withPreview;
+                        // Full `menuItems` override (see `InteractionChannel
+                        // .menuItems`'s own doc comment in channel-row.tsx) —
+                        // rebuilds the exact same default list `buildVoiceMenuItems`
+                        // already provides so nothing else about this row's
+                        // kebab changes, then inserts the one new entry.
+                        const baseMenuItems = buildVoiceMenuItems(
+                          () => handleDismissChannel(a.id, channelKey(c)),
+                          () => handleConsultTransferFromKebab(a.id)
+                        );
+                        return {
+                          ...withPreview,
+                          menuItems: [...baseMenuItems.slice(0, 2), mergeCallEntry, ...baseMenuItems.slice(2)],
+                        };
+                      })
                     : a.channels;
                 return (
                   <InteractionNavItem
@@ -2756,28 +3033,15 @@ export function AgentNextGenPage({
                     channels={displayChannels}
                     currentChannelKey={resolveCurrentChannelKey(a)}
                     onCurrentChannelChange={(key) => handleChannelSelect(a.id, key)}
-                    // "+" now lives on the card itself, top-right next to the
-                    // customer name — matches the new assignment-card design;
-                    // used to live in `InteractionHeader`'s Row 1, scoped to
-                    // just the active assignment (see `getOutboundContact`'s
-                    // own doc comment above). `undefined` contact (no
-                    // matching directory record) renders nothing here, same
-                    // as before.
-                    headerAction={
-                      outboundContact ? (
-                        <AddOutboundButton
-                          contact={outboundContact}
-                          channelOptions={OUTBOUND_CONFIG.channelOptions}
-                          phoneOptions={OUTBOUND_CONFIG.phoneOptions}
-                          skillOptions={OUTBOUND_CONFIG.skillOptions}
-                          openChannelTypes={a.channels.map((c) => c.type)}
-                          onStart={(channel, address, skillId) => handleAddOutboundChannel(a.id, channel, address, skillId)}
-                        />
-                      ) : undefined
-                    }
                     avatarIcon={a.isInternalAgentCall ? <Headset className="h-4 w-4" strokeWidth={1.5} /> : undefined}
                     onDismiss={() => handleDismissAssignment(a.id)}
+                    // No `headerAction` ("+") here anymore — usertesting
+                    // showed agents look to the voice control bar first to
+                    // add another person to a call, so the card-level
+                    // add-outbound-channel affordance was removed (its
+                    // `AddOutboundButton` is still used from Directory).
                     onDismissChannel={(channel) => handleDismissChannel(a.id, channel)}
+                    onConsultTransfer={() => handleConsultTransferFromKebab(a.id)}
                   />
                 );
               })}
@@ -2949,6 +3213,9 @@ export function AgentNextGenPage({
                       activeCallAgentIds={activeCallAgentIds}
                       outcomeOpen={outcomeButtonOpen}
                       onOutcomeOpenChange={setOutcomeButtonOpen}
+                      consultTransferOpen={consultTransferOpen}
+                      onConsultTransferOpenChange={setConsultTransferOpen}
+                      mergeCallMenuEntry={getMergeCallMenuEntry(activeAssignment.id)}
                       // Same "dismiss just this channel vs. the whole card"
                       // closure for both — approving the Outcome form and
                       // "Unassign & Dismiss" end the interaction the exact
@@ -2979,6 +3246,21 @@ export function AgentNextGenPage({
                    *  maximized branch now renders this same element as its
                    *  own bottom-pinned sibling instead of just dropping it. */}
                   {(() => {
+                    // Same shape/purpose as the top-level `activeCallAgentIds`
+                    // above, just scoped to THIS bar's own live call rather
+                    // than gated on "is this the active assignment" — the
+                    // docked bar only ever renders for the live call in the
+                    // first place, so that gate would be redundant here.
+                    // Backs the docked "Conference" button's persistent
+                    // "on this call" treatment — see `LiveVoiceCallBarProps
+                    // .liveCallAgentIds`'s own doc comment in
+                    // LiveVoiceCallBar.tsx.
+                    const dockedLiveCallAgentIds = isVoiceCallActuallyDocked
+                      ? new Set<string>([
+                          ...(voiceCallConsult[liveVoiceCall!.assignmentId] ? [voiceCallConsult[liveVoiceCall!.assignmentId]!.id] : []),
+                          ...(voiceCallColleagues[liveVoiceCall!.assignmentId] ?? []).map((c) => c.id),
+                        ])
+                      : new Set<string>();
                     const dockedVoiceControls = isVoiceCallActuallyDocked ? (
                       <DockedVoiceControlBar
                         customerName={activeAssignment.customerName}
@@ -3007,6 +3289,11 @@ export function AgentNextGenPage({
                         onTransferToColleague={handleTransferVoiceCallToColleague}
                         isSelfCameraOff={isSelfCameraOff}
                         onToggleSelfCamera={() => setIsSelfCameraOff((v) => !v)}
+                        onAddColleagueToCall={(colleague) => startVoiceCallConsult(liveVoiceCall!.assignmentId, colleague)}
+                        liveCallAgentIds={dockedLiveCallAgentIds}
+                        activeCallOptions={computeActiveCallOptions(liveVoiceCall!.assignmentId)}
+                        onSelectActiveCall={(targetId) => startActiveCallMerge(liveVoiceCall!.assignmentId, targetId)}
+                        forceActiveCallsTabSignal={conferenceForceActiveCallsSignal}
                         onUndock={() => setVoiceCallManuallyUndocked(true)}
                         onNeededWidthChange={setDockedBarNeededWidth}
                         onHangUp={handleHangUpLiveCall}
@@ -3362,6 +3649,16 @@ export function AgentNextGenPage({
             // included.
             heldSince: heldVoiceCallAssignmentIds.has(a.id) ? voiceCallHeldSince[a.id] : undefined,
           }));
+        // Backs the floating bar's own "Conference" button — same shape as
+        // the top-level `activeCallAgentIds` above, just scoped to this
+        // bar's own live call rather than gated on "is this the active
+        // assignment" (this bar only ever exists for the live call, so that
+        // gate is redundant here). See `LiveVoiceCallBarProps
+        // .liveCallAgentIds`'s own doc comment in LiveVoiceCallBar.tsx.
+        const liveCallAgentIds = new Set<string>([
+          ...(voiceCallConsult[liveVoiceCall.assignmentId] ? [voiceCallConsult[liveVoiceCall.assignmentId]!.id] : []),
+          ...(voiceCallColleagues[liveVoiceCall.assignmentId] ?? []).map((c) => c.id),
+        ]);
         return (
           <LiveVoiceCallBar
             key={liveVoiceCall.assignmentId}
@@ -3391,6 +3688,11 @@ export function AgentNextGenPage({
             onTransferToColleague={handleTransferVoiceCallToColleague}
             isSelfCameraOff={isSelfCameraOff}
             onToggleSelfCamera={() => setIsSelfCameraOff((v) => !v)}
+            onAddColleagueToCall={(colleague) => startVoiceCallConsult(liveVoiceCall.assignmentId, colleague)}
+            liveCallAgentIds={liveCallAgentIds}
+            activeCallOptions={computeActiveCallOptions(liveVoiceCall.assignmentId)}
+            onSelectActiveCall={(targetId) => startActiveCallMerge(liveVoiceCall.assignmentId, targetId)}
+            forceActiveCallsTabSignal={conferenceForceActiveCallsSignal}
             onDock={
               isVoiceCallDocked && (voiceCallManuallyUndocked || voiceCallAutoUndocked)
                 ? () => {

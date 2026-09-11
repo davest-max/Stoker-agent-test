@@ -167,7 +167,15 @@ export interface DirectoryPageProps {
   agents: DirectoryAgent[];
   skills: DirectorySkill[];
   teams: DirectoryTeam[];
-  onContactAction: (contact: DirectoryCustomer | DirectoryAgent, channel: ChannelType) => void;
+  onContactAction: (contact: DirectoryCustomer | DirectoryAgent, channel: ChannelType, event: React.MouseEvent<HTMLButtonElement>) => void;
+  /** Skill rows' own "Call" action — rings that skill's queue instead of
+   *  the no-op every row here used to be, same explicit follow-up as
+   *  `onContactAction` above. See `AgentNextGenPage`'s own
+   *  `handleStartSkillCall` for why this is its own prop rather than
+   *  folded into `onContactAction`: a skill isn't a `DirectoryCustomer |
+   *  DirectoryAgent`, and it only ever offers the one action (no Chat —
+   *  see that handler's own doc comment for why). */
+  onCallSkill: (skill: DirectorySkill) => void;
   /** Starts a real outbound interaction from a customer row's own channel
    *  icon (see `CustomerOutboundActionButtons` above) — same shape as
    *  `NewOutboundConfig.onStartCall`/`AgentNextGenPage`'s own
@@ -186,6 +194,7 @@ export function DirectoryPage({
   skills,
   teams,
   onContactAction,
+  onCallSkill,
   onStartOutbound,
   outboundChannelOptions,
   outboundPhoneOptions,
@@ -248,7 +257,7 @@ export function DirectoryPage({
         }
         title={contact.name}
         subtitle={contact.subtitle}
-        trailing={<ContactActionButtons channels={contact.channels} onAction={(channel) => onContactAction(contact, channel)} />}
+        trailing={<ContactActionButtons channels={contact.channels} onAction={(channel, event) => onContactAction(contact, channel, event)} />}
       />
     );
   }
@@ -343,6 +352,23 @@ export function DirectoryPage({
               title={skill.name}
               subtitle={skill.description}
               meta={`${skill.memberAgentIds.length} agents`}
+              trailing={
+                // Rings the skill's queue — same "Call" concept
+                // `ConsultTransferPopover`'s own Skills tab already offers
+                // mid-call, now reachable straight from the directory too
+                // (see `AgentNextGenPage`'s own `handleStartSkillCall`).
+                // Just Phone here, not a per-channel-type icon — a skill's
+                // `channelType` is which queue it routes DIGITAL work on,
+                // not a menu of ways to reach it, so "Call" reads the same
+                // regardless (same choice `SkillRow` in
+                // ConsultTransferPopover.tsx already made). No Chat action —
+                // see `onCallSkill`'s own doc comment for why.
+                <div onClick={(e) => e.stopPropagation()}>
+                  <ActionIconButton size="sm" title={`Call ${skill.name}`} onClick={() => onCallSkill(skill)}>
+                    <Phone className="h-4 w-4 text-lyra-fg-action" strokeWidth={1.5} />
+                  </ActionIconButton>
+                </div>
+              }
             />
           );
         })}

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ActionIconButton, Button, CHANNEL_ACCENT, Popover, Menu, type MenuEntry } from "@nicecxone/lyra-ui";
-import { Headset, Mic, MicOff, Pause, Play, AudioLines, Circle, CircleDot, Grip, PhoneOff, ChevronDown, Video, VideoOff, Move, PanelRight, Users, ArrowRightLeft, Check, X } from "lucide-react";
+import { Headset, Mic, MicOff, Pause, Play, AudioLines, Circle, CircleDot, Grip, PhoneOff, ChevronDown, Video, VideoOff, Move, PanelRight, UserPlus, ArrowRightLeft, Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ConsultTransferButton, type ActiveCallOption } from "@/components/ConsultTransferPopover";
 
 /** AudioLines with a diagonal slash — Lucide has no ready icon for "mask
  *  sensitive audio", so composite one: the base icon plus an overlaid line,
@@ -214,11 +215,14 @@ function VoiceBarPill({
 }
 
 /** A colleague added to this call via consult-then-merge (see
- *  `VoiceCallConsult` below) — always an agent, never the customer, hence no
- *  `isInternalAgentCall`-style flag: every colleague renders with the same
- *  headset glyph the primary party already uses for that case. Lifted to
- *  `AgentNextGenPage`'s own `voiceCallColleagues` (keyed by assignment id)
- *  for the same "survive moving between the floating and docked
+ *  `VoiceCallConsult` below) — used to always be an agent, but the
+ *  Conference button's own Customers tab (see `ConsultTransferPopover.tsx`)
+ *  can now merge in a customer just as easily, hence `isCustomer` below:
+ *  everyone still shares this one shape, just with per-kind rendering
+ *  (headset vs. initials, Transfer icon shown or not — see `ParticipantChip`
+ *  and `CallMediaArea`) rather than assuming agent unconditionally. Lifted
+ *  to `AgentNextGenPage`'s own `voiceCallColleagues` (keyed by assignment
+ *  id) for the same "survive moving between the floating and docked
  *  presentations" reason every other per-call control here is. `isOnHold`/
  *  `heldSince` are this colleague's OWN hold state — independent of the
  *  primary party's `isOnHold` above, per an explicit follow-up ("each
@@ -235,6 +239,15 @@ export interface CallColleague {
    *  where they came from. Purely cosmetic (see `formatParticipantLabel`
    *  below); absent for a normal direct-agent consult. */
   sourceSkillName?: string;
+  /** True when this colleague is actually a customer merged in from the
+   *  Conference button's own Customers tab, not a fellow agent — per an
+   *  explicit follow-up, a customer participant reads with their own
+   *  initials (not the internal-agent headset glyph) and never gets a
+   *  Transfer icon (handing the live interaction "to" a customer isn't a
+   *  real action this app models — Transfer only ever makes sense to
+   *  another agent). Absent/false for every existing agent/skill consult,
+   *  which keeps their current headset+Transfer treatment unchanged. */
+  isCustomer?: boolean;
 }
 
 /** A private, pre-merge consult in progress — the primary party is
@@ -248,9 +261,24 @@ export interface VoiceCallConsult {
   name: string;
   /** See `CallColleague.sourceSkillName`'s own doc comment — carried over
    *  onto the `CallColleague` this consult becomes on merge, so the
-   *  attribution survives past the consult banner into the Participants
-   *  menu/strip. */
+   *  attribution survives past the consult banner into the participant
+   *  strip. */
   sourceSkillName?: string;
+  /** See `CallColleague.isCustomer`'s own doc comment — carried over the
+   *  same way `sourceSkillName` is once this consult merges. */
+  isCustomer?: boolean;
+  /** Set when this "consult" isn't a fresh dial-out at all, but an
+   *  already-connected call living in its OWN separate tile (see
+   *  `AgentNextGenPage`'s own `startActiveCallMerge`, wired from the
+   *  Conference button's "Active Calls" tab) — the id of that other
+   *  assignment. There's no ringing to wait through here, just the same
+   *  Cancel/Merge confirmation every other consult shows, before the two
+   *  calls actually become one. On Merge, the assignment this points to is
+   *  the one that gets folded away (see `mergeVoiceCallConsult`'s own
+   *  handling) — Cancel leaves it completely untouched, still its own
+   *  live/held call the agent can switch back to. `undefined` for every
+   *  ordinary agent/skill/customer consult, which never touches this. */
+  mergeFromAssignmentId?: string;
 }
 
 /** Shared by `ConsultBanner`, `ParticipantChip`, and the Participants menu
@@ -509,72 +537,14 @@ function ConsultBanner({
   );
 }
 
-/** Shared by both presentations' Participants menu (see each component's own
- *  Popover+Menu) — the primary party's row reuses the exact same
- *  `isOnHold`/`onToggleHold` this bar already threads everywhere else (its
- *  hold state is one and the same fact whether toggled from the main Hold
- *  button, this menu, or the bulk "hold all" it doubles as once colleagues
- *  exist — see `AgentNextGenPage`'s own `toggleVoiceCallHold`). No entry for
- *  "self" — an agent can't hold or transfer to themselves. Each colleague
- *  gets two rows (hold/resume, then transfer) rather than one row with two
- *  actions, since `Menu`'s own `MenuEntry` shape is a single icon+label+
- *  description+onClick per row — matches this file's existing menu (the
- *  call switcher) rather than reaching for a custom row layout. */
-function buildParticipantMenuItems({
-  primaryName,
-  primaryIsInternalAgent,
-  primaryIsOnHold,
-  primaryHeldSeconds,
-  onTogglePrimaryHold,
-  colleagues,
-  onToggleColleagueHold,
-  onTransferToColleague,
-}: {
-  primaryName: string;
-  primaryIsInternalAgent?: boolean;
-  primaryIsOnHold: boolean;
-  primaryHeldSeconds?: number;
-  onTogglePrimaryHold: () => void;
-  colleagues: CallColleague[];
-  onToggleColleagueHold: (id: string) => void;
-  onTransferToColleague: (id: string) => void;
-}): MenuEntry[] {
-  const rowIcon = (isInternalAgent?: boolean, name?: string) => (
-    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-lyra-bg-surface-container-subtle lyra-body-xs-emphasis text-lyra-fg-secondary" aria-hidden="true">
-      {isInternalAgent ? <Headset className="h-3 w-3" strokeWidth={1.5} /> : getInitials(name)}
-    </span>
-  );
-  const items: MenuEntry[] = [
-    {
-      id: "primary-hold",
-      icon: rowIcon(primaryIsInternalAgent, primaryName),
-      label: `${primaryIsOnHold ? "Resume" : "Hold"} ${primaryName}`,
-      description: primaryIsOnHold ? `On hold ${formatElapsed(primaryHeldSeconds ?? 0)}` : "Connected",
-      descriptionCritical: primaryIsOnHold,
-      onClick: onTogglePrimaryHold,
-    },
-  ];
-  for (const colleague of colleagues) {
-    const colleagueLabel = formatParticipantLabel(colleague.name, colleague.sourceSkillName);
-    items.push({
-      id: `${colleague.id}-hold`,
-      icon: rowIcon(true, colleague.name),
-      label: `${colleague.isOnHold ? "Resume" : "Hold"} ${colleagueLabel}`,
-      description: colleague.isOnHold
-        ? `On hold ${formatElapsed(Math.floor((Date.now() - (colleague.heldSince ?? Date.now())) / 1000))}`
-        : "Connected",
-      descriptionCritical: colleague.isOnHold,
-      onClick: () => onToggleColleagueHold(colleague.id),
-    });
-    items.push({
-      id: `${colleague.id}-transfer`,
-      icon: <ArrowRightLeft className="h-4 w-4 text-lyra-fg-secondary" strokeWidth={1.5} aria-hidden="true" />,
-      label: `Transfer call to ${colleagueLabel}`,
-      onClick: () => onTransferToColleague(colleague.id),
-    });
-  }
-  return items;
-}
+// `buildParticipantMenuItems` (the Participants dropdown's own item list)
+// was removed here per an explicit follow-up — with every participant's
+// Hold/Transfer/Hang Up already always visible on their own pill in the
+// strip above (see `ParticipantChip`'s own doc comment), the Participants
+// button/menu was a second, redundant way to reach the exact same actions.
+// `onTogglePrimaryHold`/`onToggleColleagueHold`/`onTransferToColleague`
+// stay on both bars' own props — `ParticipantChip` still calls them
+// directly, this just removes the menu that used to duplicate them.
 
 /** Shown above the control row in both presentations once video is on (see
  *  `isVideoOn` on both prop interfaces below): the equal-weight agent/
@@ -734,7 +704,12 @@ function CallMediaArea({
         {colleagues.map((colleague) => (
           <div key={colleague.id} className={cn("flex flex-1 flex-col items-center justify-center gap-1.5 rounded-lyra-md", accent.bg)}>
             <span className={cn("flex h-10 w-10 items-center justify-center rounded-full bg-lyra-bg-surface-base lyra-body-md-emphasis", accent.text)}>
-              <Headset className="h-5 w-5" strokeWidth={1.5} />
+              {/* A customer merged in via the Conference button's Customers
+               *  tab gets their own initials here, same as the primary
+               *  party's own tile does — the headset glyph is specifically
+               *  an internal-agent marker (see `CallColleague.isCustomer`'s
+               *  own doc comment), not a generic "extra participant" icon. */}
+              {colleague.isCustomer ? getInitials(colleague.name) : <Headset className="h-5 w-5" strokeWidth={1.5} />}
             </span>
             <span className={cn("lyra-body-xs-emphasis truncate max-w-[90%]", accent.text)}>{colleague.name}</span>
           </div>
@@ -872,6 +847,35 @@ export interface LiveVoiceCallBarProps {
    *  for why a plain two-party call doesn't need this at all. */
   isSelfCameraOff: boolean;
   onToggleSelfCamera: () => void;
+  /** Backs the control row's own "Conference" button (see
+   *  `ConsultTransferButton`, rendered directly in this file now) — adds a
+   *  colleague/skill/customer onto THIS bar's own live call via the exact
+   *  same consult-then-merge flow the case toolbar's copy of that popover
+   *  already runs. Wired by `AgentNextGenPage` straight to
+   *  `startVoiceCallConsult` for `liveVoiceCall.assignmentId` — unlike the
+   *  toolbar's own `onAddColleagueToCall`, there's no "only while this is
+   *  the active assignment" gate needed here, since this bar only ever
+   *  exists for the live call in the first place. */
+  onAddColleagueToCall: (colleague: { id: string; name: string; sourceSkillName?: string }) => void;
+  /** Agent ids already on this call — a pending consult plus any merged
+   *  colleagues — same shape/purpose as `ConsultTransferButtonProps`'s own
+   *  `activeCallAgentIds`, just computed for THIS bar's live call rather
+   *  than gated on "is this the active assignment." Drives the Conference
+   *  popover's persistent "on this call" treatment the same way it does
+   *  from the toolbar. */
+  liveCallAgentIds: Set<string>;
+  /** Backs the Conference popover's own "Active Calls" tab — see
+   *  `ConsultTransferButtonProps.activeCallOptions`'s own doc comment.
+   *  Computed by `AgentNextGenPage` for THIS bar's own live call via its
+   *  `computeActiveCallOptions`. */
+  activeCallOptions: ActiveCallOption[];
+  /** Starts the pre-merge consult for whichever "Active Calls" row the
+   *  agent picked — see `AgentNextGenPage`'s own `startActiveCallMerge`. */
+  onSelectActiveCall: (assignmentId: string) => void;
+  /** Forwarded straight through to the Conference button's own
+   *  `ConsultTransferButtonProps.forceActiveCallsTabSignal` — see that
+   *  prop's doc comment. */
+  forceActiveCallsTabSignal?: number;
   /** Only passed while this bar is floating for a reason the agent could
    *  actually undo right now — they're still looking at this call's own
    *  interaction, but it's floating anyway because they hit Undock, because
@@ -1018,6 +1022,11 @@ export function LiveVoiceCallBar({
   onTransferToColleague,
   isSelfCameraOff,
   onToggleSelfCamera,
+  onAddColleagueToCall,
+  liveCallAgentIds,
+  activeCallOptions,
+  onSelectActiveCall,
+  forceActiveCallsTabSignal,
   onDock,
   onHangUp,
   otherVoiceCalls,
@@ -1031,7 +1040,6 @@ export function LiveVoiceCallBar({
   const [elapsedSeconds, setElapsedSeconds] = useState(() => Math.floor((Date.now() - startedAt) / 1000));
   const [isDragging, setIsDragging] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
-  const [participantsOpen, setParticipantsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const dragOrigin = useRef<{ pointerX: number; pointerY: number; top: number; left: number } | null>(null);
 
@@ -1232,10 +1240,14 @@ export function LiveVoiceCallBar({
             <ParticipantChip
               key={colleague.id}
               label={formatParticipantLabel(colleague.name, colleague.sourceSkillName)}
-              isInternalAgent
+              isInternalAgent={!colleague.isCustomer}
               isOnHold={colleague.isOnHold}
               onToggleHold={() => onToggleColleagueHold(colleague.id)}
-              onTransfer={() => onTransferToColleague(colleague.id)}
+              // Transfer hands the live interaction "to" this colleague —
+              // only a real action for a fellow agent, so a customer
+              // participant doesn't get the icon at all (see
+              // `CallColleague.isCustomer`'s own doc comment).
+              onTransfer={colleague.isCustomer ? undefined : () => onTransferToColleague(colleague.id)}
               onHangUp={() => onDropColleague(colleague.id)}
             />
           ))}
@@ -1366,47 +1378,37 @@ export function LiveVoiceCallBar({
       )}
       </div>
       <div ref={controlsRef} className="flex items-center gap-3">
-      {colleagues.length > 0 && (
-        // Deliberately its own Popover/Menu, not merged into the switcher
-        // above — per an explicit follow-up, "who's on this call" and
-        // "which other call could I switch to" read as two different
-        // questions once conferencing exists, so they get two separate
-        // menus rather than one combined list.
-        <Popover
-          open={participantsOpen}
-          onOpenChange={setParticipantsOpen}
-          placement="top"
-          align="start"
-          // Same z-index fix as the call switcher's `Popover` above, same
-          // reason — see that one's own doc comment.
-          className="z-[9999]"
-          content={
-            <Menu
-              aria-label="Call participants"
-              className="min-w-[220px]"
-              items={buildParticipantMenuItems({
-                primaryName: displayName,
-                primaryIsInternalAgent: isInternalAgentCall,
-                primaryIsOnHold: isOnHold,
-                primaryHeldSeconds: heldSeconds,
-                onTogglePrimaryHold: () => { onTogglePrimaryHold(); setParticipantsOpen(false); },
-                colleagues,
-                onToggleColleagueHold: (id) => { onToggleColleagueHold(id); setParticipantsOpen(false); },
-                onTransferToColleague: (id) => { onTransferToColleague(id); setParticipantsOpen(false); },
-              })}
-            />
-          }
-        >
-          <ActionIconButton
-            size="xl"
-            title={`Participants (${colleagues.length + 2})`}
-            aria-expanded={participantsOpen}
-            className={cn(participantsOpen && "bg-lyra-state-hover")}
-          >
-            <Users className="h-6 w-6" strokeWidth={2} />
-          </ActionIconButton>
-        </Popover>
-      )}
+      {/* "Conference" — always visible (unlike Participants right below,
+       *  which only earns its place once there's already someone to list):
+       *  the whole point is to let the agent bring a colleague, skill, or
+       *  customer onto a plain two-party call, not just manage one that
+       *  already has extra people on it. Renders the exact same
+       *  Favorites/Agents/Skills/Customers popover the case toolbar's own
+       *  Transfer icon does — see `ConsultTransferPopover.tsx`'s own top
+       *  doc comment for why this is one shared component, not two. */}
+      <ConsultTransferButton
+        customerName={displayName}
+        activeChannelType="voice"
+        onAddToCall={onAddColleagueToCall}
+        activeCallAgentIds={liveCallAgentIds}
+        activeCallOptions={activeCallOptions}
+        onSelectActiveCall={onSelectActiveCall}
+        forceActiveCallsTabSignal={forceActiveCallsTabSignal}
+        // Deliberately smaller than the "sm" default even — this is a
+        // secondary action next to Hold/Mute/Mask/Record/Video/Hang Up
+        // (all `size="xl"`, 24px icons), so it should read as clearly
+        // subordinate rather than competing with them for attention.
+        triggerIcon={<UserPlus className="h-5 w-5" strokeWidth={2} />}
+        triggerLabel="Conference"
+        triggerSize="sm"
+        popoverPlacement="top"
+        // Wider than the default 360px — with Customers removed, this
+        // variant is down to 4 tabs (Favorites/Agents/Skills/Active Calls),
+        // but that row still doesn't fit the default width (see
+        // ConsultTransferPopover's own TabList doc comment for the fallback
+        // scroll behavior too).
+        popoverClassName="z-[9999] w-[440px]"
+      />
       <div className="mx-0.5 h-7 w-px bg-lyra-border-subtle" />
       <ActionIconButton
         size="xl"
@@ -1652,6 +1654,16 @@ export interface DockedVoiceControlBarProps {
   onTransferToColleague: (colleagueId: string) => void;
   isSelfCameraOff: boolean;
   onToggleSelfCamera: () => void;
+  /** Same "Conference" button/behavior as `LiveVoiceCallBarProps` — see
+   *  those two props' own doc comments, identical meaning in both
+   *  presentations. */
+  onAddColleagueToCall: (colleague: { id: string; name: string; sourceSkillName?: string }) => void;
+  liveCallAgentIds: Set<string>;
+  /** Same "Active Calls" merge props as `LiveVoiceCallBarProps` — see those
+   *  two props' own doc comments, identical meaning in both presentations. */
+  activeCallOptions: ActiveCallOption[];
+  onSelectActiveCall: (assignmentId: string) => void;
+  forceActiveCallsTabSignal?: number;
   /** Pops this call's controls out to the floating `LiveVoiceCallBar`
    *  without leaving this interaction — always available now that docking
    *  is a deliberate, user-selected state rather than something that just
@@ -1739,6 +1751,11 @@ export function DockedVoiceControlBar({
   onTransferToColleague,
   isSelfCameraOff,
   onToggleSelfCamera,
+  onAddColleagueToCall,
+  liveCallAgentIds,
+  activeCallOptions,
+  onSelectActiveCall,
+  forceActiveCallsTabSignal,
   onUndock,
   onNeededWidthChange,
   onHangUp,
@@ -1747,7 +1764,6 @@ export function DockedVoiceControlBar({
 }: DockedVoiceControlBarProps) {
   const accent = CHANNEL_ACCENT.voice;
   const displayName = isInternalAgentCall ? customerName ?? "Colleague" : customerName || "Customer";
-  const [participantsOpen, setParticipantsOpen] = useState(false);
   // Same continuous 1s tick `LiveVoiceCallBar` runs off its own `startedAt`
   // — kept local to whichever presentation is actually mounted rather than
   // lifted, since `startedAt`/`heldSince` (the only real state) already
@@ -1864,52 +1880,35 @@ export function DockedVoiceControlBar({
           </span>
         </div>
         <div ref={controlsRef} className="flex items-center gap-5">
-        {colleagues.length > 0 && (
-          // Same "separate from the switcher" reasoning as the floating
-          // bar's identical button — see that one's own comment. Wraps a
-          // bare `ActionIconButton` (not `DockedControlButton`) as the
-          // Popover trigger, matching `ConsultTransferButton`'s own
-          // Popover+ActionIconButton pairing: `DockedControlButton` is a
-          // plain, non-forwardRef component, and Radix's `Trigger asChild`
-          // needs its child to actually forward a ref/extra props down to a
-          // real DOM node — the caption span is added manually alongside
-          // instead, to keep this reading as one of the row's icon+caption
-          // buttons like every other one here.
-          <div className="flex flex-col items-center gap-0.5">
-            <Popover
-              open={participantsOpen}
-              onOpenChange={setParticipantsOpen}
-              placement="top"
-              align="start"
-              content={
-                <Menu
-                  aria-label="Call participants"
-                  className="min-w-[220px]"
-                  items={buildParticipantMenuItems({
-                    primaryName: displayName,
-                    primaryIsInternalAgent: isInternalAgentCall,
-                    primaryIsOnHold: isOnHold,
-                    primaryHeldSeconds: heldSeconds,
-                    onTogglePrimaryHold: () => { onTogglePrimaryHold(); setParticipantsOpen(false); },
-                    colleagues,
-                    onToggleColleagueHold: (id) => { onToggleColleagueHold(id); setParticipantsOpen(false); },
-                    onTransferToColleague: (id) => { onTransferToColleague(id); setParticipantsOpen(false); },
-                  })}
-                />
-              }
-            >
-              <ActionIconButton
-                size="xl"
-                title="Participants"
-                aria-expanded={participantsOpen}
-                className={cn(participantsOpen && SELECTED_SLATE)}
-              >
-                <Users className={cn("h-6 w-6", participantsOpen && "text-lyra-fg-inverse")} strokeWidth={2} />
-              </ActionIconButton>
-            </Popover>
-            <span className="lyra-body-xs text-lyra-fg-secondary">Participants</span>
-          </div>
-        )}
+        {/* "Conference" — same always-visible button/behavior as the
+         *  floating bar's own copy (see that one's own doc comment); wrapped
+         *  with a manual caption rather than `DockedControlButton` for the
+         *  same reason the Participants button right below already is —
+         *  `ConsultTransferButton` is itself a self-contained
+         *  Tooltip+Popover+ActionIconButton, not a plain node
+         *  `DockedControlButton` could wrap. */}
+        <div className="flex flex-col items-center gap-0.5">
+          <ConsultTransferButton
+            customerName={displayName}
+            activeChannelType="voice"
+            onAddToCall={onAddColleagueToCall}
+            activeCallAgentIds={liveCallAgentIds}
+            activeCallOptions={activeCallOptions}
+            onSelectActiveCall={onSelectActiveCall}
+            forceActiveCallsTabSignal={forceActiveCallsTabSignal}
+            // Same "clearly secondary, don't compete with the xl controls"
+            // sizing as the floating bar's identical button — see that
+            // one's own comment.
+            triggerIcon={<UserPlus className="h-5 w-5" strokeWidth={2} />}
+            triggerLabel="Conference"
+            triggerSize="sm"
+            popoverPlacement="top"
+            // Same width bump as the floating bar's identical button — see
+            // that one's own comment.
+            popoverClassName="z-[9999] w-[440px]"
+          />
+          <span className="lyra-body-xs text-lyra-fg-secondary">Conference</span>
+        </div>
         <div className="mx-0.5 h-7 w-px bg-lyra-border-subtle" />
         <DockedControlButton title={isOnHold ? "Resume" : "Hold"} selected={isOnHold} tone="red" onClick={onToggleHold}>
           {/* Shape swap, not just color — see the floating bar's identical

@@ -16,9 +16,17 @@ import {
   StatusIcon,
   type ChannelType,
 } from "@nicecxone/lyra-ui";
-import { Route, Phone, UserPlus, ChevronLeft, ChevronRight, Send } from "lucide-react";
+import { Route, Phone, UserPlus, Headset, ChevronLeft, ChevronRight, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { DIRECTORY_AGENTS, DIRECTORY_SKILLS, contactMatchesQuery, type DirectoryAgent, type DirectorySkill } from "@/data/directory";
+import {
+  DIRECTORY_AGENTS,
+  DIRECTORY_SKILLS,
+  DIRECTORY_CUSTOMERS,
+  contactMatchesQuery,
+  type DirectoryAgent,
+  type DirectorySkill,
+  type DirectoryCustomer,
+} from "@/data/directory";
 import type { InternalChatMessage } from "@/data/internalChat";
 import { ConsultTransferIcon } from "@/components/CustomerInteractionPanel";
 
@@ -39,9 +47,26 @@ import { ConsultTransferIcon } from "@/components/CustomerInteractionPanel";
  * Every action (call, transfer, add to interaction) is a stub for now —
  * there's no real transfer/conference backend to wire into yet — logged to
  * the console instead, the same placeholder pattern this app already uses
- * for InternalChatPopover's own onCall and OutcomePanel's onApprove. */
+ * for InternalChatPopover's own onCall and OutcomePanel's onApprove.
+ *
+ * Also the voice control bar's "Conference" entry point (see
+ * `ConsultTransferButtonProps`'s own `triggerIcon`/`triggerLabel`/
+ * `triggerSize`/`popoverPlacement`/`popoverClassName`) — rather than build a
+ * second, parallel modal for "add someone to this call," `LiveVoiceCallBar`/
+ * `DockedVoiceControlBar` render this exact same component with a different
+ * trigger and a Customers tab added (see `CustomerRow` below), so Favorites/
+ * Agents/Skills, search, and the consult-then-merge behavior are identical
+ * from both entry points by construction, not by keeping two copies in
+ * sync.
+ *
+ * The Conference button ALSO gets a fifth tab, "Active Calls" (see
+ * `activeCallOptions`/`onSelectActiveCall` below) — merging in a colleague
+ * who's already connected on their own separate tile, rather than someone
+ * being dialed fresh. Omitted entirely for the toolbar's plain Consult/
+ * Transfer icon, which only ever consults OUT to someone with no live call
+ * of their own. */
 
-type Tab = "favorites" | "agents" | "skills";
+type Tab = "favorites" | "agents" | "skills" | "customers" | "activeCalls";
 type View =
   | { kind: "list" }
   | { kind: "chat"; agentId: string }
@@ -149,6 +174,123 @@ function SkillRow({
           </ActionIconButton>
           <ActionIconButton size="sm" title={`Transfer to ${skill.name}`} onClick={onTransfer}>
             <ConsultTransferIcon strokeWidth={1.5} />
+          </ActionIconButton>
+        </div>
+      }
+    />
+  );
+}
+
+/* ── Customers tab — added for the voice control bar's "Conference" entry
+ *  point (see this file's own top doc comment). Bringing another customer
+ *  onto a live call uses the exact same consult-then-merge flow an agent or
+ *  skill does (`onAddToCall`), so this row calls straight into it like
+ *  `SkillRow` does — no chat drill-down (there's no internal handoff note to
+ *  write for a customer), and no Transfer action (transferring the live
+ *  customer TO another customer isn't a real thing this app models). Dials
+ *  whichever phone number is first on file — a customer with more than one
+ *  (see `directory.ts`'s own multi-number customers) doesn't get its own
+ *  picker here yet; a reasonable follow-up if this sees real use, not
+ *  something asked for now. ── */
+
+/** Same avatar treatment as `AgentAvatar` above, minus the `StatusIcon`
+ *  corner badge — customers have no availability concept, same reasoning as
+ *  `DirectoryPage.tsx`'s own `DirectoryAvatar` when called without one. */
+function CustomerAvatar({ customer, size = AVATAR_SIZE }: { customer: DirectoryCustomer; size?: string }) {
+  return (
+    <div className={cn("flex shrink-0 items-center justify-center rounded-full lyra-body-sm-emphasis", size, customer.avatarClassName)}>
+      {customer.initials}
+    </div>
+  );
+}
+
+function CustomerRow({
+  customer,
+  favorited,
+  onToggleFavorite,
+  onCall,
+}: {
+  customer: DirectoryCustomer;
+  favorited: boolean;
+  onToggleFavorite: () => void;
+  onCall: () => void;
+}) {
+  return (
+    <ListItem
+      className="group/row"
+      leading={<CustomerAvatar customer={customer} />}
+      title={customer.name}
+      subtitle={customer.subtitle}
+      trailing={
+        <div className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+          <FavoriteButton favorited={favorited} onClick={onToggleFavorite} label={customer.name} placement="left" />
+          <ActionIconButton size="sm" title={`Call ${customer.name}`} onClick={onCall}>
+            <Phone className="h-4 w-4" strokeWidth={1.5} />
+          </ActionIconButton>
+        </div>
+      }
+    />
+  );
+}
+
+/* ── Active Calls tab — added for the Conference button's own "merge two
+ *  already-connected calls" case (see this file's own top doc comment).
+ *  Every option here is, by construction, already fully connected on its
+ *  own separate tile — nobody's being dialed, so there's no drill-down/
+ *  ring step, just a direct Merge action, same shape as `SkillRow`/
+ *  `CustomerRow`. ── */
+
+/** Same first+last-initial derivation `LiveVoiceCallBar`'s own `getInitials`
+ *  already uses — small enough to duplicate locally rather than export/
+ *  import across files, matching how that exact logic is already copied in
+ *  a couple of other places in this codebase (see that function's own doc
+ *  comment). */
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0]!.charAt(0).toUpperCase();
+  return (parts[0]!.charAt(0) + parts[parts.length - 1]!.charAt(0)).toUpperCase();
+}
+
+/** One other in-progress voice call this popover's own call could merge
+ *  with — always the OPPOSITE customer/internal type from whichever call
+ *  this popover is currently open for (see `AgentNextGenPage`'s own
+ *  `computeActiveCallOptions`), so `isCustomer` here doubles as "which
+ *  avatar treatment": a customer option gets initials (matching
+ *  `CustomerRow`), an internal agent/skill option gets the same headset
+ *  glyph `ParticipantChip` already uses for that case. */
+export interface ActiveCallOption {
+  assignmentId: string;
+  name: string;
+  isCustomer: boolean;
+  statusLabel: string;
+  /** Red "On hold" treatment, matching hold state everywhere else in this
+   *  app — see `ParticipantChip`'s own doc comment on why color alone still
+   *  isn't the ONLY cue (the label itself already says "On hold"). */
+  statusCritical?: boolean;
+}
+
+function ActiveCallRow({ option, onMerge }: { option: ActiveCallOption; onMerge: () => void }) {
+  return (
+    <ListItem
+      static
+      className="group/row"
+      leading={
+        <span
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-lyra-bg-surface-container-subtle lyra-body-sm-emphasis text-lyra-fg-secondary"
+          aria-hidden="true"
+        >
+          {option.isCustomer ? getInitials(option.name) : <Headset className="h-4 w-4" strokeWidth={1.5} />}
+        </span>
+      }
+      title={option.name}
+      subtitle={
+        <span className={option.statusCritical ? "text-lyra-status-critical-strong" : undefined}>{option.statusLabel}</span>
+      }
+      trailing={
+        <div onClick={(e) => e.stopPropagation()}>
+          <ActionIconButton size="sm" title={`Merge with ${option.name}`} onClick={onMerge}>
+            <UserPlus className="h-4 w-4" strokeWidth={1.5} />
           </ActionIconButton>
         </div>
       }
@@ -517,7 +659,7 @@ export interface ConsultTransferButtonProps {
    *  (not just undefined-checked at the call site) leaves the original stub
    *  behavior untouched for every other case — a digital interaction, or a
    *  voice interaction with no live call right now. */
-  onAddToCall?: (colleague: { id: string; name: string; sourceSkillName?: string }) => void;
+  onAddToCall?: (colleague: { id: string; name: string; sourceSkillName?: string; isCustomer?: boolean }) => void;
   /** The active interaction's current channel — passed straight through to
    *  `ChatHeader`'s own `activeChannelType` to gate Add-to-interaction's
    *  visibility (see `CHANNELS_SUPPORTING_ADD_PERSON`). */
@@ -541,13 +683,120 @@ export interface ConsultTransferButtonProps {
    *  treatment on Phone once the popup stays open after a consult (see
    *  `onCall`'s own doc comment below for why it stays open now). */
   activeCallAgentIds?: Set<string>;
+  /** Controlled, not left as this button's own internal state — per an
+   *  explicit follow-up, the interaction's kebab menu (both the rail card's
+   *  and the center panel's "More options") now has its own "Consult /
+   *  Transfer" item, and clicking it needs to open this exact same popover
+   *  rather than a second, disconnected copy of it. `AgentNextGenPage`
+   *  lifts one boolean for whichever interaction is currently active and
+   *  passes it here AND wires it as the target of both kebabs' menu item —
+   *  same lifted-state pattern `OutcomeButton`'s own `open`/`onOpenChange`
+   *  already uses for the identical reason. Omitting both props (as every
+   *  call site did before this) falls back to the original internal state,
+   *  so nothing else needs to change. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** Overrides the trigger's own icon/label/size and the popover's own
+   *  placement/z-index — used by `LiveVoiceCallBar`/`DockedVoiceControlBar`'s
+   *  "Conference" button, which renders this exact same popover (Favorites/
+   *  Agents/Skills/Customers, full consult-then-merge behavior) from a
+   *  second entry point instead of duplicating any of it. Every existing
+   *  call site (the case toolbar's own Transfer icon) omits all of these
+   *  and keeps today's exact look: `ConsultTransferIcon`, "Consult /
+   *  Transfer" label, `size="sm"`, bottom placement, no extra popover
+   *  class. */
+  triggerIcon?: React.ReactNode;
+  triggerLabel?: string;
+  triggerSize?: "sm" | "xl";
+  popoverPlacement?: "bottom" | "top";
+  /** Appended (via `cn`) to the popover's own fixed `w-[360px]` — the voice
+   *  bar's own containing stack sits at `z-[9998]` (see that file's own doc
+   *  comment on why), which paints over an ordinarily-`z-50` portaled
+   *  popover the same way it did for the bar's existing switcher/
+   *  Participants menus; those pass `z-[9999]` for the same reason this
+   *  prop exists. */
+  popoverClassName?: string;
+  /** Other in-progress voice calls eligible to merge with THIS one — only
+   *  ever passed from the voice control bar's own Conference button (see
+   *  `LiveVoiceCallBar`/`DockedVoiceControlBar`), never the case toolbar's
+   *  plain Consult/Transfer icon (that one only ever consults OUT to
+   *  someone with no live call of their own). Omitted entirely hides the
+   *  "Active Calls" tab; an empty array still shows the tab with its own
+   *  "No other active calls" empty state. Always the OPPOSITE customer/
+   *  internal type from whichever call this popover is currently open for
+   *  — see `AgentNextGenPage`'s own `computeActiveCallOptions` — customer-
+   *  to-customer merging isn't supported. */
+  activeCallOptions?: ActiveCallOption[];
+  /** Starts the SAME pre-merge consult (banner, Cancel/Merge) an Agents/
+   *  Skills/Customers pick already does — see `AgentNextGenPage`'s own
+   *  `startActiveCallMerge`, which also handles "customer absorbs, the
+   *  other tile folds away" once Merge is actually clicked. */
+  onSelectActiveCall?: (assignmentId: string) => void;
+  /** Bumped to any new value to force this popover open and jump straight to
+   *  the Active Calls tab — used by the assignment rail's and case toolbar's
+   *  "Merge into..." kebab item for the rare case where more than one
+   *  customer call is eligible (see `AgentNextGenPage`'s own
+   *  `handleMergeIntoFromKebab`); a single unambiguous target instead goes
+   *  straight to the consult banner without ever opening this popover, so
+   *  this prop only ever fires for the ambiguous case. Only meaningful
+   *  alongside `activeCallOptions` (the Conference button variant) — the
+   *  toolbar's plain Consult/Transfer icon never passes this. */
+  forceActiveCallsTabSignal?: number;
 }
 
-export function ConsultTransferButton({ customerName, issueSummary, onAddToCall, activeChannelType, onStartAgentCall, activeCallAgentIds }: ConsultTransferButtonProps) {
-  const [open, setOpen] = useState(false);
+export function ConsultTransferButton({
+  customerName,
+  issueSummary,
+  onAddToCall,
+  activeChannelType,
+  onStartAgentCall,
+  activeCallAgentIds,
+  open: controlledOpen,
+  onOpenChange,
+  triggerIcon,
+  triggerLabel = "Consult / Transfer",
+  triggerSize = "sm",
+  popoverPlacement = "bottom",
+  popoverClassName,
+  activeCallOptions,
+  onSelectActiveCall,
+  forceActiveCallsTabSignal,
+}: ConsultTransferButtonProps) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  // Same controlled-with-uncontrolled-fallback shape as `Select`'s own
+  // `value`/`onValueChange` elsewhere in this app — `open` isn't just a
+  // convenience default here, it's what keeps every OTHER existing call
+  // site (which never passed `open`) working exactly as before.
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = (next: boolean) => {
+    if (controlledOpen === undefined) setInternalOpen(next);
+    onOpenChange?.(next);
+  };
   const [tab, setTab] = useState<Tab>("agents");
   const [view, setView] = useState<View>({ kind: "list" });
+  // Forces open + Active Calls whenever the signal changes (including on
+  // first mount with a value already set — this component is freshly
+  // mounted the moment the kebab's merge action makes its own call live, so
+  // catching that initial render matters just as much as a later bump).
+  // Deliberately keyed only on the signal itself, not on `open`/`tab` — a
+  // kebab click should always win, even if the popover happened to already
+  // be open on some other tab.
+  useEffect(() => {
+    if (forceActiveCallsTabSignal === undefined) return;
+    setTab("activeCalls");
+    setOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forceActiveCallsTabSignal]);
   const [search, setSearch] = useState("");
+  // Clears the shared search box on every tab switch — matches
+  // `DirectoryPage.tsx`'s own `handleTabChange`, the app's existing
+  // convention for a multi-tab search: a leftover "smith" query from Agents
+  // shouldn't silently carry over and hide everything the moment the agent
+  // taps Customers.
+  const handleTabChange = (next: Tab) => {
+    setTab(next);
+    setSearch("");
+  };
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
   const [threads, setThreads] = useState<Record<string, InternalChatMessage[]>>({});
   const [draft, setDraft] = useState("");
@@ -641,10 +890,34 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall,
   const activeAgent = view.kind === "chat" ? DIRECTORY_AGENTS.find((a) => a.id === view.agentId) : undefined;
   const activeSkillCall = view.kind === "callingSkill" ? DIRECTORY_SKILLS.find((s) => s.id === view.skillId) : undefined;
 
+  // One shared search input drives all three searchable tabs — per an
+  // explicit follow-up, adding Customers shouldn't mean a fourth,
+  // differently-behaved search box. `contactMatchesQuery` already doubles as
+  // a harmless name-only match for a skill (no `phoneNumbers` field to check
+  // against), exactly the same reuse `DirectoryPage.tsx` already leans on
+  // for its own Skills/Teams tabs — not a new capability, just applied here
+  // too instead of leaving Skills unfiltered like before.
   const filteredAgents = DIRECTORY_AGENTS.filter((a) => contactMatchesQuery(a, search));
+  const filteredSkills = DIRECTORY_SKILLS.filter((s) => contactMatchesQuery(s, search));
+  const filteredCustomers = DIRECTORY_CUSTOMERS.filter((c) => contactMatchesQuery(c, search));
+
+  // Wired to the same `onAddToCall`/`log` fallback both `SkillRow`'s onCall
+  // and `ChatHeader`'s own Phone action already use — a customer picked here
+  // goes straight into the live consult-then-merge flow, no drill-down step
+  // first (see `CustomerRow`'s own top doc comment for why). Shared by the
+  // Customers tab and the Favorites aggregation below so the two don't drift.
+  const handleCallCustomer = (customer: DirectoryCustomer) => {
+    // `isCustomer: true` is what tells `CallColleague`/`ParticipantChip`
+    // this participant should read with their own initials (not the
+    // internal-agent headset glyph) and skip the Transfer icon entirely —
+    // see that field's own doc comment in LiveVoiceCallBar.tsx.
+    if (onAddToCall) onAddToCall({ id: customer.id, name: customer.name, isCustomer: true });
+    else log("Call", customer.name);
+  };
 
   const favoriteAgents = DIRECTORY_AGENTS.filter((a) => favoriteIds.has(a.id));
   const favoriteSkills = DIRECTORY_SKILLS.filter((s) => favoriteIds.has(s.id));
+  const favoriteCustomers = DIRECTORY_CUSTOMERS.filter((c) => favoriteIds.has(c.id));
 
   /* ── Header (fixed) ── */
   const header =
@@ -710,14 +983,43 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall,
       />
     ) : (
       <div className="flex flex-col gap-2 px-3 pb-2 pt-3">
-        <p className="lyra-heading-md text-lyra-fg-default">Consult / Transfer</p>
-        <TabList>
-          <Tab active={tab === "favorites"} onClick={() => setTab("favorites")}>Favorites</Tab>
-          <Tab active={tab === "agents"} onClick={() => setTab("agents")}>Agents</Tab>
-          <Tab active={tab === "skills"} onClick={() => setTab("skills")}>Skills</Tab>
-        </TabList>
-        {tab === "agents" && (
-          <SearchInput value={search} onValueChange={setSearch} placeholder="Search agents" />
+        <p className="lyra-heading-md text-lyra-fg-default">{triggerLabel}</p>
+        {/* The Conference variant's 5th tab ("Active Calls") pushes this row
+         *  past a comfortable fit at the default 360px popover width — see
+         *  `ConsultTransferButtonProps.popoverClassName`'s own doc comment,
+         *  which now widens the Conference button's popover specifically to
+         *  cover the common case. `overflow-x-auto` here is the fallback for
+         *  anything that still doesn't fit (a narrower window, a longer
+         *  future tab label) — without it the row would silently spill past
+         *  the popover's right edge instead of scrolling into view. */}
+        <div className="overflow-x-auto">
+          <TabList className="w-max min-w-full">
+            <Tab active={tab === "favorites"} onClick={() => handleTabChange("favorites")}>Favorites</Tab>
+            <Tab active={tab === "agents"} onClick={() => handleTabChange("agents")}>Agents</Tab>
+            <Tab active={tab === "skills"} onClick={() => handleTabChange("skills")}>Skills</Tab>
+            {/* Customers tab is toolbar-only now — per an explicit follow-up,
+             *  dialing another customer into an already-live call isn't a
+             *  supported scenario here (see the "no three-way customer
+             *  conference" rule `computeActiveCallOptions` already enforces
+             *  for the Active Calls merge path), so the Conference button
+             *  variant (the only one that ever passes `activeCallOptions`)
+             *  hides it entirely rather than offering an action that leads
+             *  nowhere. The plain toolbar Consult/Transfer icon still shows
+             *  it — that one only ever consults OUT, never conferences an
+             *  already-connected call. */}
+            {activeCallOptions === undefined && (
+              <Tab active={tab === "customers"} onClick={() => handleTabChange("customers")}>Customers</Tab>
+            )}
+            {activeCallOptions !== undefined && (
+              <Tab active={tab === "activeCalls"} onClick={() => handleTabChange("activeCalls")}>Active Calls</Tab>
+            )}
+          </TabList>
+        </div>
+        {/* One search box, shared by every tab that's actually searchable
+         *  (not Favorites — that's already a short, pre-filtered list) — see
+         *  `filteredAgents`/`filteredSkills`/`filteredCustomers` above. */}
+        {(tab === "agents" || tab === "skills" || tab === "customers") && (
+          <SearchInput value={search} onValueChange={setSearch} placeholder={`Search ${tab}`} />
         )}
       </div>
     );
@@ -759,30 +1061,81 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall,
   } else if (tab === "skills") {
     content = (
       <div className="flex flex-col pb-2">
-        {DIRECTORY_SKILLS.map((skill) => (
-          <SkillRow
-            key={skill.id}
-            skill={skill}
-            favorited={favoriteIds.has(skill.id)}
-            onToggleFavorite={() => toggleFavorite(skill.id)}
-            onCall={() => setView({ kind: "callingSkill", skillId: skill.id })}
-            onTransfer={() => { log("Transfer to skill", skill.name); resetAndClose(); }}
-          />
-        ))}
+        {filteredSkills.length === 0 ? (
+          <p className="px-4 py-6 text-center lyra-body-sm text-lyra-fg-secondary">No skills found.</p>
+        ) : (
+          filteredSkills.map((skill) => (
+            <SkillRow
+              key={skill.id}
+              skill={skill}
+              favorited={favoriteIds.has(skill.id)}
+              onToggleFavorite={() => toggleFavorite(skill.id)}
+              onCall={() => setView({ kind: "callingSkill", skillId: skill.id })}
+              onTransfer={() => { log("Transfer to skill", skill.name); resetAndClose(); }}
+            />
+          ))
+        )}
+      </div>
+    );
+  } else if (tab === "customers") {
+    content = (
+      <div className="flex flex-col pb-2">
+        {filteredCustomers.length === 0 ? (
+          <p className="px-4 py-6 text-center lyra-body-sm text-lyra-fg-secondary">No customers found.</p>
+        ) : (
+          filteredCustomers.map((customer) => (
+            <CustomerRow
+              key={customer.id}
+              customer={customer}
+              favorited={favoriteIds.has(customer.id)}
+              onToggleFavorite={() => toggleFavorite(customer.id)}
+              onCall={() => handleCallCustomer(customer)}
+            />
+          ))
+        )}
+      </div>
+    );
+  } else if (tab === "activeCalls") {
+    content = (
+      <div className="flex flex-col pb-2">
+        {!activeCallOptions || activeCallOptions.length === 0 ? (
+          <p className="px-4 py-6 text-center lyra-body-sm text-lyra-fg-secondary">No other active calls to merge with.</p>
+        ) : (
+          activeCallOptions.map((option) => (
+            <ActiveCallRow
+              key={option.assignmentId}
+              option={option}
+              onMerge={() => {
+                // The actual Cancel/Merge confirmation lives on the bar's
+                // own `ConsultBanner` once the pre-merge consult starts
+                // (see `onSelectActiveCall`'s own doc comment) — this
+                // popover's own job ends the moment a target is picked, so
+                // it closes instead of leaving a now-stale list open behind
+                // that banner.
+                onSelectActiveCall?.(option.assignmentId);
+                resetAndClose();
+              }}
+            />
+          ))
+        )}
       </div>
     );
   } else {
-    // Favorites — agents and skills can each be favorited from their own
-    // tab; this aggregates both rather than picking one kind, since a
-    // consult/transfer target can be either.
+    // Favorites — agents, skills, and now customers can each be favorited
+    // from their own tab; this aggregates all three rather than picking one
+    // kind, since a consult/transfer/conference target can be any of them.
+    // Section headers only render once more than one kind is actually
+    // present — a single-kind favorites list doesn't need a redundant label
+    // repeating what the empty Favorites tab already implies.
+    const favoriteGroupCount = [favoriteAgents, favoriteSkills, favoriteCustomers].filter((g) => g.length > 0).length;
     content = (
       <div className="flex flex-col pb-2">
-        {favoriteAgents.length === 0 && favoriteSkills.length === 0 && (
+        {favoriteGroupCount === 0 && (
           <p className="px-4 py-6 text-center lyra-body-sm text-lyra-fg-secondary">No favorites yet.</p>
         )}
         {favoriteAgents.length > 0 && (
           <>
-            {favoriteSkills.length > 0 && (
+            {favoriteGroupCount > 1 && (
               <p className="px-4 pb-1 pt-2 lyra-body-xs-emphasis uppercase tracking-wide text-lyra-fg-secondary">Agents</p>
             )}
             {favoriteAgents.map((agent) => (
@@ -798,7 +1151,7 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall,
         )}
         {favoriteSkills.length > 0 && (
           <>
-            {favoriteAgents.length > 0 && (
+            {favoriteGroupCount > 1 && (
               <p className="px-4 pb-1 pt-3 lyra-body-xs-emphasis uppercase tracking-wide text-lyra-fg-secondary">Skills</p>
             )}
             {favoriteSkills.map((skill) => (
@@ -809,6 +1162,22 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall,
                 onToggleFavorite={() => toggleFavorite(skill.id)}
                 onCall={() => setView({ kind: "callingSkill", skillId: skill.id })}
                 onTransfer={() => { log("Transfer to skill", skill.name); resetAndClose(); }}
+              />
+            ))}
+          </>
+        )}
+        {favoriteCustomers.length > 0 && (
+          <>
+            {favoriteGroupCount > 1 && (
+              <p className="px-4 pb-1 pt-3 lyra-body-xs-emphasis uppercase tracking-wide text-lyra-fg-secondary">Customers</p>
+            )}
+            {favoriteCustomers.map((customer) => (
+              <CustomerRow
+                key={customer.id}
+                customer={customer}
+                favorited
+                onToggleFavorite={() => toggleFavorite(customer.id)}
+                onCall={() => handleCallCustomer(customer)}
               />
             ))}
           </>
@@ -832,32 +1201,34 @@ export function ConsultTransferButton({ customerName, issueSummary, onAddToCall,
   // re-triggered by pointer events bubbling up from inside the portaled
   // content. Same pattern InternalChatPopover's trigger already uses.
   return (
-    <Tooltip content="Consult / Transfer" placement="bottom" asLabel>
+    <Tooltip content={triggerLabel} placement={popoverPlacement} asLabel>
       <span className="inline-flex">
         <Popover
           open={open}
           onOpenChange={(next) => (next ? setOpen(true) : resetAndClose())}
-          placement="bottom"
+          placement={popoverPlacement}
           align="start"
           sideOffset={10}
           avoidCollisions={false}
           maxWidth="360px"
           maxHeight="520px"
-          className="w-[360px]"
+          className={cn("w-[360px]", popoverClassName)}
           header={header}
           footer={footer}
           content={content}
         >
           <ActionIconButton
-            size="sm"
-            aria-label="Consult / Transfer"
+            size={triggerSize}
+            aria-label={triggerLabel}
             aria-expanded={open}
             className={cn(open && "bg-lyra-state-hover")}
           >
-            {/* 4px larger than this icon's default (h-4 w-4), per an
-             *  explicit follow-up — this toolbar's Transfer and Outcome
-             *  icons together, next to the case subject/ID/status pill. */}
-            <ConsultTransferIcon strokeWidth={2} className="h-5 w-5" />
+            {triggerIcon ?? (
+              // 4px larger than this icon's default (h-4 w-4), per an
+              // explicit follow-up — this toolbar's Transfer and Outcome
+              // icons together, next to the case subject/ID/status pill.
+              <ConsultTransferIcon strokeWidth={2} className="h-5 w-5" />
+            )}
           </ActionIconButton>
         </Popover>
       </span>

@@ -882,6 +882,23 @@ export interface InteractionInfoBarProps {
    *  `open`/`onOpenChange` doc comment. */
   outcomeOpen: boolean;
   onOutcomeOpenChange: (open: boolean) => void;
+  /** Controlled (lifted to `AgentNextGenPage`) rather than left as
+   *  `ConsultTransferButton`'s own internal state — see that component's
+   *  own `open`/`onOpenChange` doc comment. Also the target of this bar's
+   *  own kebab's "Consult / Transfer" item (below) and the assignment
+   *  rail's identical item on the same interaction, so all three open the
+   *  exact same popover instead of three disconnected copies. */
+  consultTransferOpen: boolean;
+  onConsultTransferOpenChange: (open: boolean) => void;
+  /** A single extra kebab entry — "Merge into [Name]'s call" — spliced into
+   *  the voice channel's default menu (right after "Consult / Transfer")
+   *  when this interaction's own call is an agent/skill call with a live
+   *  customer call somewhere else to fold into. `undefined` when there's
+   *  nothing eligible (a customer's own interaction never gets this entry —
+   *  see `AgentNextGenPage`'s own `getMergeCallMenuEntry`, which computes
+   *  this once and hands the same object to both the rail's per-tile kebab
+   *  and this toolbar kebab). */
+  mergeCallMenuEntry?: MenuEntry;
   /** Fired when the agent clicks "Approve & Save" in the Outcome form —
    *  same dismiss action `onDismissCurrentChannel` triggers from the
    *  kebab's "Unassign & Dismiss" (removes just this channel, or the whole
@@ -909,6 +926,9 @@ export function InteractionInfoBar({
   outcomeOpen,
   onOutcomeOpenChange,
   onApproveOutcome,
+  consultTransferOpen,
+  onConsultTransferOpenChange,
+  mergeCallMenuEntry,
 }: InteractionInfoBarProps) {
   return (
     <div className="flex items-center gap-3 border-b border-lyra-border-subtle px-6 py-2.5 lyra-body-sm">
@@ -926,6 +946,8 @@ export function InteractionInfoBar({
           activeChannelType={currentChannelType}
           onStartAgentCall={onStartAgentCall}
           activeCallAgentIds={activeCallAgentIds}
+          open={consultTransferOpen}
+          onOpenChange={onConsultTransferOpenChange}
         />
         <OutcomeButton
           customerName={customerName ?? "this customer"}
@@ -937,8 +959,16 @@ export function InteractionInfoBar({
           <KebabMenuButton
             items={
               currentChannelType === "voice"
-                ? buildVoiceMenuItems(onDismissCurrentChannel)
-                : buildDigitalMenuItems(onDismissCurrentChannel)
+                ? (() => {
+                    const base = buildVoiceMenuItems(onDismissCurrentChannel, () => onConsultTransferOpenChange(true));
+                    // Inserted right after "Consult / Transfer" (index 1) —
+                    // both are call-routing actions, so they read naturally
+                    // grouped together rather than tacked on at the end.
+                    return mergeCallMenuEntry
+                      ? [...base.slice(0, 2), mergeCallMenuEntry, ...base.slice(2)]
+                      : base;
+                  })()
+                : buildDigitalMenuItems(onDismissCurrentChannel, () => onConsultTransferOpenChange(true))
             }
             ariaLabel={`More options for ${CHANNEL_TYPE_META[currentChannelType].label}`}
           />
