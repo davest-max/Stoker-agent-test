@@ -14,9 +14,13 @@ import {
   AiSparkleIcon,
   CHANNEL_ACCENT,
   StatusIcon,
+  PhoneInput,
+  PHONE_COUNTRIES,
+  isPhoneNumberComplete,
   type ChannelType,
+  type PhoneValue,
 } from "@nicecxone/lyra-ui";
-import { Route, Phone, UserPlus, Headset, ChevronLeft, ChevronRight, Send } from "lucide-react";
+import { Route, Phone, UserPlus, Headset, ChevronLeft, ChevronRight, Send, Grid3x3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   DIRECTORY_AGENTS,
@@ -726,16 +730,30 @@ export function ConsultTransferButton({
   };
   const [tab, setTab] = useState<Tab>("agents");
   const [view, setView] = useState<View>({ kind: "list" });
+  // Dial Pad is a mode switch (swaps header+content for a phone field),
+  // orthogonal to `tab` rather than a tab of its own — Conference-only
+  // (see the `activeCallOptions !== undefined` gate on its own shortcut
+  // button below), same "quick-access button, not a tab" shape New
+  // Outbound's own Dial Pad uses (see that file's own `dialPadActive`).
+  const [dialPadActive, setDialPadActive] = useState(false);
+  // Same `PhoneValue` shape `PhoneInput` uses everywhere else. Not reset on
+  // tab change (only on `resetAndClose`/a successful dial) — same "leave it
+  // as the agent left it" behavior New Outbound's own dial pad field gets.
+  const [dialpadPhone, setDialpadPhone] = useState<PhoneValue>({
+    countryCode: PHONE_COUNTRIES[0].code,
+    number: "",
+  });
   // Forces open + Active Calls whenever the signal changes (including on
   // first mount with a value already set — this component is freshly
   // mounted the moment the kebab's merge action makes its own call live, so
   // catching that initial render matters just as much as a later bump).
   // Deliberately keyed only on the signal itself, not on `open`/`tab` — a
   // kebab click should always win, even if the popover happened to already
-  // be open on some other tab.
+  // be open on some other tab (or mid-dial).
   useEffect(() => {
     if (forceActiveCallsTabSignal === undefined) return;
     setTab("activeCalls");
+    setDialPadActive(false);
     setOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forceActiveCallsTabSignal]);
@@ -744,9 +762,13 @@ export function ConsultTransferButton({
   // `DirectoryPage.tsx`'s own `handleTabChange`, the app's existing
   // convention for a multi-tab search: a leftover "smith" query from Agents
   // shouldn't silently carry over and hide everything the moment the agent
-  // taps Skills.
+  // taps Skills. Also backs out of Dial Pad mode — switching tabs is a
+  // clear enough "never mind" that the half-dialed number shouldn't linger
+  // as the visible screen (the digits themselves are kept, though — see
+  // `dialpadPhone`'s own doc comment).
   const handleTabChange = (next: Tab) => {
     setTab(next);
+    setDialPadActive(false);
     setSearch("");
   };
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
@@ -768,6 +790,8 @@ export function ConsultTransferButton({
     setOpen(false);
     setView({ kind: "list" });
     setSearch("");
+    setDialPadActive(false);
+    setDialpadPhone((prev) => ({ ...prev, number: "" }));
   };
 
   // Simulates a skill's ring→answer routing: picks a random currently-
@@ -854,8 +878,50 @@ export function ConsultTransferButton({
   const favoriteAgents = DIRECTORY_AGENTS.filter((a) => favoriteIds.has(a.id));
   const favoriteSkills = DIRECTORY_SKILLS.filter((s) => favoriteIds.has(s.id));
 
+  // Dial Pad — same per-country digit-count validation `PhoneInput` already
+  // uses internally for its own error state, reused here to gate the "Dial
+  // Number" button (matches New Outbound's own dial pad group). No
+  // "possible match" suggestion or skill selector like New Outbound's own
+  // dial pad has — those exist there because it can start a brand-new
+  // outbound interaction with its own case/skill; this one only ever adds
+  // someone to a call already in progress, so neither applies.
+  const dialpadCountry = PHONE_COUNTRIES.find((c) => c.code === dialpadPhone.countryCode) ?? PHONE_COUNTRIES[0];
+  const isDialpadNumberValid = isPhoneNumberComplete(dialpadPhone.number, dialpadCountry);
+
+  // Dials whatever's in `dialpadPhone` straight into the live call — same
+  // `onAddToCall` consult-then-merge flow an Agent/Skill pick already
+  // starts (see `ChatHeader`'s own `onCall` above), just with no directory
+  // identity behind it. Reads as a colleague (headset icon, Transfer
+  // available) rather than a customer once connected — see `CallColleague
+  // .isCustomer`'s own doc comment in LiveVoiceCallBar.tsx — since there's
+  // no way to know a raw dialed number is actually a customer. Deliberately
+  // does NOT `resetAndClose()` when it fires (same reasoning as every other
+  // `onAddToCall` call site in this file: the agent watches it connect and
+  // closes the popover themselves), it just backs out of Dial Pad mode back
+  // to the tab list.
+  const handleDialNumber = () => {
+    if (!isDialpadNumberValid) return;
+    const fullNumber = `${dialpadCountry.dial}${dialpadPhone.number}`;
+    if (onAddToCall) onAddToCall({ id: `dial-${fullNumber}`, name: fullNumber });
+    else log("Call", fullNumber);
+    setDialPadActive(false);
+    setDialpadPhone((prev) => ({ ...prev, number: "" }));
+  };
+
   /* ── Header (fixed) ── */
-  const header =
+  const header = dialPadActive ? (
+      <div className="flex items-center gap-2 border-b border-lyra-border-subtle px-3 py-2.5">
+        <button
+          type="button"
+          onClick={() => setDialPadActive(false)}
+          aria-label="Back to list"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lyra-sm text-lyra-fg-secondary transition-colors hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus"
+        >
+          <ChevronLeft className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
+        </button>
+        <p className="lyra-body-sm-emphasis text-lyra-fg-default">Dial Pad</p>
+      </div>
+    ) :
     view.kind === "callingSkill" && activeSkillCall ? (
       <SkillCallHeader
         skill={activeSkillCall}
@@ -943,12 +1009,58 @@ export function ConsultTransferButton({
         {(tab === "agents" || tab === "skills") && (
           <SearchInput value={search} onValueChange={setSearch} placeholder={`Search ${tab}`} />
         )}
+        {/* Quick-access shortcut into Dial Pad mode — Conference-only (same
+         *  `activeCallOptions !== undefined` gate as the Active Calls tab):
+         *  the plain toolbar Consult/Transfer icon only ever consults OUT to
+         *  someone already in the directory, so a raw number has nowhere
+         *  useful to go there. Sits below the tabs rather than inside any one
+         *  of them so it's reachable regardless of which tab the agent is
+         *  currently on — mirrors New Outbound's own "Dial Pad" shortcut
+         *  under its search field, just always-visible here instead of
+         *  root-screen-only, since there's no single "root" tab to anchor it
+         *  to. */}
+        {activeCallOptions !== undefined && (
+          <button
+            type="button"
+            onClick={() => setDialPadActive(true)}
+            className="flex items-center gap-2 self-start lyra-body-sm text-lyra-fg-secondary hover:text-lyra-fg-default transition-colors"
+          >
+            <Grid3x3 className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
+            Dial Pad
+          </button>
+        )}
       </div>
     );
 
   /* ── Content (scrollable) ── */
   let content: React.ReactNode;
-  if (view.kind === "callingSkill" && activeSkillCall) {
+  if (dialPadActive) {
+    content = (
+      <div
+        className="flex flex-col gap-3 p-4"
+        onKeyDown={(e) => {
+          // PhoneInput has no onKeyDown/onSubmit prop of its own — caught
+          // here via ordinary DOM bubbling from its underlying <input>, same
+          // as New Outbound's own identical dial pad field.
+          if (e.key === "Enter") {
+            e.preventDefault();
+            handleDialNumber();
+          }
+        }}
+      >
+        {/* No `placeholder` override — PhoneInput's own per-country example
+         *  is more useful than fixed generic text. `dropdownClassName`: the
+         *  country dropdown is a Popover nested inside this popover's own
+         *  stack — same `z-[9999]`-and-above tier `popoverClassName` already
+         *  needs to clear the voice bar's own `z-[9998]` stack (see that
+         *  prop's own doc comment). */}
+        <PhoneInput value={dialpadPhone} onChange={setDialpadPhone} dropdownClassName="z-[10000]" />
+        <Button variant="default" className="w-full" disabled={!isDialpadNumberValid} onClick={handleDialNumber}>
+          Dial Number
+        </Button>
+      </div>
+    );
+  } else if (view.kind === "callingSkill" && activeSkillCall) {
     content = (
       <SkillCallContent skill={activeSkillCall} phase={skillCallAgent ? "connected" : "ringing"} agent={skillCallAgent} />
     );
