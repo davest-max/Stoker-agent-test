@@ -27,7 +27,7 @@ import {
 import { Plus, ChevronLeft, ChevronRight, X, User, Headset, Route, UsersRound, Building2, Grid3x3, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CONTACT_CHANNEL_ORDER, CONTACT_CHANNEL_ICON, CONTACT_CHANNEL_LABEL } from "@/components/DirectoryPage";
-import { contactMatchesQuery } from "@/data/directory";
+import { contactMatchesQuery, DIRECTORY_CUSTOMERS } from "@/data/directory";
 
 /* ── NewOutboundPopover ──
  * Local replacement for lyra-ui's `CreateNew` (outbound flow), built to the
@@ -1072,19 +1072,38 @@ export function NewOutboundPopover({ title = "New Outbound", expanded = false, o
    *  at least one match, in `outbound.groups` order. Only meaningful while
    *  there's a query — see the `content` branch below, which shows the
    *  plain category title-row list instead whenever `query` is empty.
-   *  Plain computation, not memoized — `outbound.groups` is small enough
-   *  that it doesn't matter. */
+   *  Plain computation, not memoized — `outbound.groups`/`DIRECTORY_CUSTOMERS`
+   *  are small enough that it doesn't matter. */
   const sections = query
-    ? outbound.groups
-        .map((g) => ({
-          group: g,
-          // Matches by phone number too (see contactMatchesQuery) — the
-          // search box's own placeholder already promises "Enter phone,
-          // email or search term", so this closes a real gap rather than
-          // adding new UI.
-          contacts: contactsForGroup(g).filter((c) => contactMatchesQuery(c, search)),
-        }))
-        .filter((section) => section.contacts.length > 0)
+    ? [
+        ...outbound.groups
+          .map((g) => ({
+            group: g,
+            // Matches by phone number too (see contactMatchesQuery) — the
+            // search box's own placeholder already promises "Enter phone,
+            // email or search term", so this closes a real gap rather than
+            // adding new UI.
+            contacts: contactsForGroup(g).filter((c) => contactMatchesQuery(c, search)),
+          }))
+          .filter((section) => section.contacts.length > 0),
+        // Customers are deliberately NOT one of `outbound.groups` — New
+        // Outbound is for reaching a colleague/skill/team, not the customer
+        // already on the interaction, so there's no "Customers" tile on the
+        // browse root. But per an explicit follow-up, a search that happens
+        // to match one by name/phone should still surface them here rather
+        // than only ever being reachable from the Directory's own Customers
+        // tab — appended last so an agent/skill/team match (this flow's
+        // actual purpose) always sorts above it. Reuses `renderContactRow`/
+        // `ContactAvatar` as-is (see `CONTACT_KIND_ICON`'s own "customer"
+        // entry) — no special-casing needed, a customer contact is exactly
+        // as clickable/callable here as any other.
+        ...(() => {
+          const customerMatches = DIRECTORY_CUSTOMERS.filter((c) => contactMatchesQuery(c, search));
+          return customerMatches.length > 0
+            ? [{ group: { id: "customers", label: "Customers" }, contacts: customerMatches }]
+            : [];
+        })(),
+      ]
     : [];
 
   const noMatches = query.length > 0 && sections.length === 0;

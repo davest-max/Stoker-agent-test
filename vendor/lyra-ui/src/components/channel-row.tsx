@@ -155,12 +155,22 @@ export interface InteractionChannel {
  * card level rather than something a channel row decides on its own. A
  * `menuItems` override on `InteractionChannel` still replaces this whole
  * list, same as before — the override is the consumer's responsibility to
- * wire up, `onDismiss` only ever applies to the *default* menu. */
+ * wire up, `onDismiss` only ever applies to the *default* menu.
+ *
+ * `onConsultTransfer` follows the same idea for the "Consult / Transfer"
+ * item, which used to have no `onClick` at all (a dead menu entry) — per an
+ * explicit follow-up, it now opens the exact same Consult/Transfer flow a
+ * dedicated Consult/Transfer button elsewhere on the same interaction would
+ * (that button's own popover being lifted to a controlled `open` state is
+ * how a consumer makes the two open the same thing — see
+ * `ConsultTransferButton`'s own doc comment in a consumer app). Every
+ * channel row on one card shares one interaction, so all of them wire this
+ * to the same callback regardless of which row's kebab it's clicked from. */
 
-export function buildDigitalMenuItems(onDismiss?: () => void): MenuEntry[] {
+export function buildDigitalMenuItems(onDismiss?: () => void, onConsultTransfer?: () => void): MenuEntry[] {
   return [
     { id: "unassign-dismiss", label: "Unassign & Dismiss", icon: <TriangleAlert className="h-4 w-4" strokeWidth={1.5} />, onClick: onDismiss },
-    { id: "consult-transfer", label: "Consult / Transfer", icon: <ConsultTransferIcon /> },
+    { id: "consult-transfer", label: "Consult / Transfer", icon: <ConsultTransferIcon />, onClick: onConsultTransfer },
     { id: "outcome", label: "Outcome", icon: <CircleCheckBig className="h-4 w-4 text-lyra-status-info-strong" strokeWidth={1.5} /> },
     { id: "send-transcript", label: "Send Transcript", icon: <Send className="h-4 w-4" strokeWidth={1.5} /> },
     { id: "download-transcript", label: "Download Transcript", icon: <FileDown className="h-4 w-4" strokeWidth={1.5} /> },
@@ -168,10 +178,10 @@ export function buildDigitalMenuItems(onDismiss?: () => void): MenuEntry[] {
   ];
 }
 
-export function buildVoiceMenuItems(onDismiss?: () => void): MenuEntry[] {
+export function buildVoiceMenuItems(onDismiss?: () => void, onConsultTransfer?: () => void): MenuEntry[] {
   return [
     { id: "unassign-dismiss", label: "Unassign & Dismiss", icon: <TriangleAlert className="h-4 w-4" strokeWidth={1.5} />, onClick: onDismiss },
-    { id: "consult-transfer", label: "Consult / Transfer", icon: <ConsultTransferIcon /> },
+    { id: "consult-transfer", label: "Consult / Transfer", icon: <ConsultTransferIcon />, onClick: onConsultTransfer },
     { id: "outcome", label: "Outcome", icon: <CircleCheckBig className="h-4 w-4 text-lyra-status-info-strong" strokeWidth={1.5} /> },
     { id: "listen-recording", label: "Listen to Recording", icon: <PlayCircle className="h-4 w-4" strokeWidth={1.5} /> },
     { id: "download-recording", label: "Download Recording", icon: <FileDown className="h-4 w-4" strokeWidth={1.5} /> },
@@ -275,61 +285,65 @@ export interface ChannelRowInstanceProps {
    *  `buildDigitalMenuItems`/`buildVoiceMenuItems` doc comment above.
    *  Ignored when `menuItems` overrides the default list. */
   onDismiss?: () => void;
+  /** Wired onto the default menu's "Consult / Transfer" item — see the
+   *  `buildDigitalMenuItems`/`buildVoiceMenuItems` doc comment above.
+   *  Ignored when `menuItems` overrides the default list. */
+  onConsultTransfer?: () => void;
   /** Passed straight through to `ChannelRow` — see its own doc comment. */
   onSelect?: () => void;
 }
 
-const ChatChannelRow: React.FC<ChannelRowInstanceProps> = ({ menuItems, removable, onDismiss, ...rest }) => (
+const ChatChannelRow: React.FC<ChannelRowInstanceProps> = ({ menuItems, removable, onDismiss, onConsultTransfer, ...rest }) => (
   <ChannelRow
     {...rest}
     channel="chat"
     icon={<MessageSquare className="h-3 w-3" strokeWidth={1.5} />}
     label="Chat"
-    menuItems={menuItems ?? buildDigitalMenuItems(onDismiss)}
+    menuItems={menuItems ?? buildDigitalMenuItems(onDismiss, onConsultTransfer)}
     showMenu={removable !== false}
   />
 );
 
-const EmailChannelRow: React.FC<ChannelRowInstanceProps> = ({ menuItems, removable, onDismiss, ...rest }) => (
+const EmailChannelRow: React.FC<ChannelRowInstanceProps> = ({ menuItems, removable, onDismiss, onConsultTransfer, ...rest }) => (
   <ChannelRow
     {...rest}
     channel="email"
     icon={<Mail className="h-3 w-3" strokeWidth={1.5} />}
     label="Email"
-    menuItems={menuItems ?? buildDigitalMenuItems(onDismiss)}
+    menuItems={menuItems ?? buildDigitalMenuItems(onDismiss, onConsultTransfer)}
     showMenu={removable !== false}
   />
 );
 
-const SmsChannelRow: React.FC<ChannelRowInstanceProps> = ({ menuItems, removable, onDismiss, ...rest }) => (
+const SmsChannelRow: React.FC<ChannelRowInstanceProps> = ({ menuItems, removable, onDismiss, onConsultTransfer, ...rest }) => (
   <ChannelRow
     {...rest}
     channel="sms"
     icon={<MessageSquare className="h-3 w-3" strokeWidth={1.5} />}
     label="SMS"
-    menuItems={menuItems ?? buildDigitalMenuItems(onDismiss)}
+    menuItems={menuItems ?? buildDigitalMenuItems(onDismiss, onConsultTransfer)}
     showMenu={removable !== false}
   />
 );
 
-const WhatsAppChannelRow: React.FC<ChannelRowInstanceProps> = ({ menuItems, removable, onDismiss, ...rest }) => (
+const WhatsAppChannelRow: React.FC<ChannelRowInstanceProps> = ({ menuItems, removable, onDismiss, onConsultTransfer, ...rest }) => (
   <ChannelRow
     {...rest}
     channel="whatsapp"
     icon={<WhatsAppIcon />}
     label="WhatsApp"
-    menuItems={menuItems ?? buildDigitalMenuItems(onDismiss)}
+    menuItems={menuItems ?? buildDigitalMenuItems(onDismiss, onConsultTransfer)}
     showMenu={removable !== false}
   />
 );
 
-const VoiceChannelRow: React.FC<ChannelRowInstanceProps> = ({ menuItems, removable, onDismiss, ...rest }) => (
+const VoiceChannelRow: React.FC<ChannelRowInstanceProps> = ({ menuItems, removable, onDismiss, onConsultTransfer, ...rest }) => (
   <ChannelRow
     {...rest}
     channel="voice"
     icon={<Phone className="h-3 w-3" strokeWidth={1.5} />}
     label="Voice"
-    menuItems={menuItems ?? buildVoiceMenuItems(onDismiss)}
+    menuItems={menuItems ?? buildVoiceMenuItems(onDismiss, onConsultTransfer)}
     showMenu={removable !== false}
   />
 );

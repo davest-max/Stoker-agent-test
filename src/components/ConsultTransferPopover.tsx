@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Popover,
   Tooltip,
@@ -20,7 +20,7 @@ import {
   type ChannelType,
   type PhoneValue,
 } from "@nicecxone/lyra-ui";
-import { Route, Phone, UserPlus, Headset, ChevronLeft, ChevronRight, Send, Grid3x3 } from "lucide-react";
+import { Route, Phone, UserPlus, Headset, ChevronLeft, Send, Grid3x3, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   DIRECTORY_AGENTS,
@@ -36,10 +36,15 @@ import { ConsultTransferIcon } from "@/components/CustomerInteractionPanel";
  * Wires up `InteractionActionsBar`'s "Transfer" button (previously a plain
  * inert icon, same as "Outcome" was before OutcomePanel.tsx) to an actual
  * consult/transfer picker: Favorites/Agents/Skills tabs, a searchable agent
- * list that opens into a per-agent chat (with Phone/Transfer/Add-to-
- * interaction actions), and a Skills list with Call/Transfer actions
- * inline on each row (no drill-down — a skill is a routing target, not
- * someone to chat with first).
+ * list with Call/Chat/Transfer actions inline on each row (Call and
+ * Transfer act immediately and close the popup; Chat is the only way to
+ * drill into a per-agent chat, which has that same Phone/Transfer pair —
+ * plus Add-to-interaction — in its own header), and a Skills list with
+ * Call/Transfer actions inline on each row (no drill-down — a skill is a
+ * routing target, not someone to chat with first). Per an explicit
+ * follow-up, every row-level voice-call action across this popover now
+ * closes it immediately once it fires — see `handleCallAgent`'s own doc
+ * comment.
  *
  * Self-contained, like NewOutboundPopover/OutcomePanel — unlike
  * InternalChatPopover (its sibling in spirit), this has no docked mode to
@@ -111,24 +116,60 @@ function AgentRow({
   agent,
   favorited,
   onToggleFavorite,
-  onOpenChat,
+  onCall,
+  onChat,
+  onTransfer,
+  hasLiveCall,
+  isOnCall,
 }: {
   agent: DirectoryAgent;
   favorited: boolean;
   onToggleFavorite: () => void;
-  onOpenChat: () => void;
+  /** Same "consult into a live call, else start a fresh one" action
+   *  `ChatHeader`'s own Phone icon runs (see `handleCallAgent`) — per an
+   *  explicit follow-up, picking it straight from this row now closes the
+   *  popup immediately, same as every other row-level action here. */
+  onCall: () => void;
+  /** Drills into the same per-agent chat the row itself used to open on
+   *  click — now the ONLY way in, mirroring `SkillRow`'s icon-only
+   *  (`static`) row below rather than treating the whole row as a button. */
+  onChat: () => void;
+  onTransfer: () => void;
+  /** Same "Call" vs. "Consult with" tooltip distinction `ChatHeader`'s own
+   *  Phone icon makes — true once this popover has a live call to consult
+   *  into (see `ConsultTransferButtonProps.onAddToCall`'s own gating).
+   *  Passed straight through rather than re-derived here. */
+  hasLiveCall?: boolean;
+  /** True once this agent is already on the live call — a pending consult
+   *  or an already-merged colleague (see `ConsultTransferButtonProps
+   *  .activeCallAgentIds`'s own doc comment). Same persistent tint
+   *  treatment `ChatHeader`'s Phone gets. */
+  isOnCall?: boolean;
 }) {
   return (
     <ListItem
+      static
       className="group/row"
       leading={<AgentAvatar agent={agent} />}
       title={agent.name}
       subtitle={agent.subtitle}
-      onClick={onOpenChat}
       trailing={
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
           <FavoriteButton favorited={favorited} onClick={onToggleFavorite} label={agent.name} placement="left" />
-          <ChevronRight className="h-4 w-4 text-lyra-fg-secondary" strokeWidth={1.5} aria-hidden="true" />
+          <ActionIconButton
+            size="sm"
+            title={isOnCall ? `On this call — ${agent.name}` : hasLiveCall ? `Consult with ${agent.name}` : `Call ${agent.name}`}
+            onClick={onCall}
+            className={cn(isOnCall && "bg-lyra-bg-active-subtle text-lyra-fg-active-strong hover:bg-lyra-bg-active-subtle")}
+          >
+            <Phone className="h-4 w-4" strokeWidth={1.5} />
+          </ActionIconButton>
+          <ActionIconButton size="sm" title={`Chat with ${agent.name}`} onClick={onChat}>
+            <MessageSquare className="h-4 w-4" strokeWidth={1.5} />
+          </ActionIconButton>
+          <ActionIconButton size="sm" title={`Transfer to ${agent.name}`} onClick={onTransfer}>
+            <ConsultTransferIcon strokeWidth={1.5} />
+          </ActionIconButton>
         </div>
       }
     />
@@ -315,14 +356,14 @@ function ChatHeader({
   activeChannelType?: ChannelType;
   /** True once this agent is actually on the live call already — a pending
    *  consult or a merged colleague, see `ConsultTransferButtonProps`'s own
-   *  `activeCallAgentIds` doc comment. Only meaningful now that the popup
-   *  stays open through a consult instead of closing immediately: this is
-   *  the "persistent on-a-call state" that gives the agent something to
-   *  look at while it stays open, rather than the button just silently
-   *  going back to its normal look. Swaps the subtitle line and gives
-   *  Phone a persistent (not just hover) tint — clicking it again is still
-   *  harmless (re-consulting the same colleague is a no-op), so it's left
-   *  enabled rather than disabled. */
+   *  `activeCallAgentIds` doc comment. This popover now closes the instant
+   *  a call is placed (see `handleCallAgent`), so this only ever shows up
+   *  when the agent reopens the popover (or drills back into this same
+   *  chat) while a consult from an earlier session is still pending or
+   *  connected — swaps the subtitle line and gives Phone a persistent (not
+   *  just hover) tint so that's still visible at a glance. Clicking it
+   *  again is still harmless (re-consulting the same colleague is a
+   *  no-op), so it's left enabled rather than disabled. */
   isOnCall?: boolean;
 }) {
   const canAddPerson = !!activeChannelType && CHANNELS_SUPPORTING_ADD_PERSON.includes(activeChannelType);
@@ -599,6 +640,19 @@ function buildHandoffSummary({
   return `Hi ${agentFirstName}, ${customerClause} ${issueSummary} Would you be able to take this interaction on?`;
 }
 
+/** The simulated reply `scheduleAgentReply` sends back — same
+ *  "acknowledge, then the concrete detail" shape `buildHandoffSummary`
+ *  above uses, so the exchange reads as one real conversation rather than
+ *  an outgoing note that happens to be followed by an unrelated stock
+ *  reply. Names the actual customer back (mirroring the handoff note's own
+ *  `customerClause`) rather than a generic "the customer" — the whole
+ *  point of replying is confirming they caught what was just asked of
+ *  them, not just that they're free. */
+function buildAgentReply({ customerName }: { customerName?: string }): string {
+  const customerClause = customerName ? `with ${customerName}` : "with that customer";
+  return `Sure thing, happy to help ${customerClause} — go ahead and call me, and I'll join right in.`;
+}
+
 /* ── Root ── */
 
 export interface ConsultTransferButtonProps {
@@ -636,8 +690,10 @@ export interface ConsultTransferButtonProps {
    *  passed) while this interaction's own call is live — same gating as
    *  `onAddToCall` — so `ChatHeader` never has to re-derive that condition
    *  itself, just check membership. Drives the persistent "on this call"
-   *  treatment on Phone once the popup stays open after a consult (see
-   *  `onCall`'s own doc comment below for why it stays open now). */
+   *  treatment on Phone/the row-level Voice-call icon (see `handleCallAgent`'s
+   *  own doc comment for why that no longer keeps the popup open, and
+   *  `isOnCall`'s own doc comment on `ChatHeader` for when this still
+   *  shows up despite that). */
   activeCallAgentIds?: Set<string>;
   /** Controlled, not left as this button's own internal state — per an
    *  explicit follow-up, the interaction's kebab menu (both the rail card's
@@ -728,7 +784,9 @@ export function ConsultTransferButton({
     if (controlledOpen === undefined) setInternalOpen(next);
     onOpenChange?.(next);
   };
-  const [tab, setTab] = useState<Tab>("agents");
+  // Favorites first by default — per an explicit follow-up, this is the
+  // popup's own landing tab now rather than Agents.
+  const [tab, setTab] = useState<Tab>("favorites");
   const [view, setView] = useState<View>({ kind: "list" });
   // Dial Pad is a mode switch (swaps header+content for a phone field),
   // orthogonal to `tab` rather than a tab of its own — Conference-only
@@ -771,7 +829,13 @@ export function ConsultTransferButton({
     setDialPadActive(false);
     setSearch("");
   };
-  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
+  // Seeded with two agents + two skills by default, per an explicit
+  // follow-up — a brand-new popup session shouldn't start on an empty
+  // "No favorites yet." state. Still fully editable from here on via each
+  // row's own `FavoriteButton`, same as any other favorite.
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(
+    () => new Set(["john-smith", "amara", "general-support", "technical-support"])
+  );
   const [threads, setThreads] = useState<Record<string, InternalChatMessage[]>>({});
   const [draft, setDraft] = useState("");
   // Keyed by agent id so switching between two consults mid-popover-session
@@ -792,6 +856,29 @@ export function ConsultTransferButton({
     setSearch("");
     setDialPadActive(false);
     setDialpadPhone((prev) => ({ ...prev, number: "" }));
+  };
+
+  // Shared by the Agents/Favorites row-level Voice-call icon AND
+  // `ChatHeader`'s own Phone icon inside the chat drill-down — one action,
+  // two entry points. With a live call to consult into, this starts/joins
+  // the same consult-then-merge flow "Add to call" already runs; otherwise
+  // it starts a brand-new internal agent-to-agent call instead (see
+  // `onStartAgentCall`'s own doc comment) — calling an agent always does
+  // something real, never just a stub log. Per an explicit follow-up, this
+  // now ALWAYS closes the popup immediately once it fires — there used to
+  // be a case (consulting into an already-live call) that deliberately left
+  // the popup open so the agent could watch the consult connect; that's
+  // gone now, so every voice-call pick behaves the same way everywhere in
+  // this popover: pick, it dials/merges, the popup closes.
+  const handleCallAgent = (agent: DirectoryAgent) => {
+    if (onAddToCall) {
+      onAddToCall({ id: agent.id, name: agent.name });
+    } else if (onStartAgentCall) {
+      onStartAgentCall(agent);
+    } else {
+      log("Call", agent.name);
+    }
+    resetAndClose();
   };
 
   // Simulates a skill's ring→answer routing: picks a random currently-
@@ -831,6 +918,44 @@ export function ConsultTransferButton({
     console.log(`${action}:`, name);
   };
 
+  // Every consult chat gets exactly one canned reply back, timed like a
+  // real person typing one — after the agent's very first message to a
+  // given colleague (almost always the AI-drafted handoff note below, but a
+  // hand-typed opener via `handleSend` works identically), that colleague
+  // "answers" agreeing to join the call. There's no real messaging backend
+  // to wire into yet (same placeholder pattern as every other stubbed
+  // action in this file — `log`, the skill-call ring→answer simulation
+  // above), so this is scripted rather than a real reply, just enough to
+  // make the handoff read as a two-way conversation instead of a note into
+  // the void. "First message" is checked via that agent's own thread length
+  // at send time (see both call sites below), not a separate flag — a
+  // follow-up message afterward doesn't get a second canned response.
+  // Timers are tracked so a call that ends (unmounting this popover
+  // entirely) before one fires doesn't try to update state that's gone.
+  const replyTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  useEffect(() => {
+    return () => {
+      replyTimersRef.current.forEach(clearTimeout);
+    };
+  }, []);
+  const scheduleAgentReply = (agent: DirectoryAgent) => {
+    const timer = setTimeout(() => {
+      setThreads((prev) => ({
+        ...prev,
+        [agent.id]: [
+          ...(prev[agent.id] ?? []),
+          {
+            id: `m${(prev[agent.id]?.length ?? 0) + 1}`,
+            fromMe: false,
+            text: buildAgentReply({ customerName }),
+            timestamp: "Just now",
+          },
+        ],
+      }));
+    }, 1400);
+    replyTimersRef.current.push(timer);
+  };
+
   /** Back to its original, single-purpose behavior — per an explicit
    *  follow-up reverting an intermediate design where this also ran the
    *  transfer action. Just posts the drafted handoff note into the thread
@@ -839,11 +964,13 @@ export function ConsultTransferButton({
   const handleSendHandoff = (agent: DirectoryAgent) => {
     const text = handoffSummaryFor(agent).trim();
     if (!text) return;
+    const isFirstMessage = (threads[agent.id]?.length ?? 0) === 0;
     setThreads((prev) => ({
       ...prev,
       [agent.id]: [...(prev[agent.id] ?? []), { id: `m${(prev[agent.id]?.length ?? 0) + 1}`, fromMe: true, text, timestamp: "Just now" }],
     }));
     setHandoffDrafts((prev) => ({ ...prev, [agent.id]: "" }));
+    if (isFirstMessage) scheduleAgentReply(agent);
   };
 
   const toggleFavorite = (id: string) =>
@@ -856,11 +983,13 @@ export function ConsultTransferButton({
 
   const handleSend = (agent: DirectoryAgent) => {
     if (!draft.trim()) return;
+    const isFirstMessage = (threads[agent.id]?.length ?? 0) === 0;
     setThreads((prev) => ({
       ...prev,
       [agent.id]: [...(prev[agent.id] ?? []), { id: `m${(prev[agent.id]?.length ?? 0) + 1}`, fromMe: true, text: draft.trim(), timestamp: "Just now" }],
     }));
     setDraft("");
+    if (isFirstMessage) scheduleAgentReply(agent);
   };
 
   const activeAgent = view.kind === "chat" ? DIRECTORY_AGENTS.find((a) => a.id === view.agentId) : undefined;
@@ -948,30 +1077,11 @@ export function ConsultTransferButton({
       <ChatHeader
         agent={activeAgent}
         onBack={() => setView({ kind: "list" })}
-        // With a live call to consult into, Phone starts/joins that same
-        // consult-then-merge flow "Add to call" already runs (identical
-        // `onAddToCall` call+close). Otherwise — any non-voice active
-        // interaction, or a voice one with no live call right now — it
-        // starts a brand-new internal agent-to-agent call instead (see
-        // `onStartAgentCall`'s own doc comment): calling an agent from here
-        // always does something real, never just a stub log.
-        onCall={() => {
-          if (onAddToCall) {
-            // Consulting into a call that's already live: per an explicit
-            // follow-up, the popup stays open (and focus stays put on
-            // whichever assignment card this was opened from) until the
-            // agent closes it themselves — the whole point is to let them
-            // watch the consult connect/merge without losing this chat.
-            // Deliberately NOT calling `resetAndClose()` here, unlike the
-            // `onStartAgentCall` branch right below, which still does.
-            onAddToCall({ id: activeAgent.id, name: activeAgent.name });
-          } else if (onStartAgentCall) {
-            onStartAgentCall(activeAgent);
-            resetAndClose();
-          } else {
-            log("Call", activeAgent.name);
-          }
-        }}
+        // Same shared action the Agents/Favorites row-level Voice-call icon
+        // uses — see `handleCallAgent`'s own doc comment for the full
+        // consult-vs-fresh-call logic and why this always closes the popup
+        // now.
+        onCall={() => handleCallAgent(activeAgent)}
         onTransfer={() => { log("Transfer to", activeAgent.name); resetAndClose(); }}
         // Only ever rendered/reachable when `activeChannelType` doesn't
         // qualify for it (see `ChatHeader`'s own `canAddPerson`) — still
@@ -1086,7 +1196,11 @@ export function ConsultTransferButton({
               agent={agent}
               favorited={favoriteIds.has(agent.id)}
               onToggleFavorite={() => toggleFavorite(agent.id)}
-              onOpenChat={() => setView({ kind: "chat", agentId: agent.id })}
+              onCall={() => handleCallAgent(agent)}
+              onChat={() => setView({ kind: "chat", agentId: agent.id })}
+              onTransfer={() => { log("Transfer to", agent.name); resetAndClose(); }}
+              hasLiveCall={!!onAddToCall}
+              isOnCall={!!activeCallAgentIds?.has(agent.id)}
             />
           ))
         )}
@@ -1160,7 +1274,11 @@ export function ConsultTransferButton({
                 agent={agent}
                 favorited
                 onToggleFavorite={() => toggleFavorite(agent.id)}
-                onOpenChat={() => setView({ kind: "chat", agentId: agent.id })}
+                onCall={() => handleCallAgent(agent)}
+                onChat={() => setView({ kind: "chat", agentId: agent.id })}
+                onTransfer={() => { log("Transfer to", agent.name); resetAndClose(); }}
+                hasLiveCall={!!onAddToCall}
+                isOnCall={!!activeCallAgentIds?.has(agent.id)}
               />
             ))}
           </>
@@ -1205,7 +1323,27 @@ export function ConsultTransferButton({
       <span className="inline-flex">
         <Popover
           open={open}
-          onOpenChange={(next) => (next ? setOpen(true) : resetAndClose())}
+          onOpenChange={(next) => {
+            if (next) {
+              // Conference-only: per an explicit follow-up, this variant
+              // always lands on Favorites when the agent opens it, rather
+              // than remembering whatever tab (often Active Calls, from an
+              // earlier merge) was left selected last time — `tab` itself
+              // is otherwise never reset just by closing/reopening, so
+              // without this it can silently stay stuck wherever the agent
+              // last left it. Left alone for the plain toolbar Consult/
+              // Transfer icon (`activeCallOptions === undefined`), which
+              // still remembers its last tab as before. Only ever touches
+              // this open path — the "Merge into" kebab's own force-open
+              // (see `forceActiveCallsTabSignal`'s effect) sets `open`
+              // directly, bypassing this handler entirely, so it can still
+              // force Active Calls without this immediately overriding it.
+              if (activeCallOptions !== undefined) setTab("favorites");
+              setOpen(true);
+            } else {
+              resetAndClose();
+            }
+          }}
           placement={popoverPlacement}
           align="start"
           sideOffset={10}

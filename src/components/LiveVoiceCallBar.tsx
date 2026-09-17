@@ -350,7 +350,11 @@ function ParticipantChip({
    *  per an explicit follow-up, only ever passed for a colleague. Routed
    *  through an inline "Drop {name}?" confirm (see `confirming` below)
    *  before it actually fires, since — unlike hold or transfer — this isn't
-   *  reversible. */
+   *  reversible. Per a later explicit follow-up, that confirm step now
+   *  stays armed until the agent explicitly picks Confirm (Check) or
+   *  Cancel (X) — nothing else (moving the mouse away, clicking elsewhere)
+   *  dismisses it, so an accidental brush of the pointer can't silently
+   *  discard a drop the agent actually meant to go through with. */
   onHangUp?: () => void;
 }) {
   const accent = CHANNEL_ACCENT.voice;
@@ -384,10 +388,6 @@ function ParticipantChip({
       // colleague's pill (always showing Hold/Transfer/Hang Up) rather than
       // reading shorter next to it.
       className={cn("flex h-8 shrink-0 items-center gap-2 rounded-full bg-lyra-bg-surface-container-subtle pl-1 pr-2.5", focusRing)}
-      // Resets an armed "Drop {name}?" confirmation if the agent moves away
-      // without deciding — the explicit Cancel (X) button below still covers
-      // the deliberate case, this just avoids leaving it silently armed.
-      onMouseLeave={() => setConfirming(false)}
       // Only set here for "You" — see the note on the label span below for
       // why: with that label removed for this one case, the avatar bubble's
       // own "You" (otherwise `aria-hidden`, same as every other pill's
@@ -1691,6 +1691,24 @@ export interface DockedVoiceControlBarProps {
    *  value to both bars so a call reads the same whichever presentation
    *  it's currently in. */
   theme: "light" | "dark";
+  /** Same "switch call" picker as `LiveVoiceCallBarProps.otherVoiceCalls` —
+   *  see that prop's own doc comment. Restored here per an explicit
+   *  follow-up: this bar is no longer only shown while the agent is looking
+   *  at this exact call's own interaction (see this component's own top doc
+   *  comment for how that changed) — it's the persistent, always-on-screen
+   *  default now, visible from Settings, Directory, a different held call's
+   *  tile, anywhere — so picking a *different* call to switch to from here
+   *  is just as meaningful as it already was from the floating bar. */
+  otherVoiceCalls?: {
+    assignmentId: string;
+    customerName?: string;
+    isInternalAgentCall?: boolean;
+    startedAt: number;
+    heldSince?: number;
+  }[];
+  /** Same as `LiveVoiceCallBarProps.onSwitchCall` — only meaningful
+   *  alongside `otherVoiceCalls`. */
+  onSwitchCall?: (assignmentId: string) => void;
   /** How much width the panel this bar sits in actually has to give it —
    *  `AgentNextGenPage`'s own measurement (row width minus the Customer
    *  Profile side panel, if open), the same input its existing squeeze
@@ -1705,21 +1723,22 @@ export interface DockedVoiceControlBarProps {
 }
 
 /** Docked presentation of the exact same live call's controls
- *  `LiveVoiceCallBar` shows floating — rendered through
- *  `CustomerInteractionPanel`'s own `voiceControls` slot at the bottom of
- *  the center panel, only while the agent is actively viewing this call's
- *  own interaction (see `AgentNextGenPage`'s derived `isVoiceCallDocked`).
+ *  `LiveVoiceCallBar` shows floating — rendered as a persistent, page-level
+ *  footer pinned across the center panel (see `AgentNextGenPage`'s own
+ *  render site), regardless of which interaction is currently on screen.
  *  Shows a small avatar + `customerName` + elapsed timer at the leading
- *  edge, same shape as the floating bar's own name/timer stack — no
- *  switcher though (per the original "Option B" pick, since picking a
- *  *different* call to switch to is only meaningful when the agent isn't
- *  already looking at the one they'd be switching away from). The moment
- *  the agent selects a *different* interaction, this bar disappears and
- *  `LiveVoiceCallBar` takes over instead — reappearing with the switcher on
- *  top of the same name/timer, per an explicit follow-up ("when popped
- *  out, add the customer name, timer etc. until redocked"). Not
- *  draggable — it's laid out in-flow at the bottom of the panel, not
- *  floating on top of anything.
+ *  edge, same shape as the floating bar's own name/timer stack, PLUS the
+ *  same "switch call" picker that stack doubles as whenever
+ *  `otherVoiceCalls` isn't empty — restored per an explicit follow-up: this
+ *  used to skip the switcher (back when this bar only ever rendered while
+ *  the agent was already looking at this exact call's own interaction, so
+ *  switching away from right here was redundant with just clicking another
+ *  tile). Now that it's the always-on-screen default from anywhere in the
+ *  app, that reasoning no longer holds — the agent may well be looking at
+ *  Settings, Directory, or a different call's own tile, with no rail tile
+ *  for THIS call in view at all, so the switcher is exactly as useful here
+ *  as it already was floating. Not draggable — it's laid out in-flow at the
+ *  bottom of the panel, not floating on top of anything.
  *  `isMuted`/`isMasked`/`isRecording`/`isOnHold` are all controlled from
  *  `AgentNextGenPage`, the same state `LiveVoiceCallBar` reads — so muting
  *  here and then looking away (popping this out) still shows the call as
@@ -1761,9 +1780,14 @@ export function DockedVoiceControlBar({
   onHangUp,
   theme,
   availableWidth,
+  otherVoiceCalls = [],
+  onSwitchCall,
 }: DockedVoiceControlBarProps) {
   const accent = CHANNEL_ACCENT.voice;
   const displayName = isInternalAgentCall ? customerName ?? "Colleague" : customerName || "Customer";
+  // Same local open/close state as the floating bar's own identical
+  // switcher — see `LiveVoiceCallBar`'s own `switcherOpen`.
+  const [switcherOpen, setSwitcherOpen] = useState(false);
   // Same continuous 1s tick `LiveVoiceCallBar` runs off its own `startedAt`
   // — kept local to whichever presentation is actually mounted rather than
   // lifted, since `startedAt`/`heldSince` (the only real state) already
@@ -1865,19 +1889,91 @@ export function DockedVoiceControlBar({
          *  two arrangements of the exact same content. */}
         <div className={cn("flex gap-5", isStacked ? "flex-col items-stretch" : "items-center")}>
         <div ref={identityRef} className="flex items-center gap-2">
-          <span
-            className={cn("flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full lyra-body-md-emphasis", accent.bg, accent.text)}
-            aria-hidden="true"
-          >
-            {isInternalAgentCall ? <Headset className="h-[19px] w-[19px]" strokeWidth={1.5} /> : getInitials(customerName)}
-          </span>
-          <span className="min-w-0 max-w-[160px]">
-            <p className="truncate lyra-body-md-emphasis text-lyra-fg-default">{displayName}</p>
-            <p className="lyra-body-sm text-lyra-fg-secondary">{formatElapsed(elapsedSeconds)}</p>
-            {heldSeconds !== undefined && (
-              <p className="lyra-body-sm-emphasis text-lyra-status-critical-strong">On hold {formatElapsed(heldSeconds)}</p>
-            )}
-          </span>
+          {(() => {
+            const avatar = (
+              <span
+                className={cn("flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full lyra-body-md-emphasis", accent.bg, accent.text)}
+                aria-hidden="true"
+              >
+                {isInternalAgentCall ? <Headset className="h-[19px] w-[19px]" strokeWidth={1.5} /> : getInitials(customerName)}
+              </span>
+            );
+            const nameAndTimer = (
+              <span className="min-w-0 max-w-[160px]">
+                <p className="truncate lyra-body-md-emphasis text-lyra-fg-default">{displayName}</p>
+                <p className="lyra-body-sm text-lyra-fg-secondary">{formatElapsed(elapsedSeconds)}</p>
+                {heldSeconds !== undefined && (
+                  <p className="lyra-body-sm-emphasis text-lyra-status-critical-strong">On hold {formatElapsed(heldSeconds)}</p>
+                )}
+              </span>
+            );
+            // Same trigger-button-wraps-avatar-and-name shape as the
+            // floating bar's own switcher — see that component's identical
+            // block for the full reasoning (the `align="start"` popover
+            // placement, the z-index bump, the per-row icon/description
+            // shape). Falls back to a plain, non-interactive avatar+name
+            // when there's nothing to switch to, same as floating.
+            return otherVoiceCalls.length > 0 && onSwitchCall ? (
+              <Popover
+                open={switcherOpen}
+                onOpenChange={setSwitcherOpen}
+                placement="top"
+                align="start"
+                className="z-[9999]"
+                content={
+                  <Menu
+                    aria-label="Switch voice call"
+                    className="min-w-[220px]"
+                    items={otherVoiceCalls.map((call): MenuEntry => {
+                      const otherName = call.isInternalAgentCall ? call.customerName ?? "Colleague" : call.customerName || "Customer";
+                      const isOtherHeld = call.heldSince !== undefined;
+                      const otherDescription = isOtherHeld
+                        ? `On hold ${formatElapsed(Math.floor((Date.now() - call.heldSince!) / 1000))}`
+                        : formatElapsed(Math.floor((Date.now() - call.startedAt) / 1000));
+                      return {
+                        id: call.assignmentId,
+                        icon: (
+                          <span
+                            className={cn("flex h-5 w-5 items-center justify-center rounded-full lyra-body-xs-emphasis", accent.bg, accent.text)}
+                            aria-hidden="true"
+                          >
+                            {call.isInternalAgentCall ? <Headset className="h-3 w-3" strokeWidth={1.5} /> : getInitials(call.customerName)}
+                          </span>
+                        ),
+                        label: call.isInternalAgentCall ? `${otherName} (internal)` : otherName,
+                        description: otherDescription,
+                        descriptionCritical: isOtherHeld,
+                        onClick: () => {
+                          onSwitchCall(call.assignmentId);
+                          setSwitcherOpen(false);
+                        },
+                      };
+                    })}
+                  />
+                }
+              >
+                <button
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={switcherOpen}
+                  className="flex min-w-0 items-center gap-2 rounded-lyra-sm text-left hover:bg-lyra-state-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lyra-border-focus"
+                >
+                  {avatar}
+                  {nameAndTimer}
+                  <ChevronDown
+                    className={cn("h-4 w-4 shrink-0 text-lyra-fg-secondary transition-transform", switcherOpen && "rotate-180")}
+                    strokeWidth={2}
+                    aria-hidden="true"
+                  />
+                </button>
+              </Popover>
+            ) : (
+              <>
+                {avatar}
+                {nameAndTimer}
+              </>
+            );
+          })()}
         </div>
         <div ref={controlsRef} className="flex items-center gap-5">
         {/* "Conference" — same always-visible button/behavior as the

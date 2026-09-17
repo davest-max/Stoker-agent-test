@@ -104,6 +104,20 @@ export interface InteractionNavItemProps {
    * the card and its other channels open. See `onDismiss` above for the
    * single-channel case, where the whole card goes instead. */
   onDismissChannel?: (channel: InteractionChannel) => void;
+  /**
+   * Called when the agent chooses "Consult / Transfer" from any channel's
+   * kebab menu on this card — unlike `onDismiss`/`onDismissChannel`, there's
+   * no single-vs-multi-channel split, since Consult/Transfer acts on the
+   * interaction as a whole (whichever channel is current), not one channel
+   * specifically. Every open channel's kebab wires to this same callback.
+   * A consumer that also has a dedicated Consult/Transfer button elsewhere
+   * for this same interaction (e.g. in its own header) should have both
+   * open the identical flow — lifting that button's `open` state so this
+   * callback can set it too is the way to make the two kebabs and the
+   * button all open the exact same thing rather than three separate copies.
+   * Only wired onto each channel's *default* menu; a channel with a
+   * `menuItems` override handles its own actions instead. */
+  onConsultTransfer?: () => void;
   /** Rendered at the end of the expanded card's header row, next to the
    *  customer name — e.g. an "Add Outbound" button (see `OutboundAddButton`
    *  in `create-new.tsx`) letting the agent start another channel with this
@@ -168,6 +182,7 @@ const InteractionNavItem = React.forwardRef<HTMLDivElement, InteractionNavItemPr
       onClick,
       onDismiss,
       onDismissChannel,
+      onConsultTransfer,
       headerAction,
       currentChannelKey,
       onCurrentChannelChange,
@@ -347,6 +362,7 @@ const InteractionNavItem = React.forwardRef<HTMLDivElement, InteractionNavItemPr
                     if (channels.length > 1) onDismissChannel?.(ch);
                     else onDismiss?.();
                   }}
+                  onConsultTransfer={onConsultTransfer}
                   onSelect={() => {
                     // Unconditional even when controlled — harmless (ignored
                     // by `effectiveCurrentKey` while `currentChannelKey` is

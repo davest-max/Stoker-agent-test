@@ -27,6 +27,9 @@ import {
   CHANNEL_TYPE_META,
   buildVoiceMenuItems,
   type MenuEntry,
+  Popover,
+  Menu,
+  Tooltip,
 } from "@nicecxone/lyra-ui";
 import appIcon from "@/assets/app-icon.svg";
 import {
@@ -80,6 +83,7 @@ import {
   Monitor,
   FileSearch,
   UserPlus,
+  ArrowUpDown,
 } from "lucide-react";
 
 /** Title + icon for each right-side slide-in destination — Directory has
@@ -181,6 +185,53 @@ function RailNavButton({
         {label}
       </span>
     </button>
+  );
+}
+
+const ASSIGNMENT_SORT_LABEL: Record<"time" | "type", string> = {
+  time: "Newest first",
+  type: "Voice calls first",
+};
+
+/** Rail-level sort control, sitting between the "Control Center" button and
+ *  the assignment tiles themselves (see this file's own render site) — a
+ *  display-order preference for the whole list, not an action on any one
+ *  tile, so it gets its own small trigger rather than living on a kebab or
+ *  per-card menu. Same `Popover` + `Menu` + `selected` treatment
+ *  `EscalationStatusPill` (CustomerInteractionPanel.tsx) already uses for an
+ *  identical "small icon trigger opens a short list of mutually exclusive
+ *  choices" shape, reused here rather than re-invented. Icon-only
+ *  regardless of `expanded` (unlike `RailNavButton`, which grows a text
+ *  label) — a `w-9` icon button already fits the collapsed rail exactly the
+ *  way every other icon-only rail control does, so there's no separate
+ *  collapsed treatment to maintain. */
+function AssignmentSortControl({
+  mode,
+  onChange,
+}: {
+  mode: "time" | "type";
+  onChange: (mode: "time" | "type") => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const items: MenuEntry[] = (Object.keys(ASSIGNMENT_SORT_LABEL) as ("time" | "type")[]).map((key) => ({
+    id: key,
+    label: ASSIGNMENT_SORT_LABEL[key],
+    selected: key === mode,
+    onClick: () => {
+      onChange(key);
+      setOpen(false);
+    },
+  }));
+  return (
+    <div className="mb-1 flex justify-end">
+      <Tooltip content="Sort assignments" placement="right" asLabel>
+        <Popover open={open} onOpenChange={setOpen} placement="bottom" align="end" content={<Menu aria-label="Sort assignments" items={items} />}>
+          <ActionIconButton size="sm" aria-label="Sort assignments" aria-expanded={open} className={cn(open && "bg-lyra-state-hover")}>
+            <ArrowUpDown className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
+          </ActionIconButton>
+        </Popover>
+      </Tooltip>
+    </div>
   );
 }
 
@@ -310,6 +361,18 @@ interface Assignment {
    *  record backing it, and `customerName` here is the *other agent's*
    *  name, not a customer's. */
   isInternalAgentCall?: boolean;
+  /** Real creation timestamp (`Date.now()` when this tile was first
+   *  created) — independent of `elapsed`'s own decorative "MM:SS on this
+   *  card" display string, which is never a real, re-parseable duration.
+   *  Backs the rail's own "Sort by time" option (see `assignmentSortMode`'s
+   *  own render site below) — newest `createdAt` sorts first. Every
+   *  dynamically created assignment sets this via `Date.now()` at creation
+   *  (the three `[newAssignment, ...prev]` call sites); the seeded
+   *  `INITIAL_ASSIGNMENTS` below derive it from their own `elapsed` string
+   *  instead (see `seedCreatedAt`), purely so the demo data's implied
+   *  recency and the real sort feature agree instead of contradicting each
+   *  other. */
+  createdAt: number;
 }
 
 /** The logged-in agent (matches the AgentProfile name in the top app header)
@@ -506,6 +569,18 @@ function assignmentChannelType(a: Assignment): ChannelType | undefined {
   return a.channels.find((c) => channelKey(c) === key)?.type;
 }
 
+/** Whether ANY of this assignment's channels is voice — deliberately
+ *  broader than `assignmentChannelType(a) === "voice"` (which only ever
+ *  answers for whichever channel tab happens to be "current" right now).
+ *  Backs the rail's own "Sort by type" option: an elevated multi-channel
+ *  card with a backgrounded voice leg — the exact scenario the persistent
+ *  voice bar exists for — should still sort to the top even while the
+ *  agent's looking at that same card's chat or email tab, not only while
+ *  voice happens to be the visible one. */
+function assignmentHasVoiceChannel(a: Assignment): boolean {
+  return a.channels.some((c) => c.type === "voice");
+}
+
 /** Same `MM:SS` shape `LiveVoiceCallBar`'s own `formatElapsed` uses —
  *  duplicated locally rather than imported since this file doesn't
  *  otherwise depend on that component's internals, same reasoning as that
@@ -516,6 +591,25 @@ function formatHoldDuration(totalSeconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+/** One shared "now" for every seeded `INITIAL_ASSIGNMENTS` entry's own
+ *  `createdAt` below, computed once at module load rather than re-reading
+ *  `Date.now()` per entry — so their relative order (which is all
+ *  `createdAt` is actually used for) reflects the seed list's own authored
+ *  order, not whatever tiny timing skew evaluating the array literal
+ *  top-to-bottom would otherwise introduce. */
+const SEED_NOW = Date.now();
+
+/** Turns a seed entry's own decorative "MM:SS" `elapsed` string into a real
+ *  `createdAt` timestamp — `SEED_NOW` minus that many seconds ago — purely
+ *  so the demo data's implied recency (a shorter `elapsed` reads as "more
+ *  recent") and the real "Sort by time" feature agree with each other
+ *  instead of contradicting it. Not real time-tracking (`elapsed` itself
+ *  never ticks), just a one-time derivation at seed-authoring time. */
+function seedCreatedAt(elapsed: string): number {
+  const [minutes, seconds] = elapsed.split(":").map(Number);
+  return SEED_NOW - (minutes * 60 + seconds) * 1000;
 }
 
 /** Demo seed data — kept around for manual testing (e.g. temporarily
@@ -530,6 +624,7 @@ const INITIAL_ASSIGNMENTS: Assignment[] = [
     customerName: "Sofia Martinez",
     customerId: "sofia",
     elapsed: "08:27",
+    createdAt: seedCreatedAt("08:27"),
     awaitingResponse: true,
     issueSummary: "Mobile app crashes every time she tries to upload a receipt photo for an expense report.",
     subject: "Receipt photo upload crashes app",
@@ -551,6 +646,7 @@ const INITIAL_ASSIGNMENTS: Assignment[] = [
     customerName: "Ray Torres",
     customerId: "ray",
     elapsed: "06:12",
+    createdAt: seedCreatedAt("06:12"),
     awaitingResponse: true,
     issueSummary: "Disputing a duplicate charge that appeared twice on last month's invoice.",
     subject: "Duplicate subscription charge",
@@ -568,6 +664,7 @@ const INITIAL_ASSIGNMENTS: Assignment[] = [
   {
     id: "call",
     elapsed: "02:05",
+    createdAt: seedCreatedAt("02:05"),
     issueSummary: "Calling about a shipment that hasn't arrived — tracking shows no movement in 5 days.",
     subject: "Shipment tracking shows no movement",
     caseId: "CASE-48350",
@@ -645,6 +742,7 @@ const INITIAL_ASSIGNMENTS: Assignment[] = [
     customerName: "Priya Nair",
     customerId: "priya",
     elapsed: "04:12",
+    createdAt: seedCreatedAt("04:12"),
     issueSummary: "Got two order confirmation texts for the same order and worried she'd been charged twice.",
     subject: "Duplicate order confirmation text",
     caseId: "CASE-48462",
@@ -697,6 +795,12 @@ export function AgentNextGenPage({
   // later (see the isNavNarrow effect below), producing a visible flash.
   const [navOpen, setNavOpen] = useState(() => window.innerWidth >= NAV_NARROW_BREAKPOINT);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
+  // How the rail orders its assignment tiles — "time" (newest `createdAt`
+  // first, the default) or "type" (any tile with a voice channel first,
+  // each bucket still newest-first within itself — see `sortedAssignments`
+  // below). A display-order preference, not a property of any one
+  // assignment, so it lives here rather than on `Assignment` itself.
+  const [assignmentSortMode, setAssignmentSortMode] = useState<"time" | "type">("time");
   const [activeAssignmentId, setActiveAssignmentId] = useState<string | undefined>(undefined);
   // The Outcome popup's open state (`InteractionActionsBar`'s
   // `OutcomeButton`) — lifted up here (rather than left as that button's own
@@ -787,10 +891,10 @@ export function AgentNextGenPage({
   // Mute/mask/recording toggles for whichever call is currently live —
   // lifted here (not local `useState` inside `LiveVoiceCallBar`) so the SAME
   // state reads correctly from either presentation of that call's controls:
-  // the floating `LiveVoiceCallBar` when the agent is looking at something
-  // else, or the in-flow `DockedVoiceControlBar` (rendered via
-  // `CustomerInteractionPanel`'s `voiceControls` slot) when the agent is
-  // looking at this call's own interaction. Unlike `voiceCallStartedAt`/
+  // the floating `LiveVoiceCallBar` (while manually undocked) or the
+  // persistent, page-level `DockedVoiceControlBar` (the default — see that
+  // component's own render site further down for why it's no longer nested
+  // inside any one interaction's own panel). Unlike `voiceCallStartedAt`/
   // `voiceCallHeldSince`, these are plain booleans rather than
   // per-assignment records — they're only ever meaningful for whichever
   // call is live right now, not something a backgrounded held call needs to
@@ -817,45 +921,47 @@ export function AgentNextGenPage({
   // "a dragged/resized preference sticks around" behavior.
   const [videoPanelSize, setVideoPanelSize] = useState<{ width: number; height: number } | null>(null);
   // Whether the agent has deliberately popped this call's controls out to
-  // float, either by hitting the docked bar's own Undock button (always
-  // available now, audio-only calls included — see that prop's own doc
-  // comment in LiveVoiceCallBar.tsx) or by switching focus straight to a
-  // DIFFERENT live/held voice call (see `handleSelectAssignment`'s hold-swap
-  // branch, which now starts the newly-focused call floating instead of
-  // silently pulling it inline). Per an explicit follow-up, docking is a
-  // user-selected state, not something that happens automatically just
-  // because the agent's eyes land on the right card — so unlike the earlier
-  // design, this is NOT reset just by looking away and back; it only clears
-  // via the docked bar's own explicit Dock button. Per a later follow-up,
-  // starting a genuinely new call doesn't reset it either anymore — see
-  // `goLiveWithVoiceCall`'s own doc comment for why.
+  // float, via the persistent bar's own Undock button — per an explicit
+  // follow-up, the bar is pinned across the center panel by default (see
+  // its own render site further down), visible regardless of which
+  // interaction is currently on screen, so this is a deliberate escape
+  // hatch rather than something that happens just by looking away. Only
+  // ever set by that one Undock button, and only ever cleared by the
+  // floating bar's own Dock button. See `voiceCallAutoUndocked` right below
+  // for the OTHER way this bar ends up floating — the two are independent
+  // reasons or with the exact same effect (this bar isn't currently
+  // pinned), which is why the render gate further down checks both.
   const [voiceCallManuallyUndocked, setVoiceCallManuallyUndocked] = useState(false);
-  // Automatic counterpart to the manual toggle above — set when the docked
-  // bar itself no longer fits the room the center column actually has (the
-  // Customer Profile side panel opening/widening is the common cause),
-  // rather than the agent asking for it. Same one-way, never-auto-reverses
-  // policy as the manual toggle above (see its own doc comment) — the docked
-  // bar's own Dock button is still there to force it back manually once
-  // there's room again.
+  // Automatic counterpart to the manual toggle above — restored per an
+  // explicit follow-up: even though the bar is pinned across the FULL
+  // center-panel width now (not squeezed into one interaction's own narrow
+  // column the way it used to be), that width itself still shrinks
+  // whenever AI Assistant, Notifications, or Directory dock open alongside
+  // a narrower browser window, and at some point there just isn't enough
+  // room left for even the two-row layout — see `useVoiceBarLayoutTier`.
+  // Rather than let the bar clip/overflow at that point, this pops it out
+  // to float instead, same "one-way, never auto-reverses" policy as the
+  // squeeze check below (avoids flicker right at the threshold) — the
+  // floating bar's own Dock button is still there to force it back once
+  // there's room again (see that button's own `onDock`).
   const [voiceCallAutoUndocked, setVoiceCallAutoUndocked] = useState(false);
-  // The docked bar's own last-reported minimum width — specifically how much
-  // room it needs for at least its "two-row" layout (see
-  // `DockedVoiceControlBar`'s `onNeededWidthChange`/`useVoiceBarLayoutTier`),
-  // not the roomier single-row width this used to mean before the bar could
-  // stack onto two rows itself. Cached here (not just read while docked) so
-  // the squeeze check below still has something to compare against even
-  // after the bar itself has unmounted from going floating. `null` until
-  // it's rendered at least once.
+  // The pinned bar's own last-reported minimum width — specifically how
+  // much room it needs for at least its "two-row" layout (see
+  // `DockedVoiceControlBar`'s `onNeededWidthChange`/`useVoiceBarLayoutTier`).
+  // Cached here (not just read while docked) so the squeeze check below
+  // still has something to compare against even after the bar itself has
+  // unmounted from going floating. `null` until it's rendered at least once.
   const [dockedBarNeededWidth, setDockedBarNeededWidth] = useState<number | null>(null);
-  // How much width the panel actually has to give the docked bar right now
-  // — fed to it as its own `availableWidth` prop so it can pick full-vs-
-  // two-row itself (see `useVoiceBarLayoutTier`), computed once here
-  // (`checkVoiceBarSqueezeRef` below) rather than duplicating the same
-  // `bodyRowRef`/`sidePanelWidth` math a second time. `null` until it's
-  // been measured at least once — `DockedVoiceControlBar`'s own hook treats
-  // that the same "assume the roomiest layout" way `dockedBarNeededWidth`
-  // being `null` already does elsewhere.
-  const [dockedRowAvailableWidth, setDockedRowAvailableWidth] = useState<number | null>(null);
+  // How much width the center panel actually has to give the pinned bar
+  // right now — fed to it as its own `availableWidth` prop so it can pick
+  // full-vs-two-row-vs-pill itself (see `useVoiceBarLayoutTier`), AND
+  // compared against `dockedBarNeededWidth` below to decide
+  // `voiceCallAutoUndocked`. Measured directly off `containerRef` (see the
+  // `ResizeObserver` effect below) — the bar spans that entire width now,
+  // independent of whether Customer Profile or any particular interaction
+  // is open, so there's no narrower "row" to measure separately anymore.
+  // `null` until it's been measured at least once.
+  const [centerPanelAvailableWidth, setCenterPanelAvailableWidth] = useState<number | null>(null);
   // The docked video area's own explicit size once resized — a separate
   // piece of state from the floating bar's `videoPanelSize` since the two
   // remount independently, but resizes the same way (both width and
@@ -1419,12 +1525,8 @@ export function AgentNextGenPage({
   useEffect(() => {
     const row = bodyRowRef.current;
     if (!row) return;
-    // Same observer covers both squeeze checks (Customer Profile takeover
-    // and the docked voice/video bar's own auto-undock) — they're reading
-    // the exact same row, no reason to attach two observers to one node.
     const observer = new ResizeObserver(() => {
       checkSqueezeRef.current();
-      checkVoiceBarSqueezeRef.current();
     });
     observer.observe(row);
     return () => observer.disconnect();
@@ -1433,6 +1535,37 @@ export function AgentNextGenPage({
   useEffect(() => {
     checkSqueezeRef.current();
   }, [sidePanelWidth, sidePanelOpen]);
+
+  // How wide the pinned voice bar's own row actually is right now — see
+  // `centerPanelAvailableWidth`'s own doc comment. Observes `containerRef`
+  // itself (not `bodyRowRef`, which only exists while an interaction is
+  // active) since the bar is pinned there regardless of what's currently
+  // showing above it — Settings, Dashboard, Directory, an interaction, or
+  // nothing at all.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      setCenterPanelAvailableWidth(el.getBoundingClientRect().width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Squeeze check for the pinned bar — see `voiceCallAutoUndocked`'s own
+  // doc comment. Fires whenever either side of the comparison changes:
+  // `centerPanelAvailableWidth` shrinking (AI Assistant/Notifications/
+  // Directory docking open, or the window itself narrowing) or
+  // `dockedBarNeededWidth` growing (a colleague joining the conference, video
+  // turning on, a longer customer name — anything that makes the bar itself
+  // need more room). Same one-way policy as the Customer Profile squeeze
+  // check above: only ever forces the undock, never reverses it on its own
+  // — the floating bar's own Dock button (see its `onDock`) is what tries
+  // again.
+  useEffect(() => {
+    if (dockedBarNeededWidth === null || centerPanelAvailableWidth === null) return;
+    if (centerPanelAvailableWidth < dockedBarNeededWidth) setVoiceCallAutoUndocked(true);
+  }, [centerPanelAvailableWidth, dockedBarNeededWidth]);
 
   const MAX_PANEL_HEIGHT = 860;
   const BOTTOM_PADDING   = 8;
@@ -1459,79 +1592,30 @@ export function AgentNextGenPage({
     setElapsedSeconds(0);
   };
 
+  // The rail's own display order — see `assignmentSortMode`'s own doc
+  // comment. "type" only ever reorders the voice-vs-everything-else split;
+  // it still falls through to the same newest-first tiebreak "time" uses
+  // outright, so within either bucket (or across the whole list in "time"
+  // mode) two tiles never sort in some third, unrelated order. `assignments`
+  // itself is left untouched (this is purely a render-order concern — hold-
+  // swap, dismissal, and every other piece of logic elsewhere still reads
+  // the underlying array), and it's small enough that re-sorting on every
+  // render isn't worth memoizing, same as this file's other small derived
+  // lists.
+  const sortedAssignments = [...assignments].sort((a, b) => {
+    if (assignmentSortMode === "type") {
+      const aIsVoice = assignmentHasVoiceChannel(a) ? 0 : 1;
+      const bIsVoice = assignmentHasVoiceChannel(b) ? 0 : 1;
+      if (aIsVoice !== bIsVoice) return aIsVoice - bIsVoice;
+    }
+    return b.createdAt - a.createdAt;
+  });
+
   const activeAssignment = assignments.find((a) => a.id === activeAssignmentId);
   const activeCurrentChannelKey = activeAssignment ? resolveCurrentChannelKey(activeAssignment) : undefined;
   const activeChannel = activeAssignment?.channels.find((c) => channelKey(c) === activeCurrentChannelKey);
   const activeChannelType = activeChannel?.type;
   const isActiveAssignmentVoiceCall = activeChannelType === "voice";
-  // Whether the card currently on screen IS the live call's own card — true
-  // whenever the agent is looking at that interaction, false the instant
-  // they look at anything else (including a different voice call). This is
-  // necessary but no longer sufficient for the docked bar to actually
-  // render: docking itself is a user-selected state (see
-  // `voiceCallManuallyUndocked`'s own doc comment) — `isVoiceCallDocked`
-  // just answers "is there even a card to dock into right now," which Dock/
-  // Undock's own availability, and the squeeze check below, both still need
-  // on their own.
-  const isVoiceCallDocked = liveVoiceCall !== null && activeAssignmentId === liveVoiceCall.assignmentId;
-  // Whether the docked bar should actually render right now — `isVoiceCallDocked`
-  // (there's a card to dock into) AND the agent hasn't (deliberately or via
-  // the squeeze check) chosen to float it instead. Everything that used to
-  // gate on `isVoiceCallDocked` alone to decide docked-vs-floating now gates
-  // on this instead; `isVoiceCallDocked` itself is still read on its own
-  // where code genuinely means "is this call's own card the one on screen"
-  // regardless of the float override (e.g. deciding whether Dock even
-  // applies below).
-  const isVoiceCallActuallyDocked = isVoiceCallDocked && !voiceCallManuallyUndocked && !voiceCallAutoUndocked;
-  // Squeeze check for the docked bar itself — same idea, and same one-way
-  // "only ever forces the takeover/undock, never reverses it automatically"
-  // policy, as `checkSqueezeRef` below for the Customer Profile panel (see
-  // its own doc comment for why: avoids flicker right at the threshold).
-  // Bails out early whenever there's nothing to protect — not actually
-  // docked right now, already manually undocked, or no width measurement
-  // yet to compare against.
-  const checkVoiceBarSqueezeRef = useRef<() => void>(() => {});
-  checkVoiceBarSqueezeRef.current = () => {
-    if (!isVoiceCallDocked || voiceCallManuallyUndocked || voiceCallAutoUndocked) return;
-    const row = bodyRowRef.current;
-    if (!row) return;
-    const availableWidth = row.getBoundingClientRect().width - (sidePanelOpen ? sidePanelWidth : 0);
-    // Fed to `DockedVoiceControlBar` as its own `availableWidth` prop so it
-    // can pick full-vs-two-row itself — independent of this function's own
-    // (unrelated) auto-undock decision just below, which only cares about
-    // the smaller "not even two-row fits" threshold.
-    setDockedRowAvailableWidth(availableWidth);
-    if (dockedBarNeededWidth === null) return;
-    if (availableWidth < dockedBarNeededWidth) setVoiceCallAutoUndocked(true);
-  };
-  useEffect(() => {
-    checkVoiceBarSqueezeRef.current();
-  }, [sidePanelWidth, sidePanelOpen, dockedBarNeededWidth, isVoiceCallDocked]);
-  // Per an explicit follow-up: clicking away from the voice call's own
-  // docked assignment (to any other assignment, or nothing at all), then
-  // clicking back, should leave the bar floating right where the agent had
-  // it — not silently re-dock the moment `isVoiceCallDocked` flips back to
-  // true, which is purely definitional (true whenever this happens to be
-  // the active assignment) and says nothing about whether the agent
-  // actually wants it docked again. Tracked via a ref rather than a
-  // per-call-site check in every handler that can change
-  // `activeAssignmentId` (`handleSelectAssignment`, the outbound-call
-  // handlers, dismissing the active assignment, etc.) — same "compare
-  // against the previous render's value to detect a change happening THIS
-  // render" ref pattern `NewOutboundPopover`'s own screen-transition
-  // direction already uses, so this covers every current and future path
-  // uniformly instead of needing to be duplicated at each one. Reuses
-  // `voiceCallManuallyUndocked` — the exact same "stay floating until the
-  // agent explicitly hits Dock again" flag the floating bar's own Undock
-  // button already sets — rather than inventing a second flag for what is,
-  // from the bar's own point of view, the identical state.
-  const wasVoiceCallDockedRef = useRef(isVoiceCallDocked);
-  useEffect(() => {
-    if (wasVoiceCallDockedRef.current && !isVoiceCallDocked) {
-      setVoiceCallManuallyUndocked(true);
-    }
-    wasVoiceCallDockedRef.current = isVoiceCallDocked;
-  }, [isVoiceCallDocked]);
   // Shared by the kebab's "Unassign & Dismiss" (`onDismissCurrentChannel`)
   // and the Outcome form's "Approve & Save" (`onApproveOutcome`) — two
   // different buttons that both end the interaction the exact same way, so
@@ -1700,24 +1784,18 @@ export function AgentNextGenPage({
   // Per a later explicit follow-up, a genuinely new call (accepted/placed
   // via one of the dedicated outbound/internal-call handlers below) no
   // longer force-docks the bar either — it used to, unconditionally
-  // resetting `voiceCallManuallyUndocked`/`voiceCallAutoUndocked` back to
-  // false any time a fresh call went live, even if the agent had the bar
-  // floating (and deliberately dragged to some on-screen position) at the
-  // time. That meant a call ending and the next one starting would silently
-  // yank the bar back inline, discarding a position the agent had just set.
-  // The bar's docked/floating placement (and, while floating, its dragged
+  // resetting `voiceCallManuallyUndocked` back to false any time a fresh
+  // call went live, even if the agent had the bar floating (and
+  // deliberately dragged to some on-screen position) at the time. That
+  // meant a call ending and the next one starting would silently yank the
+  // bar back inline, discarding a position the agent had just set. The
+  // bar's docked/floating placement (and, while floating, its dragged
   // `voiceBarPosition`) is a property of the PERSISTENT bar itself, not of
   // whichever call currently owns it — same reasoning `handleSelectAssignment`'s
   // hold-swap branch already followed for switching between two existing
-  // calls, now extended to a brand-new call too. So this function no longer
-  // touches `voiceCallManuallyUndocked`/`voiceCallAutoUndocked`/
-  // `dockedBarNeededWidth` at all; whatever the bar's current placement is,
-  // it just carries straight over.
-  //
-  // (Separately, and left alone here: looking away from the live call's own
-  // card to a NON-voice tile and back still force-floats the bar, via the
-  // `wasVoiceCallDockedRef` effect below — a distinct, still-intentional
-  // behavior the agent explicitly chose to keep.)
+  // calls, now extended to a brand-new call too. So this function doesn't
+  // touch `voiceCallManuallyUndocked` at all; whatever the bar's current
+  // placement is, it just carries straight over.
   const goLiveWithVoiceCall = (assignmentId: string) => {
     setVoiceCallStartedAt((prev) => (prev[assignmentId] !== undefined ? prev : { ...prev, [assignmentId]: Date.now() }));
     setLiveVoiceCall({ assignmentId });
@@ -2342,6 +2420,7 @@ export function AgentNextGenPage({
         id,
         customerName: contact.name,
         elapsed: "00:00",
+        createdAt: Date.now(),
         issueSummary: `Internal voice call with ${contact.name}.`,
         subject: `Internal call — ${contact.name}`,
         caseId: generateCaseId(),
@@ -2381,6 +2460,7 @@ export function AgentNextGenPage({
         customerName: contact.name,
         customerId: contact.id,
         elapsed: "00:00",
+        createdAt: Date.now(),
         issueSummary: buildOutboundIssueSummary(skillLabel),
         subject: channel === "email" ? fakeOutboundEmailSubject() : `Outbound ${channelLabel}`,
         caseId: generateCaseId(),
@@ -2424,6 +2504,7 @@ export function AgentNextGenPage({
       id,
       customerName: value,
       elapsed: "00:00",
+      createdAt: Date.now(),
       issueSummary: buildOutboundIssueSummary(skillLabel),
       subject: channel === "email" ? fakeOutboundEmailSubject() : `Outbound ${channelLabel}`,
       caseId: generateCaseId(),
@@ -2945,7 +3026,14 @@ export function AgentNextGenPage({
                 onClick={() => handleNavClick("dashboard")}
                 className="mb-2"
               />
-              {assignments.map((a) => {
+              {/* Sort control — nothing to sort with 0-1 tiles, so it stays
+               *  hidden rather than showing a dead affordance (matches this
+               *  file's other "hide when there'd be nothing to act on"
+               *  choices, e.g. the switcher popovers in LiveVoiceCallBar.tsx). */}
+              {assignments.length > 1 && (
+                <AssignmentSortControl mode={assignmentSortMode} onChange={setAssignmentSortMode} />
+              )}
+              {sortedAssignments.map((a) => {
                 const isHeldVoiceCall = heldVoiceCallAssignmentIds.has(a.id);
                 const isEndedVoiceCall = endedVoiceCallAssignmentIds.has(a.id);
                 // Set only for the brief window between an active-call merge
@@ -3060,13 +3148,22 @@ export function AgentNextGenPage({
 
         {/* Content area — flex-1 shrinks to give space to docked panels.
             ref used to position float panels. */}
-        <div ref={containerRef} className="relative flex flex-1 min-w-0 overflow-hidden pr-3 pb-3">
+        {/* `flex-col` now (was a plain row) — the persistent voice bar (see
+         *  its own render site just below `Container`'s closing tag) is a
+         *  second stacked child, pinned across this entire width at the
+         *  bottom, below `Container` and everything inside it (the page
+         *  header, the conversation, Customer Profile, Settings/Dashboard/
+         *  Directory, all of it) rather than nested inside any one of them.
+         *  Per an explicit follow-up: this is now the default regardless of
+         *  which interaction (or none at all) is on screen — only an
+         *  explicit Undock still pops it out to the old floating overlay. */}
+        <div ref={containerRef} className="relative flex flex-col flex-1 min-w-0 overflow-hidden pr-3 pb-3">
 
           {/* Main Container — Customer Profile now docks inside the body row
               below (right side, pushes the conversation narrower) instead of
               sitting here as a flex sibling of the whole content column —
               see the body row further down for the actual panel. */}
-          <Container className="flex flex-1 overflow-hidden relative">
+          <Container className="flex flex-1 min-h-0 overflow-hidden relative">
 
             {/* Content column: PageHeader + page body */}
             <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
@@ -3232,76 +3329,10 @@ export function AgentNextGenPage({
                    *  interaction's own card — see that block below for why.
                    *  Customer Profile is different: it's part of this
                    *  interaction's own layout (right-docked, pushes the
-                   *  conversation narrower), so it lives in here instead. */}
-                  {/* Computed once and reused in both branches below — when
-                   *  Customer Profile is maximized, `CustomerInteractionPanel`
-                   *  (and its own `voiceControls` slot) is replaced entirely
-                   *  by the full-takeover profile view, which used to mean a
-                   *  docked call's controls vanished from the screen
-                   *  completely (the floating bar stays suppressed too,
-                   *  since `isVoiceCallDocked` is still true — the agent
-                   *  never actually left this call's own card). Per an
-                   *  explicit follow-up, the controls must stay visible at
-                   *  the bottom regardless of which view is showing, so the
-                   *  maximized branch now renders this same element as its
-                   *  own bottom-pinned sibling instead of just dropping it. */}
-                  {(() => {
-                    // Same shape/purpose as the top-level `activeCallAgentIds`
-                    // above, just scoped to THIS bar's own live call rather
-                    // than gated on "is this the active assignment" — the
-                    // docked bar only ever renders for the live call in the
-                    // first place, so that gate would be redundant here.
-                    // Backs the docked "Conference" button's persistent
-                    // "on this call" treatment — see `LiveVoiceCallBarProps
-                    // .liveCallAgentIds`'s own doc comment in
-                    // LiveVoiceCallBar.tsx.
-                    const dockedLiveCallAgentIds = isVoiceCallActuallyDocked
-                      ? new Set<string>([
-                          ...(voiceCallConsult[liveVoiceCall!.assignmentId] ? [voiceCallConsult[liveVoiceCall!.assignmentId]!.id] : []),
-                          ...(voiceCallColleagues[liveVoiceCall!.assignmentId] ?? []).map((c) => c.id),
-                        ])
-                      : new Set<string>();
-                    const dockedVoiceControls = isVoiceCallActuallyDocked ? (
-                      <DockedVoiceControlBar
-                        customerName={activeAssignment.customerName}
-                        isInternalAgentCall={activeAssignment.isInternalAgentCall}
-                        startedAt={voiceCallStartedAt[liveVoiceCall!.assignmentId] ?? Date.now()}
-                        heldSince={voiceCallHeldSince[liveVoiceCall!.assignmentId]}
-                        isOnHold={heldVoiceCallAssignmentIds.has(liveVoiceCall!.assignmentId)}
-                        onToggleHold={() => toggleVoiceCallHold(liveVoiceCall!.assignmentId)}
-                        onTogglePrimaryHold={() => togglePrimaryOnlyHold(liveVoiceCall!.assignmentId)}
-                        isMuted={isVoiceCallMuted}
-                        onToggleMute={() => setIsVoiceCallMuted((v) => !v)}
-                        isMasked={isVoiceCallMasked}
-                        onToggleMask={() => setIsVoiceCallMasked((v) => !v)}
-                        isRecording={isVoiceCallRecording}
-                        onToggleRecording={() => setIsVoiceCallRecording((v) => !v)}
-                        isVideoOn={isVideoCallOn}
-                        onToggleVideo={() => setIsVideoCallOn((v) => !v)}
-                        videoPanelSize={dockedVideoPanelSize}
-                        onVideoPanelSizeChange={setDockedVideoPanelSize}
-                        colleagues={voiceCallColleagues[liveVoiceCall!.assignmentId] ?? []}
-                        consult={voiceCallConsult[liveVoiceCall!.assignmentId]}
-                        onCancelConsult={() => cancelVoiceCallConsult(liveVoiceCall!.assignmentId)}
-                        onMergeConsult={() => mergeVoiceCallConsult(liveVoiceCall!.assignmentId)}
-                        onToggleColleagueHold={(colleagueId) => toggleVoiceCallColleagueHold(liveVoiceCall!.assignmentId, colleagueId)}
-                        onDropColleague={(colleagueId) => dropVoiceCallColleague(liveVoiceCall!.assignmentId, colleagueId)}
-                        onTransferToColleague={handleTransferVoiceCallToColleague}
-                        isSelfCameraOff={isSelfCameraOff}
-                        onToggleSelfCamera={() => setIsSelfCameraOff((v) => !v)}
-                        onAddColleagueToCall={(colleague) => startVoiceCallConsult(liveVoiceCall!.assignmentId, colleague)}
-                        liveCallAgentIds={dockedLiveCallAgentIds}
-                        activeCallOptions={computeActiveCallOptions(liveVoiceCall!.assignmentId)}
-                        onSelectActiveCall={(targetId) => startActiveCallMerge(liveVoiceCall!.assignmentId, targetId)}
-                        forceActiveCallsTabSignal={conferenceForceActiveCallsSignal}
-                        onUndock={() => setVoiceCallManuallyUndocked(true)}
-                        onNeededWidthChange={setDockedBarNeededWidth}
-                        onHangUp={handleHangUpLiveCall}
-                        theme={darkMode ? "light" : "dark"}
-                        availableWidth={dockedRowAvailableWidth}
-                      />
-                    ) : undefined;
-                    return (
+                   *  conversation narrower), so it lives in here instead.
+                   *  Voice controls no longer do — see the pinned bar's own
+                   *  render site, just below where `containerRef`'s own div
+                   *  closes, for why they moved out of this row entirely. */}
                   <div ref={bodyRowRef} className="relative flex flex-1 overflow-hidden">
                     {customerProfileMaximized ? (
                       /* Full takeover — same idea as the Settings/Dashboard
@@ -3328,14 +3359,6 @@ export function AgentNextGenPage({
                           onUpdateCustomer={(fields) => activeCustomer && handleUpdateCustomerFields(activeCustomer.id, fields)}
                           collapsed={false}
                         />
-                        {/* `CustomerProfilePanel` is itself already a
-                         *  `flex-1` child (see its own root className) built
-                         *  to sit inside a flex column and yield space to a
-                         *  sibling — same shape this takeover's own wrapper
-                         *  div already has — so this just slots in
-                         *  underneath it, `shrink-0`, same as the header row
-                         *  above. */}
-                        {dockedVoiceControls}
                       </div>
                     ) : (
                       <>
@@ -3349,7 +3372,6 @@ export function AgentNextGenPage({
                           isEmailChannel={activeChannelType === "email"}
                           toAddress={activeChannel?.address}
                           composerContainerRef={composerContainerRef}
-                          voiceControls={dockedVoiceControls}
                         />
                         {showPanelToggle && (
                           <SidePanel
@@ -3383,8 +3405,6 @@ export function AgentNextGenPage({
                       </>
                     )}
                   </div>
-                    );
-                  })()}
                 </>
               ) : openSlideInPage !== null ? (
                 // No active interaction — a slide-in destination always takes
@@ -3411,6 +3431,98 @@ export function AgentNextGenPage({
             </div>
 
           </Container>
+
+          {/* Persistent, pinned voice-call bar — a second child stacked
+           *  below `Container` (see the `flex-col` wrapper div above), so it
+           *  spans the full center-panel width and sits below everything
+           *  `Container` renders (the page header, the conversation,
+           *  Customer Profile, Settings/Dashboard/Directory, or the empty
+           *  state) rather than being nested inside any one of them. This is
+           *  the default whenever there's a live call — see
+           *  `voiceCallManuallyUndocked`'s own doc comment for the deliberate
+           *  escape hatch, and `voiceCallAutoUndocked`'s for the automatic
+           *  one (both rendered separately, further down, as a sibling of
+           *  the whole "Body: LeftNav + Content" row, once either is true).
+           *  Derives its data from `liveVoiceCall.assignmentId` via
+           *  `assignments.find(...)` rather than `activeAssignment`, since
+           *  this bar is no longer tied to whichever card happens to be on
+           *  screen. */}
+          {liveVoiceCall && !voiceCallManuallyUndocked && !voiceCallAutoUndocked && (() => {
+            const liveAssignment = assignments.find((a) => a.id === liveVoiceCall.assignmentId);
+            // Same shape/purpose as the floating bar's own
+            // `liveCallAgentIds` further down — backs the pinned bar's
+            // "Conference" button's persistent "on this call" treatment.
+            const liveCallAgentIds = new Set<string>([
+              ...(voiceCallConsult[liveVoiceCall.assignmentId] ? [voiceCallConsult[liveVoiceCall.assignmentId]!.id] : []),
+              ...(voiceCallColleagues[liveVoiceCall.assignmentId] ?? []).map((c) => c.id),
+            ]);
+            // Same "every other switchable voice call" computation the
+            // floating bar's own block runs further down (see that one's
+            // own doc comment) — restored here too per an explicit
+            // follow-up: this bar is the persistent, always-on-screen
+            // default now, so it needs its own switcher rather than relying
+            // on the floating bar (an explicit escape hatch) to have one.
+            const otherVoiceCalls = assignments
+              .filter(
+                (a) =>
+                  a.id !== liveVoiceCall.assignmentId &&
+                  assignmentChannelType(a) === "voice" &&
+                  a.escalationStatus !== "resolved" &&
+                  !endedVoiceCallAssignmentIds.has(a.id)
+              )
+              .map((a) => ({
+                assignmentId: a.id,
+                customerName: a.customerName,
+                isInternalAgentCall: a.isInternalAgentCall,
+                startedAt: voiceCallStartedAt[a.id] ?? Date.now(),
+                heldSince: heldVoiceCallAssignmentIds.has(a.id) ? voiceCallHeldSince[a.id] : undefined,
+              }));
+            return (
+              <DockedVoiceControlBar
+                customerName={liveAssignment?.customerName}
+                isInternalAgentCall={liveAssignment?.isInternalAgentCall}
+                startedAt={voiceCallStartedAt[liveVoiceCall.assignmentId] ?? Date.now()}
+                heldSince={voiceCallHeldSince[liveVoiceCall.assignmentId]}
+                isOnHold={heldVoiceCallAssignmentIds.has(liveVoiceCall.assignmentId)}
+                onToggleHold={() => toggleVoiceCallHold(liveVoiceCall.assignmentId)}
+                onTogglePrimaryHold={() => togglePrimaryOnlyHold(liveVoiceCall.assignmentId)}
+                isMuted={isVoiceCallMuted}
+                onToggleMute={() => setIsVoiceCallMuted((v) => !v)}
+                isMasked={isVoiceCallMasked}
+                onToggleMask={() => setIsVoiceCallMasked((v) => !v)}
+                isRecording={isVoiceCallRecording}
+                onToggleRecording={() => setIsVoiceCallRecording((v) => !v)}
+                isVideoOn={isVideoCallOn}
+                onToggleVideo={() => setIsVideoCallOn((v) => !v)}
+                videoPanelSize={dockedVideoPanelSize}
+                onVideoPanelSizeChange={setDockedVideoPanelSize}
+                colleagues={voiceCallColleagues[liveVoiceCall.assignmentId] ?? []}
+                consult={voiceCallConsult[liveVoiceCall.assignmentId]}
+                onCancelConsult={() => cancelVoiceCallConsult(liveVoiceCall.assignmentId)}
+                onMergeConsult={() => mergeVoiceCallConsult(liveVoiceCall.assignmentId)}
+                onToggleColleagueHold={(colleagueId) => toggleVoiceCallColleagueHold(liveVoiceCall.assignmentId, colleagueId)}
+                onDropColleague={(colleagueId) => dropVoiceCallColleague(liveVoiceCall.assignmentId, colleagueId)}
+                onTransferToColleague={handleTransferVoiceCallToColleague}
+                isSelfCameraOff={isSelfCameraOff}
+                onToggleSelfCamera={() => setIsSelfCameraOff((v) => !v)}
+                onAddColleagueToCall={(colleague) => startVoiceCallConsult(liveVoiceCall.assignmentId, colleague)}
+                liveCallAgentIds={liveCallAgentIds}
+                activeCallOptions={computeActiveCallOptions(liveVoiceCall.assignmentId)}
+                onSelectActiveCall={(targetId) => startActiveCallMerge(liveVoiceCall.assignmentId, targetId)}
+                forceActiveCallsTabSignal={conferenceForceActiveCallsSignal}
+                onUndock={() => setVoiceCallManuallyUndocked(true)}
+                onNeededWidthChange={setDockedBarNeededWidth}
+                onHangUp={handleHangUpLiveCall}
+                theme={darkMode ? "light" : "dark"}
+                availableWidth={centerPanelAvailableWidth}
+                otherVoiceCalls={otherVoiceCalls}
+                // Reuses the exact same handler a tile click (and the
+                // floating bar's own switcher) uses — switching from here
+                // reads identically to switching any other way.
+                onSwitchCall={handleSelectAssignment}
+              />
+            );
+          })()}
 
           {/* Notifications — float (CSS transitions, not keyframe animations — avoids compositor fill-mode flash) */}
           {notifVariant === "float" && notifMounted && (
@@ -3602,7 +3714,7 @@ export function AgentNextGenPage({
 
       </div>
 
-      {/* Persistent voice-call bar — deliberately outside the
+      {/* Floating escape-hatch voice-call bar — deliberately outside the
        *  `activeAssignment`-gated content column above, so it has no
        *  dependency on which interaction is currently on screen (see its own
        *  doc comment in LiveVoiceCallBar.tsx). Hold, the call timer, and now
@@ -3610,13 +3722,16 @@ export function AgentNextGenPage({
        *  `heldVoiceCallAssignmentIds`/`voiceCallStartedAt`/
        *  `isVoiceCallMuted` etc. above), so none of them reset on the `key`
        *  remount below — they're passed in as controlled props instead.
-       *  Only rendered while NOT docked — `isVoiceCallDocked` true means the
-       *  agent is looking at this exact call's own card, where
-       *  `DockedVoiceControlBar` (via `CustomerInteractionPanel`'s
-       *  `voiceControls` slot above) shows the same controls in-flow
-       *  instead; the two are mutually exclusive so the call's controls
-       *  only ever appear once on screen. */}
-      {liveVoiceCall && !isVoiceCallActuallyDocked && (() => {
+       *  Only rendered while undocked, whether by choice or by necessity —
+       *  the pinned `DockedVoiceControlBar` (see its own render site just
+       *  below `Container`'s closing tag, above) is the default everywhere
+       *  in the app now; this floating bar only appears once the agent hits
+       *  its Undock button (`voiceCallManuallyUndocked`) or the pinned bar
+       *  runs out of room for even its two-row layout
+       *  (`voiceCallAutoUndocked` — see that state's own doc comment), and
+       *  the two presentations are mutually exclusive so the call's
+       *  controls only ever appear once on screen. */}
+      {liveVoiceCall && (voiceCallManuallyUndocked || voiceCallAutoUndocked) && (() => {
         const callAssignment = assignments.find((a) => a.id === liveVoiceCall.assignmentId);
         // Every other switchable voice call — same eligibility
         // `handleSelectAssignment`'s own hold-swap check uses (a real,
@@ -3693,19 +3808,25 @@ export function AgentNextGenPage({
             activeCallOptions={computeActiveCallOptions(liveVoiceCall.assignmentId)}
             onSelectActiveCall={(targetId) => startActiveCallMerge(liveVoiceCall.assignmentId, targetId)}
             forceActiveCallsTabSignal={conferenceForceActiveCallsSignal}
-            onDock={
-              isVoiceCallDocked && (voiceCallManuallyUndocked || voiceCallAutoUndocked)
-                ? () => {
-                    // Clears both — even when floating for the automatic
-                    // reason, Dock is still a reasonable "try again" action;
-                    // if the room genuinely isn't there, the very next
-                    // squeeze check just flips `voiceCallAutoUndocked` back
-                    // on rather than leaving the bar stuck half-visible.
-                    setVoiceCallManuallyUndocked(false);
-                    setVoiceCallAutoUndocked(false);
-                  }
-                : undefined
-            }
+            // Always available while floating, for either reason (manual or
+            // auto). Clears the manual flag unconditionally, but re-checks
+            // room before clearing the automatic one — if the center panel
+            // genuinely still doesn't have space for even the two-row
+            // layout, immediately setting `voiceCallAutoUndocked` back to
+            // true avoids a flash of the pinned bar re-squeezing itself the
+            // instant it remounts, rather than waiting for the next
+            // width-change to notice (see that state's own squeeze-check
+            // effect, which only re-runs when the measured widths actually
+            // change — redocking into the same too-narrow space wouldn't
+            // otherwise re-trigger it).
+            onDock={() => {
+              setVoiceCallManuallyUndocked(false);
+              const stillTooNarrow =
+                dockedBarNeededWidth !== null &&
+                centerPanelAvailableWidth !== null &&
+                centerPanelAvailableWidth < dockedBarNeededWidth;
+              setVoiceCallAutoUndocked(stillTooNarrow);
+            }}
             onHangUp={handleHangUpLiveCall}
             position={voiceBarPosition}
             onPositionChange={setVoiceBarPosition}

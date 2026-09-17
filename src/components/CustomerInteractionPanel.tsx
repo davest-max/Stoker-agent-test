@@ -1464,25 +1464,16 @@ export interface CustomerInteractionPanelProps {
    *  address (see `AssignmentChannel.address` in AgentNextGenPage.tsx),
    *  when there is one. Ignored unless `isEmailChannel` is true. */
   toAddress?: string;
-  /** Docked voice controls (see `DockedVoiceControlBar` in
-   *  LiveVoiceCallBar.tsx) — rendered at the bottom of the panel in place of
-   *  the composer, for exactly as long as this call is both a voice call
-   *  AND the one the agent is currently looking at. Only meaningful when
-   *  `isVoiceCall` is true; a non-voice interaction has nothing to dock
-   *  here. Omitted (not just falsy) renders nothing at the bottom, same as
-   *  a voice call always has today — this stays optional rather than
-   *  required so a read-only/ended call can render the panel with no
-   *  controls at all. */
-  voiceControls?: React.ReactNode;
   /** Attached to the wrapper around the message composer — lets
    *  `AgentNextGenPage` measure exactly where the current digital channel's
    *  input area sits on screen, so the floating `LiveVoiceCallBar` (a voice
    *  call popped out while the agent is looking at THIS interaction) can
    *  default to sitting just above and left-aligned with it, instead of
    *  covering it. Unset while `isVoiceCall` is true — there's no composer to
-   *  measure then (the docked voice controls occupy that space instead),
-   *  which is exactly what tells the parent to fall back to the bar's own
-   *  generic corner anchor. */
+   *  measure then (voice controls are a persistent, page-level bar now, not
+   *  part of this panel's own layout — see `AgentNextGenPage`'s own
+   *  doc comment near where it renders), which is exactly what tells the
+   *  parent to fall back to the bar's own generic corner anchor. */
   composerContainerRef?: React.Ref<HTMLDivElement>;
 }
 
@@ -1495,7 +1486,6 @@ export function CustomerInteractionPanel({
   sendOnEnter = true,
   isEmailChannel = false,
   toAddress,
-  voiceControls,
   composerContainerRef,
 }: CustomerInteractionPanelProps) {
   const hasScript = isVoiceCall && Boolean(script?.length);
@@ -1560,7 +1550,6 @@ export function CustomerInteractionPanel({
           />
         </div>
       )}
-      {isVoiceCall && voiceControls}
     </div>
   );
 }
